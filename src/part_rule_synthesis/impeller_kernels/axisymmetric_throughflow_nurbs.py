@@ -313,11 +313,12 @@ def _validated_profile_override(
         return fallback
     if override.get("kind") != "nurbs_curve":
         raise ValueError(f"{name} must be kind nurbs_curve")
-    if int(override.get("degree", -1)) != 3:
+    degree = int(override.get("degree", -1))
+    if degree != 3:
         raise ValueError(f"{name} degree must be 3")
     points = override.get("control_points")
-    if not isinstance(points, list) or len(points) != 4:
-        raise ValueError(f"{name} must have exactly 4 control points")
+    if not isinstance(points, list) or len(points) < degree + 1:
+        raise ValueError(f"{name} must have at least {degree + 1} control points")
     cleaned_points = []
     for point in points:
         if not isinstance(point, list) or len(point) != 2:
@@ -329,16 +330,26 @@ def _validated_profile_override(
             raise ValueError(f"{name} requires positive radius")
         cleaned_points.append([_round(r), _round(z)])
     weights = [float(value) for value in override.get("weights", fallback["weights"])]
-    if len(weights) != 4 or any(value <= 0.0 or not math.isfinite(value) for value in weights):
-        raise ValueError(f"{name} weights must be four positive finite values")
+    if len(weights) != len(cleaned_points):
+        raise ValueError(f"{name} weight count must match control point count")
+    if any(value <= 0.0 or not math.isfinite(value) for value in weights):
+        raise ValueError(f"{name} weights must be positive finite values")
     knots = [float(value) for value in override.get("knots", fallback["knots"])]
-    if knots != [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]:
-        raise ValueError(f"{name} knots must be clamped cubic")
+    if len(knots) != len(cleaned_points) + degree + 1:
+        raise ValueError(f"{name} knot count must equal control point count + degree + 1")
+    if any(not math.isfinite(value) for value in knots):
+        raise ValueError(f"{name} knots must be finite")
+    if any(left > right for left, right in zip(knots, knots[1:])):
+        raise ValueError(f"{name} knots must be non-decreasing")
+    if knots[: degree + 1] != [0.0] * (degree + 1) or knots[-(degree + 1) :] != [1.0] * (degree + 1):
+        raise ValueError(f"{name} knots must be clamped to 0 and 1")
     if override.get("coordinate_system", "rz_meridional_mm") != "rz_meridional_mm":
         raise ValueError(f"{name} coordinate_system must be rz_meridional_mm")
     return {
         **fallback,
         "id": fallback["id"],
+        "kind": "nurbs_curve",
+        "degree": degree,
         "control_points": cleaned_points,
         "weights": [_round(value) for value in weights],
         "knots": knots,
@@ -364,7 +375,7 @@ def _nurbs_curve(curve_id: str, control_points: list[list[float]]) -> dict[str, 
         "degree": degree,
         "control_points": [[_round(point[0]), _round(point[1])] for point in control_points],
         "weights": [1.0 for _ in control_points],
-        "knots": [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        "knots": _clamped_open_uniform_knots(len(control_points), degree),
         "coordinate_system": "rz_meridional_mm",
     }
 
@@ -384,11 +395,45 @@ def _sample_profile_curve(profile: dict[str, Any], count: int) -> list[dict[str,
 def _profile_point(profile: dict[str, Any], u: float) -> list[float]:
     points = profile["control_points"]
     weights = profile["weights"]
-    basis = _cubic_basis(u)
-    denominator = sum(basis[index] * weights[index] for index in range(4))
-    r = sum(basis[index] * weights[index] * points[index][0] for index in range(4)) / denominator
-    z = sum(basis[index] * weights[index] * points[index][1] for index in range(4)) / denominator
+    knots = profile["knots"]
+    degree = int(profile["degree"])
+    clamped_u = _clamp01(u)
+    basis = [_nurbs_basis(index, degree, clamped_u, knots) for index in range(len(points))]
+    denominator = sum(value * weights[index] for index, value in enumerate(basis))
+    if denominator <= 0.0:
+        raise ValueError("profile NURBS denominator must be positive")
+    r = sum(basis[index] * weights[index] * points[index][0] for index in range(len(points))) / denominator
+    z = sum(basis[index] * weights[index] * points[index][1] for index in range(len(points))) / denominator
     return [r, z]
+
+
+def _clamped_open_uniform_knots(point_count: int, degree: int) -> list[float]:
+    interior_count = point_count - degree - 1
+    if point_count < degree + 1:
+        raise ValueError("control point count must be at least degree + 1")
+    interiors = [(index + 1) / (interior_count + 1) for index in range(interior_count)]
+    return [0.0] * (degree + 1) + interiors + [1.0] * (degree + 1)
+
+
+def _nurbs_basis(i: int, degree: int, u: float, knots: list[float]) -> float:
+    if degree == 0:
+        if knots[i] <= u < knots[i + 1] or (u == 1.0 and knots[i] <= u <= knots[i + 1]):
+            return 1.0
+        return 0.0
+    left_denominator = knots[i + degree] - knots[i]
+    right_denominator = knots[i + degree + 1] - knots[i + 1]
+    left = 0.0
+    right = 0.0
+    if left_denominator > 0:
+        left = ((u - knots[i]) / left_denominator) * _nurbs_basis(i, degree - 1, u, knots)
+    if right_denominator > 0:
+        right = ((knots[i + degree + 1] - u) / right_denominator) * _nurbs_basis(
+            i + 1,
+            degree - 1,
+            u,
+            knots,
+        )
+    return left + right
 
 
 def _validated_curve_overrides(
