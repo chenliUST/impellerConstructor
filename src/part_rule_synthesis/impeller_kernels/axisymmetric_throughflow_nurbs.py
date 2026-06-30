@@ -25,16 +25,22 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     parameters: dict[str, Any],
     facets: dict[str, str],
     shape_control: dict[str, Any] | None = None,
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
 ) -> dict[str, Any]:
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
-    hub_profile, tip_profile = _profile_definitions(params, resolved_facets)
+    stage = _normalize_geometry_stage(geometry_stage)
+    hub_profile, tip_profile = _profile_definitions(params, resolved_facets, profile_overrides)
+    curve_controls = _validated_curve_overrides(curve_overrides, params, resolved_facets)
     hub_curve = _sample_profile_curve(hub_profile, SURFACE_U_COUNT)
     tip_curve = _sample_profile_curve(tip_profile, SURFACE_U_COUNT)
-    sampled_blades = _pattern_blades(params, resolved_facets, hub_profile, tip_profile)
+    sampled_blades = _pattern_blades(params, resolved_facets, hub_profile, tip_profile, curve_controls)
     surface_graph = _surface_graph(params, resolved_facets, hub_profile, tip_profile, sampled_blades)
     construction_lines = _construction_lines(surface_graph, sampled_blades)
-    validity = _validity_report(surface_graph, sampled_blades, construction_lines)
+    surface_graph, construction_lines = _filter_by_geometry_stage(surface_graph, construction_lines, stage)
+    validity = _validity_report(surface_graph, sampled_blades, construction_lines, stage)
     passage_model = {
         "type": "throughflow_bladed_channel",
         "throughflow_bladed_channel": True,
@@ -54,6 +60,10 @@ def build_axisymmetric_throughflow_nurbs_geometry(
                 "hub": hub_profile,
                 "tip_or_shroud": tip_profile,
             },
+            "profile_controls": {
+                "source": "user_override" if profile_overrides else "default_rule",
+                "editable_entities": ["hub_profile", "tip_or_shroud_profile"],
+            },
             "meridional_curves": {
                 "hub": hub_curve,
                 "tip_or_shroud": tip_curve,
@@ -64,6 +74,7 @@ def build_axisymmetric_throughflow_nurbs_geometry(
                 "lean_deg": _round(params["blade_lean_deg"]),
                 "pressure_suction_offset": "arc_thickness_over_local_radius",
             },
+            "editable_curve_controls": curve_controls,
             "thickness_field": {
                 "kind": "u_tapered_constant_spanwise",
                 "root_mm": _round(params["blade_thickness_mm"]),
@@ -76,6 +87,7 @@ def build_axisymmetric_throughflow_nurbs_geometry(
                 "blade_v_count": BLADE_V_COUNT,
             },
             "passage_model": passage_model,
+            "geometry_stage": stage,
         },
         "passage_model": passage_model,
         "shape_control": shape_control
@@ -153,6 +165,19 @@ def _normalized_facets(facets: dict[str, str]) -> dict[str, str]:
 def _profile_definitions(
     params: dict[str, float],
     facets: dict[str, str],
+    profile_overrides: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    default_hub, default_tip = _default_profile_definitions(params, facets)
+    overrides = profile_overrides or {}
+    hub = _validated_profile_override("hub_profile", overrides.get("hub_profile"), default_hub)
+    tip = _validated_profile_override("tip_or_shroud_profile", overrides.get("tip_or_shroud_profile"), default_tip)
+    _validate_tip_clearance(hub, tip)
+    return hub, tip
+
+
+def _default_profile_definitions(
+    params: dict[str, float],
+    facets: dict[str, str],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     inlet = params["inlet_radius_mm"]
     outlet = params["exit_radius_mm"]
@@ -181,6 +206,58 @@ def _profile_definitions(
         [outlet, hub_cp[-1][1] + outlet_height],
     ]
     return _nurbs_curve("hub_profile", hub_cp), _nurbs_curve("tip_or_shroud_profile", tip_cp)
+
+
+def _validated_profile_override(
+    name: str,
+    override: dict[str, Any] | None,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    if override is None:
+        return fallback
+    if override.get("kind") != "nurbs_curve":
+        raise ValueError(f"{name} must be kind nurbs_curve")
+    if int(override.get("degree", -1)) != 3:
+        raise ValueError(f"{name} degree must be 3")
+    points = override.get("control_points")
+    if not isinstance(points, list) or len(points) != 4:
+        raise ValueError(f"{name} must have exactly 4 control points")
+    cleaned_points = []
+    for point in points:
+        if not isinstance(point, list) or len(point) != 2:
+            raise ValueError(f"{name} control point must be [r_mm, z_mm]")
+        r, z = float(point[0]), float(point[1])
+        if not math.isfinite(r) or not math.isfinite(z):
+            raise ValueError(f"{name} control point values must be finite")
+        if r <= 0.0:
+            raise ValueError(f"{name} requires positive radius")
+        cleaned_points.append([_round(r), _round(z)])
+    weights = [float(value) for value in override.get("weights", fallback["weights"])]
+    if len(weights) != 4 or any(value <= 0.0 or not math.isfinite(value) for value in weights):
+        raise ValueError(f"{name} weights must be four positive finite values")
+    knots = [float(value) for value in override.get("knots", fallback["knots"])]
+    if knots != [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]:
+        raise ValueError(f"{name} knots must be clamped cubic")
+    if override.get("coordinate_system", "rz_meridional_mm") != "rz_meridional_mm":
+        raise ValueError(f"{name} coordinate_system must be rz_meridional_mm")
+    return {
+        **fallback,
+        "id": fallback["id"],
+        "control_points": cleaned_points,
+        "weights": [_round(value) for value in weights],
+        "knots": knots,
+        "coordinate_system": "rz_meridional_mm",
+        "source": "user_override",
+    }
+
+
+def _validate_tip_clearance(hub_profile: dict[str, Any], tip_profile: dict[str, Any]) -> None:
+    for index in range(SURFACE_U_COUNT):
+        u = index / (SURFACE_U_COUNT - 1)
+        hub = _profile_point(hub_profile, u)
+        tip = _profile_point(tip_profile, u)
+        if tip[0] <= hub[0] or tip[1] <= hub[1]:
+            raise ValueError("tip_or_shroud_profile must remain outside and above hub_profile")
 
 
 def _nurbs_curve(curve_id: str, control_points: list[list[float]]) -> dict[str, Any]:
@@ -218,16 +295,146 @@ def _profile_point(profile: dict[str, Any], u: float) -> list[float]:
     return [r, z]
 
 
+def _validated_curve_overrides(
+    curve_overrides: dict[str, Any] | None,
+    params: dict[str, float],
+    facets: dict[str, str],
+) -> dict[str, Any]:
+    controls = _default_curve_controls(params, facets)
+    overrides = curve_overrides or {}
+    allowed = {
+        "blade_mean": {
+            "theta_center_u_curve": "u_theta_deg",
+            "span_lean_u_curve": "u_lean_deg",
+        },
+        "blade_edges": {
+            "leading_edge_sweep_v_curve": "v_support_u_offset",
+            "trailing_edge_sweep_v_curve": "v_support_u_offset",
+        },
+        "thickness": {
+            "thickness_u_curve": "u_thickness_mm",
+        },
+    }
+    for group, curves in overrides.items():
+        if group not in allowed:
+            raise ValueError(f"unknown curve override group: {group}")
+        if not isinstance(curves, dict):
+            raise ValueError(f"{group} curve overrides must be an object")
+        for curve_id, curve in curves.items():
+            if curve_id not in allowed[group]:
+                raise ValueError(f"unknown curve override: {group}.{curve_id}")
+            controls[group][curve_id] = _validated_curve_override(
+                f"{group}.{curve_id}",
+                curve,
+                allowed[group][curve_id],
+            )
+    return controls
+
+
+def _default_curve_controls(params: dict[str, float], facets: dict[str, str]) -> dict[str, Any]:
+    exit_sign = {"backward_curved": -1.0, "radial": 0.35, "forward_curved": 1.0}.get(
+        facets["blade_exit_geometry"],
+        -1.0,
+    )
+    wrap = params["blade_wrap_deg"] * exit_sign
+    leading_lean = params["leading_edge_lean_deg"]
+    trailing_lean = params["trailing_edge_lean_deg"]
+    mid_lean = params["blade_lean_deg"] + 0.5 * (leading_lean + trailing_lean)
+    radial_span = max(params["exit_radius_mm"] - params["inlet_radius_mm"], 1.0)
+    return {
+        "blade_mean": {
+            "theta_center_u_curve": _curve_def(
+                "u_theta_deg",
+                [[0.0, 0.0], [0.33, wrap * _smoothstep(0.33)], [0.66, wrap * _smoothstep(0.66)], [1.0, wrap]],
+                "default_rule",
+            ),
+            "span_lean_u_curve": _curve_def(
+                "u_lean_deg",
+                [[0.0, leading_lean], [0.5, mid_lean], [1.0, trailing_lean]],
+                "default_rule",
+            ),
+        },
+        "blade_edges": {
+            "leading_edge_sweep_v_curve": _curve_def(
+                "v_support_u_offset",
+                [[0.0, -params["leading_edge_sweep_mm"] / (2.0 * radial_span)], [0.5, 0.0], [1.0, params["leading_edge_sweep_mm"] / (2.0 * radial_span)]],
+                "default_rule",
+            ),
+            "trailing_edge_sweep_v_curve": _curve_def(
+                "v_support_u_offset",
+                [[0.0, -params["trailing_edge_sweep_mm"] / (2.0 * radial_span)], [0.5, 0.0], [1.0, params["trailing_edge_sweep_mm"] / (2.0 * radial_span)]],
+                "default_rule",
+            ),
+        },
+        "thickness": {
+            "thickness_u_curve": _curve_def(
+                "u_thickness_mm",
+                [[0.0, params["blade_thickness_mm"]], [0.5, params["blade_thickness_mm"] * (1.0 - 0.45 * _smoothstep(0.5))], [1.0, params["blade_thickness_mm"] * 0.55]],
+                "default_rule",
+            ),
+        },
+    }
+
+
+def _curve_def(coordinate_system: str, control_points: list[list[float]], source: str) -> dict[str, Any]:
+    return {
+        "coordinate_system": coordinate_system,
+        "control_points": [[_round(point[0]), _round(point[1])] for point in control_points],
+        "source": source,
+    }
+
+
+def _validated_curve_override(name: str, curve: dict[str, Any], expected_coordinate_system: str) -> dict[str, Any]:
+    if not isinstance(curve, dict):
+        raise ValueError(f"{name} must be an object")
+    if curve.get("coordinate_system") != expected_coordinate_system:
+        raise ValueError(f"{name} coordinate_system must be {expected_coordinate_system}")
+    raw_points = curve.get("control_points")
+    if not isinstance(raw_points, list) or len(raw_points) < 2:
+        raise ValueError(f"{name} must have at least two control points")
+    points: list[list[float]] = []
+    previous_t = -1.0
+    for point in raw_points:
+        if not isinstance(point, list) or len(point) != 2:
+            raise ValueError(f"{name} control point must be [t, value]")
+        t, value = float(point[0]), float(point[1])
+        if not math.isfinite(t) or not math.isfinite(value):
+            raise ValueError(f"{name} control point values must be finite")
+        if t < 0.0 or t > 1.0 or t <= previous_t:
+            raise ValueError(f"{name} control point t values must be monotone within [0, 1]")
+        if expected_coordinate_system == "u_thickness_mm" and value <= 0.0:
+            raise ValueError(f"{name} thickness values must be positive")
+        if expected_coordinate_system == "v_support_u_offset" and abs(value) > 0.45:
+            raise ValueError(f"{name} support offsets must be within [-0.45, 0.45]")
+        points.append([_round(t), _round(value)])
+        previous_t = t
+    return _curve_def(expected_coordinate_system, points, "user_override")
+
+
+def _curve_value(curve: dict[str, Any], t: float) -> float:
+    points = curve["control_points"]
+    clamped_t = _clamp01(t)
+    if clamped_t <= points[0][0]:
+        return float(points[0][1])
+    for left, right in zip(points, points[1:]):
+        if clamped_t <= right[0]:
+            span = max(right[0] - left[0], 1e-9)
+            ratio = (clamped_t - left[0]) / span
+            return float(left[1]) + (float(right[1]) - float(left[1])) * ratio
+    return float(points[-1][1])
+
+
 def _pattern_blades(
     params: dict[str, float],
     facets: dict[str, str],
     hub_profile: dict[str, Any],
     tip_profile: dict[str, Any],
+    curve_controls: dict[str, Any],
 ) -> list[dict[str, Any]]:
     blades = []
     for blade_index in range(int(params["blade_count"])):
         base_angle = 2.0 * math.pi * blade_index / int(params["blade_count"])
-        blades.append(_blade_surfaces(blade_index, base_angle, params, facets, hub_profile, tip_profile))
+        blades.append(_blade_surfaces(blade_index, base_angle, params, facets, hub_profile, tip_profile, curve_controls))
     return blades
 
 
@@ -238,6 +445,7 @@ def _blade_surfaces(
     facets: dict[str, str],
     hub_profile: dict[str, Any],
     tip_profile: dict[str, Any],
+    curve_controls: dict[str, Any],
 ) -> dict[str, Any]:
     pressure = []
     suction = []
@@ -249,9 +457,9 @@ def _blade_surfaces(
         mean_row = []
         for v_index in range(BLADE_V_COUNT):
             v = v_index / (BLADE_V_COUNT - 1)
-            pressure_row.append(_blade_point(hub_profile, tip_profile, u, v, base_angle, params, facets, 1.0))
-            suction_row.append(_blade_point(hub_profile, tip_profile, u, v, base_angle, params, facets, -1.0))
-            mean_row.append(_blade_point(hub_profile, tip_profile, u, v, base_angle, params, facets, 0.0))
+            pressure_row.append(_blade_point(hub_profile, tip_profile, u, v, base_angle, params, facets, curve_controls, 1.0))
+            suction_row.append(_blade_point(hub_profile, tip_profile, u, v, base_angle, params, facets, curve_controls, -1.0))
+            mean_row.append(_blade_point(hub_profile, tip_profile, u, v, base_angle, params, facets, curve_controls, 0.0))
         pressure.append(pressure_row)
         suction.append(suction_row)
         mean.append(mean_row)
@@ -290,20 +498,28 @@ def _blade_point(
     base_angle: float,
     params: dict[str, float],
     facets: dict[str, str],
+    curve_controls: dict[str, Any],
     side: float,
 ) -> list[float]:
-    support_u = _support_u(u, v, params)
+    support_u = _support_u(u, v, params, curve_controls)
     hub = _profile_point(hub_profile, support_u)
     tip = _profile_point(tip_profile, support_u)
     r = (1.0 - v) * hub[0] + v * tip[0]
     z = (1.0 - v) * hub[1] + v * tip[1]
-    theta = _theta_field(u, v, base_angle, params, facets)
+    theta = _theta_field(u, v, base_angle, params, facets, curve_controls)
     if side:
-        theta += side * _half_thickness_theta(params, u, r)
+        theta += side * _half_thickness_theta(params, u, r, curve_controls)
     return _polar_point(r, theta, z)
 
 
-def _support_u(u: float, v: float, params: dict[str, float]) -> float:
+def _support_u(u: float, v: float, params: dict[str, float], curve_controls: dict[str, Any]) -> float:
+    edge_curves = curve_controls["blade_edges"]
+    leading_curve = edge_curves["leading_edge_sweep_v_curve"]
+    trailing_curve = edge_curves["trailing_edge_sweep_v_curve"]
+    if leading_curve["source"] == "user_override" or trailing_curve["source"] == "user_override":
+        leading_offset = _curve_value(leading_curve, v)
+        trailing_offset = _curve_value(trailing_curve, v)
+        return _clamp01(u + (1.0 - u) * leading_offset + u * trailing_offset)
     radial_span = max(params["exit_radius_mm"] - params["inlet_radius_mm"], 1.0)
     edge_sweep = (1.0 - u) * params["leading_edge_sweep_mm"] + u * params["trailing_edge_sweep_mm"]
     return _clamp01(u + (edge_sweep / radial_span) * (v - 0.5))
@@ -342,7 +558,15 @@ def _theta_field(
     base_angle: float,
     params: dict[str, float],
     facets: dict[str, str],
+    curve_controls: dict[str, Any],
 ) -> float:
+    mean_curves = curve_controls["blade_mean"]
+    theta_curve = mean_curves["theta_center_u_curve"]
+    lean_curve = mean_curves["span_lean_u_curve"]
+    if theta_curve["source"] == "user_override" or lean_curve["source"] == "user_override":
+        theta = math.radians(_curve_value(theta_curve, u))
+        lean = math.radians(_curve_value(lean_curve, u))
+        return base_angle + theta + lean * (v - 0.5)
     exit_sign = {"backward_curved": -1.0, "radial": 0.0, "forward_curved": 1.0}.get(
         facets["blade_exit_geometry"],
         -1.0,
@@ -357,7 +581,11 @@ def _theta_field(
     return base_angle + wrap * _smoothstep(u) + (lean * math.sin(math.pi * u) + edge_lean) * (v - 0.5)
 
 
-def _half_thickness_theta(params: dict[str, float], u: float, radius: float) -> float:
+def _half_thickness_theta(params: dict[str, float], u: float, radius: float, curve_controls: dict[str, Any]) -> float:
+    thickness_curve = curve_controls["thickness"]["thickness_u_curve"]
+    if thickness_curve["source"] == "user_override":
+        thickness = _curve_value(thickness_curve, u)
+        return (thickness * 0.5) / max(radius, 1.0)
     thickness = params["blade_thickness_mm"] * (1.0 - 0.45 * _smoothstep(u))
     return (thickness * 0.5) / max(radius, 1.0)
 
@@ -798,6 +1026,78 @@ def _blade_edge_lines(sampled_blades: list[dict[str, Any]]) -> list[dict[str, An
     return lines
 
 
+def _normalize_geometry_stage(stage: str | None) -> str:
+    normalized = str(stage or "edge_closures")
+    aliases = {
+        "hub": "hub_support",
+        "blades": "blade_surfaces",
+        "edges": "edge_closures",
+        "full": "edge_closures",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"hub_support", "blade_surfaces", "edge_closures"}:
+        raise ValueError(f"invalid geometry stage: {stage}")
+    return normalized
+
+
+def _filter_by_geometry_stage(
+    surface_graph: dict[str, Any],
+    construction_lines: dict[str, list[dict[str, Any]]],
+    geometry_stage: str,
+) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
+    allowed_surfaces = [
+        surface
+        for surface in surface_graph["surfaces"]
+        if _surface_visible_in_stage(surface, geometry_stage)
+    ]
+    allowed_ids = {surface["id"] for surface in allowed_surfaces}
+    filtered_graph = {
+        "surfaces": allowed_surfaces,
+        "edges": [
+            edge
+            for edge in surface_graph["edges"]
+            if all(surface_id in allowed_ids for surface_id in edge.get("surfaces", []))
+        ],
+        "boundary_curves": {} if geometry_stage == "hub_support" else _filtered_boundary_curves(surface_graph.get("boundary_curves", {}), geometry_stage),
+        "named_boundary_curves": [] if geometry_stage == "hub_support" else surface_graph.get("named_boundary_curves", []),
+    }
+    filtered_lines = {key: list(value) for key, value in construction_lines.items()}
+    filtered_lines["surface_uv"] = [
+        line
+        for line in construction_lines.get("surface_uv", [])
+        if line.get("surface_id") in allowed_ids
+    ]
+    if geometry_stage == "hub_support":
+        for key in ["blade_u", "blade_v", "blade_boundaries", "blade_edges"]:
+            filtered_lines[key] = []
+    elif geometry_stage == "blade_surfaces":
+        filtered_lines["blade_edges"] = []
+    return filtered_graph, filtered_lines
+
+
+def _surface_visible_in_stage(surface: dict[str, Any], geometry_stage: str) -> bool:
+    role = surface.get("role")
+    if role in {"hub", "outer_hub_shell", "inner_hub_bottom", "mounting_bore", "reference_only", "front_shroud_inner_surface"}:
+        return True
+    if geometry_stage == "hub_support":
+        return False
+    if role in {"blade_pressure", "blade_suction"}:
+        return True
+    if geometry_stage == "blade_surfaces":
+        return False
+    return surface.get("kind") == "edge_closure_surface"
+
+
+def _filtered_boundary_curves(boundary_curves: dict[str, Any], geometry_stage: str) -> dict[str, Any]:
+    if geometry_stage == "edge_closures":
+        return boundary_curves
+    return {
+        key: value
+        for key, value in boundary_curves.items()
+        if not key.endswith(("_leading_edge", "_trailing_edge", "_root_closure", "_tip_closure"))
+    }
+
+
 def _sparse_surface_lines(surface: dict[str, Any]) -> list[dict[str, Any]]:
     lines = []
     grid = surface["uv_grid"]
@@ -816,20 +1116,40 @@ def _validity_report(
     surface_graph: dict[str, Any],
     sampled_blades: list[dict[str, Any]],
     construction_lines: dict[str, list[dict[str, Any]]],
+    geometry_stage: str = "edge_closures",
 ) -> dict[str, Any]:
-    topology_checks = [
-        _check_boundary_column(sampled_blades, "pressure_surface", "pressure_hub_boundary", 0, "pressure_surface_hub_conformance"),
-        _check_boundary_column(sampled_blades, "suction_surface", "suction_hub_boundary", 0, "suction_surface_hub_conformance"),
-        _check_boundary_column(sampled_blades, "pressure_surface", "pressure_tip_boundary", -1, "pressure_surface_tip_conformance"),
-        _check_boundary_column(sampled_blades, "suction_surface", "suction_tip_boundary", -1, "suction_surface_tip_conformance"),
-        _check_blade_edge_surfaces_present(surface_graph, sampled_blades),
-        _check_blade_surface_closure_candidate(surface_graph, sampled_blades),
-        _check_every_surface_has_uv_lines(surface_graph, construction_lines),
-    ]
+    topology_checks = [_check_stage_completeness(surface_graph, geometry_stage)]
+    if geometry_stage in {"blade_surfaces", "edge_closures"}:
+        topology_checks.extend(
+            [
+                _check_boundary_column(sampled_blades, "pressure_surface", "pressure_hub_boundary", 0, "pressure_surface_hub_conformance"),
+                _check_boundary_column(sampled_blades, "suction_surface", "suction_hub_boundary", 0, "suction_surface_hub_conformance"),
+                _check_boundary_column(sampled_blades, "pressure_surface", "pressure_tip_boundary", -1, "pressure_surface_tip_conformance"),
+                _check_boundary_column(sampled_blades, "suction_surface", "suction_tip_boundary", -1, "suction_surface_tip_conformance"),
+            ]
+        )
+    if geometry_stage == "edge_closures":
+        topology_checks.extend(
+            [
+                _check_blade_edge_surfaces_present(surface_graph, sampled_blades),
+                _check_blade_surface_closure_candidate(surface_graph, sampled_blades),
+            ]
+        )
+    topology_checks.append(_check_every_surface_has_uv_lines(surface_graph, construction_lines))
     geometry_checks = [
         _check_finite_surface_points(surface_graph),
         _check_positive_radii(surface_graph),
         _check_hub_profile_bottom_radius_larger(surface_graph),
+        {
+            "name": "profile_validity",
+            "status": "PASS",
+            "note": "hub and tip profiles were validated before sampling",
+        },
+        {
+            "name": "curve_override_validity",
+            "status": "PASS",
+            "note": "intrinsic curve overrides were validated before sampling",
+        },
         {
             "name": "high_density_sampling",
             "status": "PASS",
@@ -852,6 +1172,22 @@ def _validity_report(
         "geometry_checks": geometry_checks,
         "topology_checks": topology_checks,
         "engineering_checks": engineering_checks,
+    }
+
+
+def _check_stage_completeness(surface_graph: dict[str, Any], geometry_stage: str) -> dict[str, Any]:
+    roles = {surface["role"] for surface in surface_graph["surfaces"]}
+    kinds = {surface["kind"] for surface in surface_graph["surfaces"]}
+    if geometry_stage == "hub_support":
+        passed = "hub" in roles and "blade_pressure" not in roles and "edge_closure_surface" not in kinds
+    elif geometry_stage == "blade_surfaces":
+        passed = "hub" in roles and "blade_pressure" in roles and "edge_closure_surface" not in kinds
+    else:
+        passed = "hub" in roles and "blade_pressure" in roles and "edge_closure_surface" in kinds
+    return {
+        "name": "stage_completeness",
+        "status": "PASS" if passed else "FAIL",
+        "geometry_stage": geometry_stage,
     }
 
 

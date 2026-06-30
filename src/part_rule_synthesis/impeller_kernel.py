@@ -13,10 +13,22 @@ V_COUNT = 5
 ROUND_DIGITS = 6
 
 
-def build_impeller_geometry(parameters: dict[str, Any], facets: dict[str, str]) -> dict[str, Any]:
+def build_impeller_geometry(
+    parameters: dict[str, Any],
+    facets: dict[str, str],
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+) -> dict[str, Any]:
     """Build deterministic impeller geometry metadata from one sampled meridional kernel."""
     if "blade_wrap_deg" in parameters:
-        return build_axisymmetric_throughflow_nurbs_geometry(parameters, facets)
+        return build_axisymmetric_throughflow_nurbs_geometry(
+            parameters,
+            facets,
+            profile_overrides=profile_overrides,
+            curve_overrides=curve_overrides,
+            geometry_stage=geometry_stage,
+        )
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
     hub_curve, tip_curve = _meridional_curves(params, resolved_facets)

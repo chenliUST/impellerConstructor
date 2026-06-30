@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from part_rule_synthesis.api import create_app
+from part_rule_synthesis.service import RuleSynthesisService
 
 
 def test_acceptance_ontology_and_primitives_are_queryable(tmp_path: Path):
@@ -127,6 +128,97 @@ def test_acceptance_impeller_manifest_includes_ontology_constructor_validity_los
     assert "topology_contracts" in manifest["validity"]
     assert "engineering_warnings" in manifest["validity"]
     assert manifest["loss_records"] == []
+
+
+def test_acceptance_impeller_instantiate_accepts_profile_curve_overrides_and_stage(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", "radial_open_reference", {})
+    default_run = service.instantiate(engine.engine_id, {})
+    hub = default_run.manifest["geometry_kernel"]["meridional_profiles"]["hub"]
+    tip = default_run.manifest["geometry_kernel"]["meridional_profiles"]["tip_or_shroud"]
+    edited_hub = {
+        **hub,
+        "control_points": [
+            [point[0] + (4.0 if index == 1 else 0.0), point[1]]
+            for index, point in enumerate(hub["control_points"])
+        ],
+    }
+
+    run = service.instantiate(
+        engine.engine_id,
+        {},
+        profile_overrides={"hub_profile": edited_hub, "tip_or_shroud_profile": tip},
+        geometry_stage="hub_support",
+    )
+
+    assert run.run_id != default_run.run_id
+    assert run.manifest["geometry_stage"] == "hub_support"
+    assert run.manifest["profile_overrides"]["hub_profile"]["control_points"] == edited_hub["control_points"]
+    assert run.manifest["curve_overrides"] == {}
+    assert all(
+        surface["role"] in {"hub", "outer_hub_shell", "inner_hub_bottom", "mounting_bore", "reference_only", "front_shroud_inner_surface"}
+        for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]
+    )
+
+
+def test_acceptance_impeller_instantiate_accepts_curve_overrides(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", "radial_open_reference", {})
+
+    run = service.instantiate(
+        engine.engine_id,
+        {},
+        curve_overrides={
+            "blade_mean": {
+                "theta_center_u_curve": {
+                    "coordinate_system": "u_theta_deg",
+                    "control_points": [[0.0, 0.0], [0.33, -20.0], [0.66, -70.0], [1.0, -118.0]],
+                },
+                "span_lean_u_curve": {
+                    "coordinate_system": "u_lean_deg",
+                    "control_points": [[0.0, 12.0], [0.5, 8.0], [1.0, -8.0]],
+                },
+            },
+            "blade_edges": {
+                "leading_edge_sweep_v_curve": {
+                    "coordinate_system": "v_support_u_offset",
+                    "control_points": [[0.0, -0.03], [0.5, 0.0], [1.0, 0.03]],
+                },
+                "trailing_edge_sweep_v_curve": {
+                    "coordinate_system": "v_support_u_offset",
+                    "control_points": [[0.0, 0.05], [0.5, 0.0], [1.0, -0.05]],
+                },
+            },
+            "thickness": {
+                "thickness_u_curve": {
+                    "coordinate_system": "u_thickness_mm",
+                    "control_points": [[0.0, 18.0], [0.5, 14.0], [1.0, 10.0]],
+                }
+            },
+        },
+        geometry_stage="blade_surfaces",
+    )
+
+    assert run.manifest["geometry_stage"] == "blade_surfaces"
+    assert run.manifest["curve_overrides"]["blade_mean"]["theta_center_u_curve"]["coordinate_system"] == "u_theta_deg"
+    assert any(surface["role"] == "blade_pressure" for surface in run.manifest["geometry"]["surface_graph"]["surfaces"])
+    assert not any(surface["kind"] == "edge_closure_surface" for surface in run.manifest["geometry"]["surface_graph"]["surfaces"])
+
+
+def test_acceptance_impeller_instantiate_rejects_invalid_geometry_stage(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference"},
+    ).json()
+
+    response = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}, "geometry_stage": "floating_blades"},
+    )
+
+    assert response.status_code == 400
+    assert "invalid geometry stage" in response.json()["detail"]
 
 
 def test_acceptance_open_and_closed_impellers_share_tip_support_surface_semantics(tmp_path: Path):

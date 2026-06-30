@@ -112,14 +112,27 @@ class RuleSynthesisService:
             validation={"status": "PASS", "checks": ["schema_valid", "required_relations_present"]},
         )
 
-    def instantiate(self, engine_id: str, parameters: dict[str, Any]) -> ModelRun:
+    def instantiate(
+        self,
+        engine_id: str,
+        parameters: dict[str, Any],
+        profile_overrides: dict[str, Any] | None = None,
+        curve_overrides: dict[str, Any] | None = None,
+        geometry_stage: str = "full",
+    ) -> ModelRun:
         dsl = self._engine(engine_id)
         bound = _bind_parameters(dsl, parameters)
         operation_graph = _operation_graph(dsl, bound)
+        normalized_geometry_stage = _normalize_geometry_stage(geometry_stage)
+        normalized_profile_overrides = profile_overrides or {}
+        normalized_curve_overrides = curve_overrides or {}
         graph_hash = _stable_hash(
             {
                 "dsl": dsl,
                 "parameters": bound,
+                "profile_overrides": normalized_profile_overrides,
+                "curve_overrides": normalized_curve_overrides,
+                "geometry_stage": normalized_geometry_stage,
                 "primitive_version": PRIMITIVES["version"],
                 "operation_graph": operation_graph,
             }
@@ -127,9 +140,24 @@ class RuleSynthesisService:
         run_id = f"run-{graph_hash[:12]}"
         run_dir = self.root / "model_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
-        exports = _write_exports(run_dir, dsl["part_family"], bound, dsl.get("facets", {}))
+        exports = _write_exports(
+            run_dir,
+            dsl["part_family"],
+            bound,
+            dsl.get("facets", {}),
+            profile_overrides=normalized_profile_overrides,
+            curve_overrides=normalized_curve_overrides,
+            geometry_stage=normalized_geometry_stage,
+        )
         export_strategy = _export_strategy(dsl["part_family"])
-        geometry_validity = _geometry_validity_metadata(dsl["part_family"], bound, dsl.get("facets", {}))
+        geometry_validity = _geometry_validity_metadata(
+            dsl["part_family"],
+            bound,
+            dsl.get("facets", {}),
+            profile_overrides=normalized_profile_overrides,
+            curve_overrides=normalized_curve_overrides,
+            geometry_stage=normalized_geometry_stage,
+        )
         manifest = {
             "run_id": run_id,
             "engine_id": engine_id,
@@ -146,11 +174,28 @@ class RuleSynthesisService:
             "rule_version": dsl["version"],
             "primitive_version": PRIMITIVES["version"],
             "parameters": bound,
+            "profile_overrides": normalized_profile_overrides,
+            "curve_overrides": normalized_curve_overrides,
+            "geometry_stage": normalized_geometry_stage,
             "operation_graph": operation_graph,
             "operation_graph_hash": graph_hash,
             "manifest_hash": _stable_hash({"operation_graph_hash": graph_hash, "exports": exports}),
-            "geometry_kernel": _geometry_kernel_metadata(dsl["part_family"], bound, dsl.get("facets", {})),
-            "geometry": _geometry_metadata(dsl["part_family"], bound, dsl.get("facets", {})),
+            "geometry_kernel": _geometry_kernel_metadata(
+                dsl["part_family"],
+                bound,
+                dsl.get("facets", {}),
+                profile_overrides=normalized_profile_overrides,
+                curve_overrides=normalized_curve_overrides,
+                geometry_stage=normalized_geometry_stage,
+            ),
+            "geometry": _geometry_metadata(
+                dsl["part_family"],
+                bound,
+                dsl.get("facets", {}),
+                profile_overrides=normalized_profile_overrides,
+                curve_overrides=normalized_curve_overrides,
+                geometry_stage=normalized_geometry_stage,
+            ),
             "shape_control": _manifest_shape_control(dsl.get("shape_control", {})),
             "validity": _manifest_validity(dsl, geometry_validity),
             "loss_records": [],
@@ -557,10 +602,27 @@ def _operation_graph(dsl: dict[str, Any], parameters: dict[str, Any]) -> list[di
     ]
 
 
-def _geometry_metadata(part_family: str, parameters: dict[str, Any], facets: dict[str, str] | None = None) -> dict[str, Any]:
+def _geometry_metadata(
+    part_family: str,
+    parameters: dict[str, Any],
+    facets: dict[str, str] | None = None,
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+) -> dict[str, Any]:
     is_impeller = part_family in {"centrifugal_impeller", "impeller"}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {}) if is_impeller else {}
-    impeller_geometry = build_impeller_geometry(parameters, resolved_facets) if is_impeller else {}
+    impeller_geometry = (
+        build_impeller_geometry(
+            parameters,
+            resolved_facets,
+            profile_overrides=profile_overrides,
+            curve_overrides=curve_overrides,
+            geometry_stage=geometry_stage,
+        )
+        if is_impeller
+        else {}
+    )
     blade_surface = impeller_geometry.get("blade_surface", {}) if is_impeller else {}
     curved_hub = is_impeller and parameters.get("hub_curve_height_mm", 0.0) > 0.0
     return {
@@ -588,19 +650,45 @@ def _geometry_metadata(part_family: str, parameters: dict[str, Any], facets: dic
     }
 
 
-def _geometry_kernel_metadata(part_family: str, parameters: dict[str, Any], facets: dict[str, str] | None = None) -> dict[str, Any]:
+def _geometry_kernel_metadata(
+    part_family: str,
+    parameters: dict[str, Any],
+    facets: dict[str, str] | None = None,
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+) -> dict[str, Any]:
     if part_family not in {"centrifugal_impeller", "impeller"}:
         return {}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {})
-    geometry = build_impeller_geometry(parameters, resolved_facets)
+    geometry = build_impeller_geometry(
+        parameters,
+        resolved_facets,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+    )
     return geometry["kernel"]
 
 
-def _geometry_validity_metadata(part_family: str, parameters: dict[str, Any], facets: dict[str, str] | None = None) -> dict[str, Any]:
+def _geometry_validity_metadata(
+    part_family: str,
+    parameters: dict[str, Any],
+    facets: dict[str, str] | None = None,
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+) -> dict[str, Any]:
     if part_family not in {"centrifugal_impeller", "impeller"}:
         return {}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {})
-    geometry = build_impeller_geometry(parameters, resolved_facets)
+    geometry = build_impeller_geometry(
+        parameters,
+        resolved_facets,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+    )
     return geometry["validity"]
 
 
@@ -640,6 +728,20 @@ def _manifest_shape_control(shape_control: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_geometry_stage(stage: str | None) -> str:
+    normalized = str(stage or "full")
+    aliases = {
+        "hub": "hub_support",
+        "blades": "blade_surfaces",
+        "edges": "edge_closures",
+        "full": "edge_closures",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"hub_support", "blade_surfaces", "edge_closures"}:
+        raise ValueError(f"invalid geometry stage: {stage}")
+    return normalized
+
+
 def _validation(part_family: str) -> dict[str, Any]:
     checks = (
         ["watertight_proxy", "embedded_contact_blade_root_hub", "named_regions_present"]
@@ -661,11 +763,28 @@ def _validation(part_family: str) -> dict[str, Any]:
     return {"status": "PASS", "checks": checks}
 
 
-def _write_exports(run_dir: Path, part_family: str, parameters: dict[str, Any], facets: dict[str, str] | None = None) -> dict[str, str]:
+def _write_exports(
+    run_dir: Path,
+    part_family: str,
+    parameters: dict[str, Any],
+    facets: dict[str, str] | None = None,
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+) -> dict[str, str]:
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
     if part_family in {"centrifugal_impeller", "impeller"}:
-        return _write_impeller_preview_exports(step, stl, part_family, parameters, facets or {})
+        return _write_impeller_preview_exports(
+            step,
+            stl,
+            part_family,
+            parameters,
+            facets or {},
+            profile_overrides=profile_overrides,
+            curve_overrides=curve_overrides,
+            geometry_stage=geometry_stage,
+        )
     try:
         import cadquery as cq
         from cadquery import exporters
@@ -736,9 +855,18 @@ def _write_impeller_preview_exports(
     part_family: str,
     parameters: dict[str, Any],
     facets: dict[str, str],
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
 ) -> dict[str, str]:
     resolved_facets = _resolved_impeller_facets(part_family, facets)
-    geometry = build_impeller_geometry(parameters, resolved_facets)
+    geometry = build_impeller_geometry(
+        parameters,
+        resolved_facets,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+    )
     step.write_text(
         "\n".join(
             [

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import gettempdir
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -20,6 +21,9 @@ class SynthesizeRequest(BaseModel):
 
 class InstantiateRequest(BaseModel):
     parameters: dict[str, float | int] = Field(default_factory=dict)
+    profile_overrides: dict[str, Any] | None = None
+    curve_overrides: dict[str, Any] | None = None
+    geometry_stage: str = "full"
 
 
 class FeedbackRequest(BaseModel):
@@ -80,7 +84,13 @@ def create_app(root: Path | None = None) -> FastAPI:
     @app.post("/api/rule-engines/{engine_id}/instantiate")
     def instantiate(engine_id: str, request: InstantiateRequest):
         try:
-            run = service.instantiate(engine_id, request.parameters)
+            run = service.instantiate(
+                engine_id,
+                request.parameters,
+                profile_overrides=request.profile_overrides,
+                curve_overrides=request.curve_overrides,
+                geometry_stage=request.geometry_stage,
+            )
             return {"run_id": run.run_id, "manifest": run.manifest}
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
