@@ -15,13 +15,18 @@ export function viewModeOptions() {
   ];
 }
 
-export function surfaceVisibleInView(surface, viewMode) {
+export function surfaceVisibleInView(surface, viewMode, manifest = null) {
   if (viewMode !== "cfd_full_360") {
     return true;
   }
-  return ![surface?.role, surface?.cfd_role, surface?.kind, surface?.assembly_role].some((role) =>
-    CFD_HIDDEN_ROLES.has(role),
-  );
+  if ([surface?.role, surface?.cfd_role, surface?.kind, surface?.assembly_role].some((role) => CFD_HIDDEN_ROLES.has(role))) {
+    return false;
+  }
+  const patchSurfaceIds = cfdPatchSurfaceIds(manifest);
+  if (patchSurfaceIds.size > 0) {
+    return patchSurfaceIds.has(surface?.id || surface?.surface_graph_id);
+  }
+  return Boolean(surface?.cfd_role);
 }
 
 export function cfdPatchGroups(manifest) {
@@ -56,6 +61,38 @@ export function patchSurfaceIds(manifest, selectedPatch) {
     }
   }
 
+  return surfaceIds;
+}
+
+export function patchBoundaryCurveIds(manifest, selectedPatch) {
+  const cfd = cfdFull360Manifest(manifest);
+  const group = cfd?.patch_groups?.[selectedPatch];
+  const instances = cfd?.patch_instances || {};
+  const boundaryIds = new Set();
+
+  for (const instanceId of group?.instances || []) {
+    const metadata = instances[instanceId] || {};
+    const boundaryId =
+      metadata.boundary_curve_id ||
+      (metadata.source_type === "boundary_curve" ? unscopedInstanceId(instanceId) : null);
+    if (boundaryId) {
+      boundaryIds.add(boundaryId);
+    }
+  }
+
+  return boundaryIds;
+}
+
+export function cfdPatchSurfaceIds(manifest) {
+  const surfaceIds = new Set();
+  for (const instance of cfdPatchInstances(manifest)) {
+    const surfaceId =
+      instance.surface_graph_id ||
+      (instance.source_type === "surface" ? unscopedInstanceId(instance.id) : null);
+    if (surfaceId) {
+      surfaceIds.add(surfaceId);
+    }
+  }
   return surfaceIds;
 }
 

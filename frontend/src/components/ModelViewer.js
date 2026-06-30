@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
-import { patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js";
+import { patchBoundaryCurveIds, patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js";
 import { defaultVisibleLayers, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
 
 const h = React.createElement;
@@ -97,12 +97,16 @@ export function ModelViewer({
 
   useEffect(() => {
     updateVisibility();
-  }, [viewMode, visibleLayers, simulationViewMode]);
+  }, [viewMode, visibleLayers, simulationViewMode, selectedPatch, manifest]);
 
   useEffect(() => {
-    renderConstructionLines(mergeConstructionLines(constructionLines, surfaceGraph));
+    const selectedBoundaryIds = patchBoundaryCurveIds(manifest, selectedPatch);
+    renderConstructionLines(
+      mergeConstructionLines(constructionLines, surfaceGraph, simulationViewMode, selectedBoundaryIds),
+      selectedBoundaryIds,
+    );
     updateVisibility();
-  }, [constructionLines, surfaceGraph]);
+  }, [constructionLines, surfaceGraph, simulationViewMode, selectedPatch, manifest]);
 
   useEffect(() => {
     if (!surfaceGraph?.surfaces?.length || !sceneRef.current) {
@@ -111,14 +115,18 @@ export function ModelViewer({
 
     setStatus("Rendering surface graph...");
     clearModel();
-    const visibleSurfaceGraph = filterSurfaceGraph(surfaceGraph, simulationViewMode);
+    const visibleSurfaceGraph = filterSurfaceGraph(surfaceGraph, simulationViewMode, manifest);
     const bounds = surfaceGraphBounds(visibleSurfaceGraph);
     centerRef.current.copy(bounds.center);
     const selectedSurfaceIds = patchSurfaceIds(manifest, selectedPatch);
+    const selectedBoundaryIds = patchBoundaryCurveIds(manifest, selectedPatch);
     const shaded = createSurfaceGraphGroup(visibleSurfaceGraph, bounds.center, simulationViewMode, selectedSurfaceIds);
     modelRef.current.shaded = shaded;
     sceneRef.current.add(shaded);
-    renderConstructionLines(mergeConstructionLines(constructionLines, surfaceGraph));
+    renderConstructionLines(
+      mergeConstructionLines(constructionLines, surfaceGraph, simulationViewMode, selectedBoundaryIds),
+      selectedBoundaryIds,
+    );
     frameCamera(bounds.radius || 1000);
     updateVisibility();
     setStatus("Surface graph rendered");
@@ -194,7 +202,9 @@ export function ModelViewer({
       });
     }
     if (constructionGroup) {
-      const showConstruction = viewMode !== "shaded" && simulationViewMode !== "cfd_full_360";
+      const showConstruction =
+        viewMode !== "shaded" &&
+        (simulationViewMode !== "cfd_full_360" || constructionGroup.userData.hasCfdBoundarySelection);
       constructionGroup.visible = showConstruction;
       constructionGroup.traverse((child) => {
         if (child.isLineSegments && child.userData.layer) {
@@ -232,12 +242,13 @@ export function ModelViewer({
     modelRef.current.constructionGroup = null;
   }
 
-  function renderConstructionLines(linesByFeature) {
+  function renderConstructionLines(linesByFeature, selectedBoundaryIds = new Set()) {
     if (!sceneRef.current) {
       return;
     }
     clearConstructionGroup();
-    const group = createConstructionGroup(linesByFeature || {}, centerRef.current);
+    const group = createConstructionGroup(linesByFeature || {}, centerRef.current, selectedBoundaryIds);
+    group.userData.hasCfdBoundarySelection = selectedBoundaryIds.size > 0;
     if (group.children.length === 0) {
       return;
     }
@@ -387,10 +398,10 @@ function surfaceGridGeometry(grid, center) {
   return geometry;
 }
 
-function filterSurfaceGraph(surfaceGraph, simulationViewMode) {
+function filterSurfaceGraph(surfaceGraph, simulationViewMode, manifest) {
   return {
     ...(surfaceGraph || {}),
-    surfaces: (surfaceGraph?.surfaces || []).filter((surface) => surfaceVisibleInView(surface, simulationViewMode)),
+    surfaces: (surfaceGraph?.surfaces || []).filter((surface) => surfaceVisibleInView(surface, simulationViewMode, manifest)),
   };
 }
 
@@ -418,7 +429,7 @@ function surfaceGraphBounds(surfaceGraph) {
   return { center, radius: size.length() * 0.5 };
 }
 
-function createConstructionGroup(linesByFeature, center) {
+function createConstructionGroup(linesByFeature, center, selectedBoundaryIds = new Set()) {
   const group = new THREE.Group();
   const colors = {
     hub: "#0f766e",
@@ -446,10 +457,11 @@ function createConstructionGroup(linesByFeature, center) {
       }
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      const isSelectedBoundary = selectedBoundaryIds.has(line.name);
       const material = new THREE.LineBasicMaterial({
-        color: line.color || colors[feature] || "#1d2a32",
+        color: isSelectedBoundary ? "#f97316" : line.color || colors[feature] || "#1d2a32",
         transparent: true,
-        opacity: feature === "blade_boundaries" || feature === "blade_edges" || feature === "named_boundary_curve" ? 1.0 : feature === "blade_u" || feature === "blade_v" || feature === "blade" || feature === "surface_uv" ? 0.82 : 0.72,
+        opacity: isSelectedBoundary ? 1.0 : feature === "blade_boundaries" || feature === "blade_edges" || feature === "named_boundary_curve" ? 1.0 : feature === "blade_u" || feature === "blade_v" || feature === "blade" || feature === "surface_uv" ? 0.82 : 0.72,
       });
       const lineSegments = new THREE.LineSegments(geometry, material);
       lineSegments.userData.layer = layerForConstructionFeature(feature);
@@ -460,11 +472,18 @@ function createConstructionGroup(linesByFeature, center) {
   return group;
 }
 
-function mergeConstructionLines(constructionLines, surfaceGraph) {
-  const merged = { ...(constructionLines || {}) };
+function mergeConstructionLines(constructionLines, surfaceGraph, simulationViewMode = "cad_review_360", selectedBoundaryIds = new Set()) {
+  const merged = simulationViewMode === "cfd_full_360" ? {} : { ...(constructionLines || {}) };
   const namedBoundaryCurves = surfaceGraph?.named_boundary_curves || [];
-  if (namedBoundaryCurves.length > 0) {
-    merged.named_boundary_curve = namedBoundaryCurves.map((curve) => ({
+  const visibleBoundaryCurves =
+    simulationViewMode === "cfd_full_360" && selectedBoundaryIds.size > 0
+      ? namedBoundaryCurves.filter((curve) => selectedBoundaryIds.has(curve.id))
+      : namedBoundaryCurves;
+  const shouldEmitBoundaryCurves =
+    visibleBoundaryCurves.length > 0 &&
+    (simulationViewMode !== "cfd_full_360" || selectedBoundaryIds.size > 0);
+  if (shouldEmitBoundaryCurves) {
+    merged.named_boundary_curve = visibleBoundaryCurves.map((curve) => ({
       name: curve.id,
       role: curve.role,
       blade_index: curve.blade_index,

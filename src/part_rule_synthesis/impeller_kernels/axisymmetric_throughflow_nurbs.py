@@ -291,14 +291,18 @@ def _default_profile_definitions(
     hub_bottom_radius = outlet * 0.92
     hub_cp = [
         [hub_top_radius, hub_top_z + radial_span * 0.03 * flow_lift],
-        [inlet + radial_span * 0.18, hub_top_z * 0.78 + radial_span * 0.025 * flow_lift],
-        [inlet + radial_span * 0.70, hub_top_z * 0.22 + radial_span * 0.012 * flow_lift],
+        [inlet + radial_span * 0.10, hub_top_z * 0.92 + radial_span * 0.028 * flow_lift],
+        [inlet + radial_span * 0.28, hub_top_z * 0.70 + radial_span * 0.022 * flow_lift],
+        [inlet + radial_span * 0.52, hub_top_z * 0.40 + radial_span * 0.016 * flow_lift],
+        [inlet + radial_span * 0.78, hub_top_z * 0.14 + radial_span * 0.008 * flow_lift],
         [hub_bottom_radius, 0.0],
     ]
     tip_cp = [
         [inlet, hub_cp[0][1] + inlet_height],
-        [inlet + radial_span * 0.24, hub_cp[1][1] + inlet_height * 0.86 + radial_span * 0.025 * flow_lift],
-        [inlet + radial_span * 0.72, hub_cp[2][1] + outlet_height * 1.18 + radial_span * 0.018 * flow_lift],
+        [inlet + radial_span * 0.12, hub_cp[1][1] + inlet_height * 0.96 + radial_span * 0.028 * flow_lift],
+        [inlet + radial_span * 0.34, hub_cp[2][1] + inlet_height * 0.75 + radial_span * 0.024 * flow_lift],
+        [inlet + radial_span * 0.58, hub_cp[3][1] + outlet_height * 1.45 + radial_span * 0.020 * flow_lift],
+        [inlet + radial_span * 0.84, hub_cp[4][1] + outlet_height * 1.18 + radial_span * 0.012 * flow_lift],
         [outlet, hub_cp[-1][1] + outlet_height],
     ]
     return _nurbs_curve("hub_profile", hub_cp), _nurbs_curve("tip_or_shroud_profile", tip_cp)

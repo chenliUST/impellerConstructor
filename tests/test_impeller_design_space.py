@@ -171,6 +171,14 @@ def test_service_manifest_adds_campaign_signature_only_for_v04(tmp_path):
     assert signature["preset_id"] == "radial_open_reference_v0_4"
     assert signature["profile_topology"]["hub_profile"]["control_point_count"] == 6
     assert signature["profile_topology"]["tip_profile"]["control_point_count"] == 6
+    assert (
+        len(v04_run.manifest["geometry_kernel"]["meridional_profiles"]["hub"]["control_points"])
+        == signature["profile_topology"]["hub_profile"]["control_point_count"]
+    )
+    assert (
+        len(v04_run.manifest["geometry_kernel"]["meridional_profiles"]["tip_or_shroud"]["control_points"])
+        == signature["profile_topology"]["tip_profile"]["control_point_count"]
+    )
     assert signature["profile_topology"]["blade_surface"]["guide_curve_count"] == 3
     assert signature["profile_topology"]["blade_surface"]["spanwise_layer_count"] == 4
     assert "tip_or_shroud_profile" not in signature["profile_topology"]

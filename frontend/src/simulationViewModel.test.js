@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import {
   cfdPatchGroups,
   cfdPatchInstances,
+  patchBoundaryCurveIds,
   patchSurfaceIds,
   surfaceVisibleInView,
   viewModeOptions,
@@ -23,6 +24,21 @@ describe("simulation view model", () => {
     assert.equal(surfaceVisibleInView({ role: "mounting_bore" }, "cfd_full_360"), false);
     assert.equal(surfaceVisibleInView({ cfd_role: "blade_pressure" }, "cfd_full_360"), true);
     assert.equal(surfaceVisibleInView({ role: "construction_support_only" }, "cad_review_360"), true);
+  });
+
+  test("surfaceVisibleInView uses manifest patch surfaces as the cfd whitelist", () => {
+    const manifest = {
+      simulation_manifests: {
+        cfd_full_360: {
+          patch_instances: {
+            hub: { source_type: "surface", surface_graph_id: "hub_revolve_surface" },
+          },
+        },
+      },
+    };
+
+    assert.equal(surfaceVisibleInView({ id: "hub_revolve_surface", cfd_role: "hub_wall" }, "cfd_full_360", manifest), true);
+    assert.equal(surfaceVisibleInView({ id: "inner_hub_bottom_face", role: "inner_hub_bottom" }, "cfd_full_360", manifest), false);
   });
 
   test("cfdPatchGroups and cfdPatchInstances return sorted arrays", () => {
@@ -83,5 +99,6 @@ describe("simulation view model", () => {
       "blade_01_pressure_surface",
     ]);
     assert.deepEqual([...patchSurfaceIds(manifest, "inlet_patch")], []);
+    assert.deepEqual([...patchBoundaryCurveIds(manifest, "inlet_patch")], ["blade_00_leading_edge_boundary"]);
   });
 });

@@ -94,8 +94,8 @@ describe("impeller frontend model", () => {
   });
 
   test("presets include focused open and closed NURBS throughflow studies", () => {
-    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_3");
-    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_3");
+    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_4");
+    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_4");
 
     assert.ok(open);
     assert.ok(closed);
