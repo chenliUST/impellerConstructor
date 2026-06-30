@@ -96,6 +96,39 @@ def test_acceptance_legacy_impeller_preset_alias_compiles_to_new_constructor_fam
     assert rule["shape_control"]["locked_topology"] is True
 
 
+def test_acceptance_impeller_manifest_includes_ontology_constructor_validity_loss_and_shape_control(
+    tmp_path: Path,
+):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference"},
+    ).json()
+
+    manifest = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}},
+    ).json()["manifest"]
+
+    assert manifest["ontology_slice"] == "impeller.axisymmetric_throughflow_radial_bladed"
+    assert manifest["constructor_family"] == "AxisymmetricThroughflowRadialBladedImpeller"
+    assert manifest["constructor_id"] == "axisymmetric_throughflow_radial_bladed.open"
+    assert manifest["dsl_version"] == "0.2"
+    assert manifest["shape_control"]["optimization_stage"] == 1
+    assert manifest["shape_control"]["locked_topology"] is True
+    assert manifest["shape_control"]["shape_optimization_space"]["editable_variables"]
+    assert manifest["shape_control"]["provenance"]["source"] in {
+        "default_rule",
+        "explicit_dsl_control_net",
+        "human_patch",
+        "optimizer_patch",
+    }
+    assert "geometry_contracts" in manifest["validity"]
+    assert "topology_contracts" in manifest["validity"]
+    assert "engineering_warnings" in manifest["validity"]
+    assert manifest["loss_records"] == []
+
+
 def test_acceptance_impeller_rule_engine_records_facets_rules_and_construction_lines(tmp_path: Path):
     client = TestClient(create_app(tmp_path))
 

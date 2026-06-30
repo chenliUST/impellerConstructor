@@ -129,11 +129,16 @@ class RuleSynthesisService:
         run_dir.mkdir(parents=True, exist_ok=True)
         exports = _write_exports(run_dir, dsl["part_family"], bound, dsl.get("facets", {}))
         export_strategy = _export_strategy(dsl["part_family"])
+        geometry_validity = _geometry_validity_metadata(dsl["part_family"], bound, dsl.get("facets", {}))
         manifest = {
             "run_id": run_id,
             "engine_id": engine_id,
             "part_family": dsl["part_family"],
             "preset_id": dsl.get("preset_id"),
+            "ontology_slice": dsl.get("ontology_slice"),
+            "constructor_family": dsl.get("constructor_family"),
+            "constructor_id": dsl.get("constructor_id"),
+            "dsl_version": _dsl_version(dsl),
             "facets": dsl.get("facets", {}),
             "selected_rules": dsl.get("selected_rules", []),
             "rule_implications": dsl.get("rule_implications", {}),
@@ -146,7 +151,10 @@ class RuleSynthesisService:
             "manifest_hash": _stable_hash({"operation_graph_hash": graph_hash, "exports": exports}),
             "geometry_kernel": _geometry_kernel_metadata(dsl["part_family"], bound, dsl.get("facets", {})),
             "geometry": _geometry_metadata(dsl["part_family"], bound, dsl.get("facets", {})),
-            "geometry_validity": _geometry_validity_metadata(dsl["part_family"], bound, dsl.get("facets", {})),
+            "shape_control": _manifest_shape_control(dsl.get("shape_control", {})),
+            "validity": _manifest_validity(dsl, geometry_validity),
+            "loss_records": [],
+            "geometry_validity": geometry_validity,
             "validation": _validation(dsl["part_family"]),
             "source_refs": dsl.get("source_refs", []),
             "export_strategy": export_strategy,
@@ -594,6 +602,42 @@ def _geometry_validity_metadata(part_family: str, parameters: dict[str, Any], fa
     resolved_facets = _resolved_impeller_facets(part_family, facets or {})
     geometry = build_impeller_geometry(parameters, resolved_facets)
     return geometry["validity"]
+
+
+def _dsl_version(dsl: dict[str, Any]) -> str:
+    dsl_sections = dsl.get("dsl_sections", {})
+    if "dsl_version" in dsl_sections:
+        return dsl_sections["dsl_version"]
+    version = str(dsl.get("version", ""))
+    return version[:-2] if version.endswith(".0") else version
+
+
+def _manifest_validity(dsl: dict[str, Any], geometry_validity: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": geometry_validity.get("status", "PASS") if geometry_validity else "PASS",
+        "geometry_contracts": geometry_validity.get("geometry_checks", []),
+        "topology_contracts": geometry_validity.get("topology_checks", []),
+        "engineering_warnings": geometry_validity.get("engineering_checks", []),
+        "declared_contracts": dsl.get("validity_contracts", {}),
+    }
+
+
+def _manifest_shape_control(shape_control: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": shape_control.get("schema_version", "0.2"),
+        "optimization_stage": shape_control.get("optimization_stage", 1),
+        "locked_topology": shape_control.get("locked_topology", True),
+        "active_policies": shape_control.get("active_policies", []),
+        "semantic_handles": shape_control.get("semantic_handles", []),
+        "shape_optimization_space": {
+            "editable_variables": shape_control.get("editable_variables", []),
+            "optimizable_variables": shape_control.get("optimizable_variables", []),
+            "locked_topology": shape_control.get("locked_topology", True),
+        },
+        "provenance": {
+            "source": "default_rule",
+        },
+    }
 
 
 def _validation(part_family: str) -> dict[str, Any]:
