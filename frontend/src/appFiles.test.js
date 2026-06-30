@@ -47,10 +47,30 @@ describe("frontend application files", () => {
     assert.match(panelSource, /type:\s*"number"/);
   });
 
-  test("viewer gives blade edge construction lines a dedicated visible layer", () => {
+  test("parameter panel renders ontology DSL parameter groups", () => {
+    const panelSource = readFileSync(resolve(root, "src/components/ParameterPanel.js"), "utf-8");
+
+    assert.match(panelSource, /parameterGroups/);
+    assert.match(panelSource, /parameter-group/);
+    assert.match(panelSource, /blade_boundaries/);
+    assert.match(panelSource, /controlKind/);
+  });
+
+  test("manifest panel exposes ontology constructor and shape-control metadata", () => {
+    const panelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(panelSource, /ontology_slice/);
+    assert.match(panelSource, /constructor_family/);
+    assert.match(panelSource, /constructor_id/);
+    assert.match(panelSource, /shape_control/);
+    assert.match(panelSource, /optimization_stage/);
+  });
+
+  test("viewer gives blade boundary construction lines and named boundaries dedicated layers", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 
-    assert.match(viewerSource, /blade_edges/);
+    assert.match(viewerSource, /blade_boundaries/);
+    assert.match(viewerSource, /named_boundary_curve/);
     assert.match(viewerSource, /edge_closure_surface/);
   });
 });

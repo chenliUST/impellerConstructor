@@ -93,9 +93,9 @@ export function ModelViewer({
   }, [viewMode]);
 
   useEffect(() => {
-    renderConstructionLines(constructionLines);
+    renderConstructionLines(mergeConstructionLines(constructionLines, surfaceGraph));
     updateVisibility();
-  }, [constructionLines]);
+  }, [constructionLines, surfaceGraph]);
 
   useEffect(() => {
     if (!surfaceGraph?.surfaces?.length || !sceneRef.current) {
@@ -109,7 +109,7 @@ export function ModelViewer({
     const shaded = createSurfaceGraphGroup(surfaceGraph, bounds.center);
     modelRef.current.shaded = shaded;
     sceneRef.current.add(shaded);
-    renderConstructionLines(constructionLines);
+    renderConstructionLines(mergeConstructionLines(constructionLines, surfaceGraph));
     frameCamera(bounds.radius || 1000);
     updateVisibility();
     setStatus("Surface graph rendered");
@@ -156,7 +156,7 @@ export function ModelViewer({
 
         modelRef.current.shaded = shaded;
         sceneRef.current.add(shaded);
-        renderConstructionLines(constructionLines);
+        renderConstructionLines(mergeConstructionLines(constructionLines, surfaceGraph));
         frameCamera(geometry.boundingSphere?.radius || 1000);
         updateVisibility();
         setStatus("STL loaded");
@@ -282,7 +282,9 @@ function createSurfaceGraphGroup(surfaceGraph, center) {
   const colors = {
     hub: "#7aa58f",
     open_tip_reference: "#b5c7a0",
+    reference_only: "#b5c7a0",
     shroud: "#9db7c5",
+    front_shroud_inner_surface: "#9db7c5",
     blade_pressure: "#6f9b85",
     blade_suction: "#5d806f",
     blade_leading_edge_closure: "#f59e0b",
@@ -306,7 +308,7 @@ function createSurfaceGraphGroup(surfaceGraph, center) {
       metalness: 0.16,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: display.opacity ?? (surface.role === "open_tip_reference" ? 0.3 : isEdgeClosure ? 1.0 : 0.92),
+      opacity: display.opacity ?? (surface.role === "open_tip_reference" || surface.role === "reference_only" ? 0.3 : isEdgeClosure ? 1.0 : 0.92),
     });
     group.add(new THREE.Mesh(geometry, material));
   }
@@ -372,7 +374,9 @@ function createConstructionGroup(linesByFeature, center) {
     blade: "#162b36",
     blade_u: "#0f2f3f",
     blade_v: "#28666e",
+    blade_boundaries: "#f59e0b",
     blade_edges: "#f59e0b",
+    named_boundary_curve: "#f59e0b",
     shroud: "#b4512a",
     passage: "#b86125",
     surface_uv: "#315f72",
@@ -394,13 +398,39 @@ function createConstructionGroup(linesByFeature, center) {
       const material = new THREE.LineBasicMaterial({
         color: line.color || colors[feature] || "#1d2a32",
         transparent: true,
-        opacity: feature === "blade_edges" ? 1.0 : feature === "blade_u" || feature === "blade_v" || feature === "blade" || feature === "surface_uv" ? 0.82 : 0.72,
+        opacity: feature === "blade_boundaries" || feature === "blade_edges" || feature === "named_boundary_curve" ? 1.0 : feature === "blade_u" || feature === "blade_v" || feature === "blade" || feature === "surface_uv" ? 0.82 : 0.72,
       });
       group.add(new THREE.LineSegments(geometry, material));
     }
   }
 
   return group;
+}
+
+function mergeConstructionLines(constructionLines, surfaceGraph) {
+  const merged = { ...(constructionLines || {}) };
+  const namedBoundaryCurves = surfaceGraph?.named_boundary_curves || [];
+  if (namedBoundaryCurves.length > 0) {
+    merged.named_boundary_curve = namedBoundaryCurves.map((curve) => ({
+      name: curve.id,
+      role: curve.role,
+      blade_index: curve.blade_index,
+      source: "surface_graph.named_boundary_curve",
+      points: curve.points || [],
+      color: boundaryCurveColor(curve.role),
+    }));
+  }
+  return merged;
+}
+
+function boundaryCurveColor(role) {
+  const colors = {
+    blade_root_boundary: "#22c55e",
+    blade_tip_boundary: "#38bdf8",
+    leading_edge_boundary: "#f59e0b",
+    trailing_edge_boundary: "#ef4444",
+  };
+  return colors[role] || "#f59e0b";
 }
 
 function pushPoint(positions, point, center) {

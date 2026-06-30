@@ -1,10 +1,17 @@
 import React from "react";
 
-import { parameterSchema } from "../appModel.js";
+import { parameterGroups, parameterSchema } from "../appModel.js";
 
 const h = React.createElement;
 
 export function ParameterPanel({ parameters, onChange, onGenerate, onReset, loading }) {
+  const groupedParameters = parameterGroups
+    .map((group) => ({
+      ...group,
+      entries: Object.entries(parameterSchema).filter(([, spec]) => spec.group === group.id),
+    }))
+    .filter((group) => group.entries.length > 0);
+
   return h(
     "section",
     { className: "panel-section parameter-panel" },
@@ -12,23 +19,34 @@ export function ParameterPanel({ parameters, onChange, onGenerate, onReset, load
     h(
       "div",
       { className: "parameter-list" },
-      Object.entries(parameterSchema).map(([name, spec]) =>
+      groupedParameters.map((group) =>
         h(
-          "label",
-          { className: "parameter-row", key: name },
-          h(
-            "span",
-            { className: "parameter-label" },
-            h("span", null, spec.label),
-            spec.unit ? h("small", null, spec.unit) : null,
+          "section",
+          {
+            className: `parameter-group${group.id === "blade_boundaries" ? " boundary-parameter-group" : ""}`,
+            "data-group": group.id,
+            key: group.id,
+          },
+          h("h3", null, group.label),
+          group.entries.map(([name, spec]) =>
+            h(
+              "label",
+              { className: "parameter-row", key: name },
+              h(
+                "span",
+                { className: "parameter-label" },
+                h("span", null, spec.label),
+                h("small", null, spec.controlKind || spec.unit || ""),
+              ),
+              h("input", {
+                className: "number-input",
+                type: "number",
+                step: spec.step,
+                value: parameters[name],
+                onChange: (event) => onChange(name, event.target.value),
+              }),
+            ),
           ),
-          h("input", {
-            className: "number-input",
-            type: "number",
-            step: spec.step,
-            value: parameters[name],
-            onChange: (event) => onChange(name, event.target.value),
-          }),
         ),
       ),
     ),
