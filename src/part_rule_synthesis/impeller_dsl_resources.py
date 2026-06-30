@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,8 @@ class ImpellerDslBundle:
     shape_controls: dict[str, Any]
     presets: dict[str, dict[str, Any]]
     aliases: dict[str, str]
-    simulation_views: dict[str, dict[str, Any]]
+    simulation_views: dict[str, dict[str, Any]] = field(default_factory=dict)
+    simulation_view_refs: dict[str, str] = field(default_factory=dict)
 
 
 def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslBundle:
@@ -39,10 +40,10 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
     constructors = _load_json_directory_by_id(dsl_root / "constructors", "constructor_id")
     presets = _load_json_directory_by_id(dsl_root / "presets", "preset_id")
     aliases = _read_json(dsl_root / "aliases.json")["legacy_preset_aliases"]
-    simulation_views = (
-        _load_json_directory_by_id(dsl_root / "simulation_views", "view_id")
+    simulation_views, simulation_view_refs = (
+        _load_simulation_views(dsl_root / "simulation_views")
         if (dsl_root / "simulation_views").exists()
-        else {}
+        else ({}, {})
     )
     shape_controls = _read_json(dsl_root / "shape_controls" / "default_shape_controls.json")
     if "policies" not in shape_controls:
@@ -73,6 +74,7 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
         presets=presets,
         aliases=aliases,
         simulation_views=simulation_views,
+        simulation_view_refs=simulation_view_refs,
     )
     _validate_bundle(bundle)
     return bundle
@@ -92,6 +94,17 @@ def _load_json_directory_by_id(path: Path, id_field: str) -> dict[str, dict[str,
         item = _read_json(item_path)
         items[item[id_field]] = item
     return items
+
+
+def _load_simulation_views(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    views = {}
+    refs = {}
+    for item_path in sorted(path.glob("*.json")):
+        item = _read_json(item_path)
+        view_id = item["view_id"]
+        views[view_id] = item
+        refs[f"{path.name}/{item_path.name}"] = view_id
+    return views, refs
 
 
 def _validate_bundle(bundle: ImpellerDslBundle) -> None:
@@ -116,6 +129,7 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
             raise ValueError(f"constructor {constructor_id} missing sections: {sorted(missing)}")
         if constructor["shape_control"]["shape_control_ref"] != "shape_controls/default_shape_controls.json":
             raise ValueError(f"constructor {constructor_id} references unsupported shape control policy")
+        _validate_constructor_simulation_view_refs(bundle, constructor_id, constructor)
     for preset_id, preset in bundle.presets.items():
         if preset["preset_id"] != preset_id:
             raise ValueError(f"preset id mismatch: {preset_id}")
@@ -136,3 +150,23 @@ def _validate_shape_control_policies(bundle: ImpellerDslBundle) -> None:
             raise ValueError(f"shape-control target mismatch: {target_entity}")
         if policy["representation"] not in allowed:
             raise ValueError(f"unsupported representation for {target_entity}: {policy['representation']}")
+
+
+def _validate_constructor_simulation_view_refs(
+    bundle: ImpellerDslBundle,
+    constructor_id: str,
+    constructor: dict[str, Any],
+) -> None:
+    for view_id, view in constructor.get("simulation_views", {}).items():
+        view_ref = view.get("view_ref")
+        if view_ref is None:
+            continue
+        if bundle.simulation_view_refs and view_ref not in bundle.simulation_view_refs:
+            raise ValueError(f"constructor {constructor_id} simulation view ref unresolved: {view_ref}")
+        resolved_view_id = bundle.simulation_view_refs.get(view_ref, view_id)
+        if resolved_view_id not in bundle.simulation_views:
+            raise ValueError(f"constructor {constructor_id} simulation view ref unresolved: {view_ref}")
+        if resolved_view_id != view_id:
+            raise ValueError(
+                f"constructor {constructor_id} simulation view {view_id} ref resolves to {resolved_view_id}"
+            )

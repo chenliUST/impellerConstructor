@@ -47,6 +47,7 @@ def compile_impeller_runtime_preset(
     _validate_facets(bundle, facets)
     shape_control = normalize_shape_control_space(bundle.shape_control_schema, bundle.shape_controls)
     shape_control["shape_control_version"] = bundle.shape_controls["shape_control_version"]
+    simulation_views = _simulation_views_for_constructor(bundle, constructor)
     dsl_version = str(bundle.schema["dsl_version"])
     return {
         "version": f"{dsl_version}.0",
@@ -60,7 +61,7 @@ def compile_impeller_runtime_preset(
         "parameters": _parameter_specs(preset["parameter_values"]),
         "features": _features_for_constructor(constructor),
         "constraints": _constraints_for_constructor(constructor),
-        "selected_rules": _selected_rules(bundle, constructor),
+        "selected_rules": _selected_rules(bundle, constructor, simulation_views),
         "rule_implications": _rule_implications(constructor),
         "unsupported_or_inferred_regions": _inferred_regions(constructor),
         "dsl_sections": constructor,
@@ -68,7 +69,7 @@ def compile_impeller_runtime_preset(
         "material_domain": constructor.get("material_domain", {}),
         "solid_features": constructor.get("solid_features", {}),
         "feature_graph": constructor.get("feature_graph", {}),
-        "simulation_views": bundle.simulation_views,
+        "simulation_views": simulation_views,
         "shape_control": shape_control,
         "validity_contracts": bundle.validity_contracts,
         "loss_schema": bundle.loss_schema,
@@ -171,8 +172,28 @@ def _constraints_for_constructor(constructor: dict[str, Any]) -> list[str]:
     return constraints
 
 
-def _selected_rules(bundle: Any, constructor: dict[str, Any]) -> list[str]:
+def _simulation_views_for_constructor(
+    bundle: ImpellerDslBundle,
+    constructor: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    resolved = {}
+    for view_id, view in constructor.get("simulation_views", {}).items():
+        view_ref = view.get("view_ref")
+        if view_ref is None:
+            resolved[view_id] = view
+            continue
+        resolved_view_id = bundle.simulation_view_refs.get(view_ref, view_id)
+        resolved[view_id] = bundle.simulation_views[resolved_view_id]
+    return resolved
+
+
+def _selected_rules(
+    bundle: Any,
+    constructor: dict[str, Any],
+    simulation_views: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
     if bundle.schema["dsl_version"] == "0.4":
+        view_ids = simulation_views or constructor.get("simulation_views", {})
         return [
             f"ontology_slice.{bundle.slice['slice_id']}",
             f"constructor_family.{bundle.slice['constructor_family']}",
@@ -180,7 +201,7 @@ def _selected_rules(bundle: Any, constructor: dict[str, Any]) -> list[str]:
             "design_space.campaign_freeze_rule",
             "surface_graph_contract.named_surfaces_required",
             "feature_graph_contract.features_are_first_class_nodes",
-            "simulation_views.cfd_full_360",
+            *(f"simulation_views.{view_id}" for view_id in view_ids),
         ]
     return [
         f"ontology_slice.{bundle.slice['slice_id']}",

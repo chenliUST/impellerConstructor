@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
+
 import pytest
 
-from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
+from part_rule_synthesis.impeller_dsl_resources import _validate_bundle, load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
 
 
@@ -43,6 +46,24 @@ def test_load_impeller_dsl_bundle_v04_exposes_design_space_and_simulation_views(
     assert bundle.shape_controls["shape_control_version"] == "0.4"
     assert "design_space" in bundle.shape_controls
     assert "simulation_views" in bundle.schema["required_sections"]
+    assert set(bundle.simulation_views) == {"cfd_full_360", "fea_solid"}
+    assert {
+        view_id: view["view_id"] for view_id, view in bundle.simulation_views.items()
+    } == {
+        "cfd_full_360": "cfd_full_360",
+        "fea_solid": "fea_solid",
+    }
+
+
+def test_load_impeller_dsl_bundle_v04_rejects_missing_simulation_view_refs():
+    bundle = load_impeller_dsl_bundle("v0_4")
+    constructors = deepcopy(bundle.constructors)
+    constructor = constructors["axisymmetric_throughflow_radial_bladed.open.v0_4"]
+    constructor["simulation_views"]["cfd_full_360"]["view_ref"] = "simulation_views/missing.json"
+    broken_bundle = replace(bundle, constructors=constructors)
+
+    with pytest.raises(ValueError, match="simulation view ref"):
+        _validate_bundle(broken_bundle)
 
 
 def test_compile_impeller_runtime_preset_resolves_legacy_alias_and_preserves_api_fields():
@@ -90,8 +111,16 @@ def test_compile_impeller_runtime_preset_v04_exposes_graph_contracts():
     assert runtime["constructor_id"] == "axisymmetric_throughflow_radial_bladed.open.v0_4"
     assert runtime["dsl_sections"]["dsl_version"] == "0.4"
     assert runtime["shape_control"]["shape_control_version"] == "0.4"
+    assert set(runtime["simulation_views"]) == {"cad_review_360", "cfd_full_360", "fea_solid"}
+    assert runtime["simulation_views"]["cad_review_360"]["domain_kind"] == "full_360_solid_or_surface"
     assert runtime["simulation_views"]["cfd_full_360"]["domain_kind"] == "full_360_wetted_surface"
+    assert runtime["simulation_views"]["fea_solid"]["view_id"] == "fea_solid"
     assert runtime["feature_graph"]["assembly_features"]["mounting_bore"]["kind"] == "axisymmetric_subtractive_cylinder"
+    assert {
+        "simulation_views.cad_review_360",
+        "simulation_views.cfd_full_360",
+        "simulation_views.fea_solid",
+    } <= set(runtime["selected_rules"])
 
 
 def test_compile_impeller_runtime_preset_rejects_unknown_preset():
