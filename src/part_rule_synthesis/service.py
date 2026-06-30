@@ -9,6 +9,8 @@ from typing import Any
 from uuid import uuid4
 
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
+from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
+from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
 from part_rule_synthesis.impeller_taxonomy import (
     IMPELLER_FACET_AXES,
     IMPELLER_PRESETS,
@@ -34,6 +36,9 @@ PRIMITIVES = {
         "mesh_export",
     ],
 }
+
+_IMPELLER_DSL_BUNDLE = load_impeller_dsl_bundle()
+_JSON_IMPELLER_PRESET_IDS = set(_IMPELLER_DSL_BUNDLE.presets) | set(_IMPELLER_DSL_BUNDLE.aliases)
 
 
 @dataclass(frozen=True)
@@ -297,6 +302,8 @@ def _dsl_template(part_family: str) -> dict[str, Any]:
 
 def _impeller_dsl_template(preset_id: str | None, facet_overrides: dict[str, str]) -> dict[str, Any]:
     resolved_preset_id = preset_id or "radial_open_backward_single_reference"
+    if preset_id in _JSON_IMPELLER_PRESET_IDS:
+        return compile_impeller_runtime_preset(preset_id, facet_overrides)
     if resolved_preset_id not in IMPELLER_PRESETS:
         raise ValueError(f"unknown impeller preset: {resolved_preset_id}")
     preset = IMPELLER_PRESETS[resolved_preset_id]

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -56,6 +57,43 @@ def test_acceptance_impeller_ontology_exposes_facets_and_presets(tmp_path: Path)
         }
     )
     assert all(preset["part_family_id"] == "impeller" for preset in preset_payload)
+
+
+def test_acceptance_impeller_ontology_exposes_axisymmetric_radial_slice(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    ontology = client.get("/api/ontology").json()
+    impeller = ontology["part_families"]["impeller"]
+
+    assert impeller["ontology_slices"]["axisymmetric_throughflow_radial_bladed"]["constructor_family"] == (
+        "AxisymmetricThroughflowRadialBladedImpeller"
+    )
+    assert impeller["ontology_slices"]["axisymmetric_throughflow_radial_bladed"]["flow_topology"] == ["radial"]
+    assert "blade_tip_support_surface" in ontology["terms"]
+    assert "leading_edge_boundary" in ontology["terms"]
+    assert "trailing_edge_boundary" in ontology["terms"]
+    assert "shape_control_policy" in ontology["terms"]
+    assert "semantic_handle" in ontology["terms"]
+
+
+def test_acceptance_legacy_impeller_preset_alias_compiles_to_new_constructor_family(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "axisymmetric_nurbs_open_throughflow_study"},
+    )
+
+    assert engine.status_code == 200
+    payload = engine.json()
+    rule = json.loads(Path(payload["dsl_path"]).read_text(encoding="utf-8"))
+    assert rule["preset_id"] == "radial_open_reference"
+    assert rule["legacy_preset_id"] == "axisymmetric_nurbs_open_throughflow_study"
+    assert rule["ontology_slice"] == "impeller.axisymmetric_throughflow_radial_bladed"
+    assert rule["constructor_family"] == "AxisymmetricThroughflowRadialBladedImpeller"
+    assert rule["constructor_id"] == "axisymmetric_throughflow_radial_bladed.open"
+    assert rule["shape_control"]["optimization_stage"] == 1
+    assert rule["shape_control"]["locked_topology"] is True
 
 
 def test_acceptance_impeller_rule_engine_records_facets_rules_and_construction_lines(tmp_path: Path):
