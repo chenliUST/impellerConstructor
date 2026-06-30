@@ -3,10 +3,13 @@ import React, { useMemo, useState } from "react";
 import { instantiateImpeller, modelExportUrl, synthesizeImpeller } from "./apiClient.js";
 import { apiDefault, presets, selectedPreset } from "./appModel.js";
 import { defaultVisibleLayers } from "./workspaceModel.js";
+import { BladeCurveEditor } from "./components/BladeCurveEditor.js";
+import { GenerationStagePanel } from "./components/GenerationStagePanel.js";
 import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js";
 import { ManifestPanel } from "./components/ManifestPanel.js";
 import { ModelViewer } from "./components/ModelViewer.js";
 import { ParameterPanel } from "./components/ParameterPanel.js";
+import { ProfileCurveEditor } from "./components/ProfileCurveEditor.js";
 import { PresetList } from "./components/PresetList.js";
 
 const h = React.createElement;
@@ -23,6 +26,9 @@ export function App() {
   const [viewMode, setViewMode] = useState("combined");
   const [autoRotate, setAutoRotate] = useState(false);
   const [visibleLayers, setVisibleLayers] = useState(defaultVisibleLayers);
+  const [profileOverrides, setProfileOverrides] = useState(null);
+  const [curveOverrides, setCurveOverrides] = useState(null);
+  const [geometryStage, setGeometryStage] = useState("edge_closures");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -51,7 +57,14 @@ export function App() {
       const currentEngineId = synthesized.engine_id;
       setEngineId(currentEngineId);
 
-      const run = await instantiateImpeller(apiBase, currentEngineId, parameters);
+      const run = await instantiateImpeller(
+        apiBase,
+        currentEngineId,
+        parameters,
+        profileOverrides,
+        curveOverrides,
+        geometryStage,
+      );
       setManifest(run.manifest);
       setStlUrl(modelExportUrl(apiBase, run.run_id, "stl"));
     } catch (caught) {
@@ -66,6 +79,11 @@ export function App() {
     setParameters({ ...preset.parameters });
     setFacets({ ...preset.facets });
     setEngineId("");
+    setManifest(null);
+    setStlUrl("");
+    setProfileOverrides(null);
+    setCurveOverrides(null);
+    setGeometryStage("edge_closures");
   }
 
   function updateParameter(name, value) {
@@ -112,8 +130,27 @@ export function App() {
         onReset: () => {
           setParameters({ ...activePreset.parameters });
           setFacets({ ...activePreset.facets });
+          setProfileOverrides(null);
+          setCurveOverrides(null);
+          setGeometryStage("edge_closures");
         },
         loading,
+      }),
+      h(GenerationStagePanel, {
+        geometryStage,
+        onChange: setGeometryStage,
+      }),
+      h(ProfileCurveEditor, {
+        manifest,
+        profileOverrides,
+        onProfileOverridesChange: setProfileOverrides,
+        onResetProfileOverrides: () => setProfileOverrides(null),
+      }),
+      h(BladeCurveEditor, {
+        parameters,
+        curveOverrides,
+        onCurveOverridesChange: setCurveOverrides,
+        onResetCurveOverrides: () => setCurveOverrides(null),
       }),
       h(GeometryLayerPanel, {
         manifest,

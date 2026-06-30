@@ -502,6 +502,106 @@ pre {
   padding: 12px;
 }
 
+.stage-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.stage-button {
+  border: 1px solid #cad6d1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #2d3b36;
+  padding: 7px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.stage-button.active {
+  border-color: #b4512a;
+  background: #fff1ea;
+  color: #8e3d1e;
+}
+
+.curve-editor-svg {
+  width: 100%;
+  min-height: 180px;
+  border: 1px solid #d8e0dc;
+  border-radius: 6px;
+  background: #f8faf9;
+  touch-action: none;
+}
+
+.small-curve-editor-svg {
+  min-height: 72px;
+}
+
+.curve-editor-svg.invalid {
+  border-color: #d64545;
+}
+
+.curve-handle {
+  cursor: grab;
+}
+
+.curve-handle:active {
+  cursor: grabbing;
+}
+
+.svg-label {
+  fill: #17231f;
+  font: 10px Arial, sans-serif;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.small-note {
+  margin: 7px 0;
+  color: #64746e;
+  font-size: 11px;
+}
+
+.small-note.error {
+  color: #b42318;
+  font-weight: 800;
+}
+
+.curve-group {
+  border-top: 1px solid #eef2f0;
+  padding-top: 8px;
+  margin-top: 8px;
+}
+
+.curve-group h3 {
+  margin: 0 0 6px;
+  color: #34443f;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.curve-row-stacked {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.curve-row-stacked svg {
+  grid-column: 1 / -1;
+}
+
+.curve-row-title {
+  overflow: hidden;
+  color: #17231f;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: minmax(280px, 330px) minmax(420px, 1fr);

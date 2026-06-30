@@ -110,7 +110,12 @@ export const presets = [
   },
 ];
 
-export function buildInstantiatePayload(inputParameters) {
+export function buildInstantiatePayload(
+  inputParameters,
+  profileOverrides = null,
+  curveOverrides = null,
+  geometryStage = "edge_closures",
+) {
   const parameters = {};
 
   for (const [name, spec] of Object.entries(parameterSchema)) {
@@ -120,7 +125,14 @@ export function buildInstantiatePayload(inputParameters) {
     parameters[name] = spec.valueType === "integer" ? Math.round(numeric) : roundForApi(numeric);
   }
 
-  return { parameters };
+  const payload = { parameters, geometry_stage: geometryStage };
+  if (profileOverrides) {
+    payload.profile_overrides = profileOverrides;
+  }
+  if (curveOverrides) {
+    payload.curve_overrides = curveOverrides;
+  }
+  return payload;
 }
 
 export function buildSynthesizePayload(preset) {

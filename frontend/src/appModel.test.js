@@ -138,6 +138,38 @@ describe("impeller frontend model", () => {
     assert.equal(payload.parameters.trailing_edge_sweep_mm, -30);
   });
 
+  test("buildInstantiatePayload serializes profile curve overrides and generation stage", () => {
+    const profileOverrides = {
+      hub_profile: {
+        kind: "nurbs_curve",
+        degree: 3,
+        coordinate_system: "rz_meridional_mm",
+        control_points: [[120, 80], [260, 60], [460, 24], [570, 0]],
+        weights: [1, 1, 1, 1],
+        knots: [0, 0, 0, 0, 1, 1, 1, 1],
+      },
+    };
+    const curveOverrides = {
+      blade_mean: {
+        theta_center_u_curve: {
+          coordinate_system: "u_theta_deg",
+          control_points: [[0, 0], [0.5, -60], [1, -118]],
+        },
+      },
+    };
+
+    const payload = buildInstantiatePayload(
+      presets[0].parameters,
+      profileOverrides,
+      curveOverrides,
+      "blade_surfaces",
+    );
+
+    assert.equal(payload.geometry_stage, "blade_surfaces");
+    assert.deepEqual(payload.profile_overrides, profileOverrides);
+    assert.deepEqual(payload.curve_overrides, curveOverrides);
+  });
+
   test("exportUrl builds API export paths", () => {
     assert.equal(
       exportUrl("http://127.0.0.1:8000", "run-abc", "stl"),

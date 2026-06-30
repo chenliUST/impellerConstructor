@@ -87,4 +87,23 @@ describe("frontend application files", () => {
     assert.match(viewerSource, /layerForSurface/);
     assert.match(viewerSource, /layerForConstructionFeature/);
   });
+
+  test("application includes curve editors and staged generation controls", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+
+    for (const file of [
+      "src/profileEditorModel.js",
+      "src/bladeCurveEditorModel.js",
+      "src/components/ProfileCurveEditor.js",
+      "src/components/BladeCurveEditor.js",
+      "src/components/GenerationStagePanel.js",
+    ]) {
+      assert.equal(existsSync(resolve(root, file)), true, `${file} should exist`);
+    }
+
+    assert.match(appSource, /profileOverrides/);
+    assert.match(appSource, /curveOverrides/);
+    assert.match(appSource, /geometryStage/);
+    assert.match(appSource, /GenerationStagePanel/);
+  });
 });
