@@ -339,6 +339,28 @@ def test_impeller_v04_manifest_includes_valid_cfd_full_360_patch_groups(tmp_path
         assert all("mounting_bore" not in instance_id for instance_id in cfd["patch_instances"])
 
 
+def test_impeller_v04_full_360_cfd_view_is_stable_under_numeric_parameter_change(tmp_path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
+    dsl = service.engines[engine.engine_id]
+    parameters = {name: spec["default"] for name, spec in dsl["parameters"].items()}
+
+    default_run = service.instantiate(engine.engine_id, parameters)
+    edited_run = service.instantiate(
+        engine.engine_id,
+        {**parameters, "blade_wrap_deg": parameters["blade_wrap_deg"] + 5.0},
+    )
+
+    default_cfd = default_run.manifest["simulation_manifests"]["cfd_full_360"]
+    edited_cfd = edited_run.manifest["simulation_manifests"]["cfd_full_360"]
+
+    assert set(edited_cfd["patch_groups"]) == set(default_cfd["patch_groups"])
+    assert (
+        edited_run.manifest["campaign_signature"]["design_vector_length"]
+        == default_run.manifest["campaign_signature"]["design_vector_length"]
+    )
+
+
 def test_impeller_legacy_manifest_keeps_empty_simulation_manifests_for_compatibility(tmp_path):
     service = RuleSynthesisService(tmp_path)
     engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_3")
