@@ -11,11 +11,14 @@ INTERNAL_ASSEMBLY_ROLES = {"mounting_bore", "shaft_seat", "keyway", "rear_hub_gr
 
 def estimate_surface_area(surface: dict[str, Any]) -> float:
     grid = surface.get("uv_grid") or []
+    if grid:
+        _validate_rectangular_grid(surface, grid)
     if len(grid) < 2 or len(grid[0]) < 2:
         return 0.0
     area = 0.0
+    column_count = len(grid[0])
     for u in range(len(grid) - 1):
-        for v in range(len(grid[u]) - 1):
+        for v in range(column_count - 1):
             area += _triangle_area(grid[u][v], grid[u + 1][v], grid[u][v + 1])
             area += _triangle_area(grid[u + 1][v], grid[u + 1][v + 1], grid[u][v + 1])
     return round(area, 6)
@@ -36,6 +39,8 @@ def wetted_surfaces(
             continue
         if feature_id in suppressed:
             continue
+        if not surface.get("cfd_role"):
+            continue
         result.append(surface)
     return result
 
@@ -48,6 +53,17 @@ def surface_feature_records(surfaces: list[dict[str, Any]]) -> dict[str, dict[st
             continue
         records[feature_id]["generated_surfaces"].append(surface["id"])
     return dict(records)
+
+
+def _validate_rectangular_grid(surface: dict[str, Any], grid: list[list[list[float]]]) -> None:
+    column_count = len(grid[0])
+    for row_index, row in enumerate(grid):
+        if len(row) != column_count:
+            surface_id = surface.get("id", "<unknown>")
+            raise ValueError(
+                f"surface {surface_id} uv_grid must be rectangular; "
+                f"row 0 has {column_count} points but row {row_index} has {len(row)}"
+            )
 
 
 def _triangle_area(a: list[float], b: list[float], c: list[float]) -> float:
