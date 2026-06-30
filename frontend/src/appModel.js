@@ -143,6 +143,13 @@ export function buildSynthesizePayload(preset) {
   };
 }
 
+export function overridesAfterParameterChange(name, profileOverrides, curveOverrides) {
+  return {
+    profileOverrides: profileDriverParameters.has(name) ? null : profileOverrides,
+    curveOverrides: curveDriverParameters.has(name) ? null : curveOverrides,
+  };
+}
+
 export function exportUrl(apiBase, runId, format) {
   const normalizedBase = String(apiBase || apiDefault).replace(/\/+$/, "");
   return `${normalizedBase}/api/model-runs/${encodeURIComponent(runId)}/exports/${encodeURIComponent(format)}`;
@@ -175,3 +182,27 @@ export function manifestSummary(manifest) {
 function roundForApi(value) {
   return Math.round(value * 1000) / 1000;
 }
+
+const profileDriverParameters = new Set([
+  "inlet_radius_mm",
+  "exit_radius_mm",
+  "inlet_blade_height_mm",
+  "outlet_blade_height_mm",
+  "hub_curve_height_mm",
+  "mounting_bore_radius_mm",
+  "hub_base_radius_mm",
+  "hub_nose_radius_mm",
+  "hub_profile_convexity",
+]);
+
+const curveDriverParameters = new Set([
+  "inlet_radius_mm",
+  "exit_radius_mm",
+  "blade_wrap_deg",
+  "blade_lean_deg",
+  "leading_edge_lean_deg",
+  "trailing_edge_lean_deg",
+  "leading_edge_sweep_mm",
+  "trailing_edge_sweep_mm",
+  "blade_thickness_mm",
+]);

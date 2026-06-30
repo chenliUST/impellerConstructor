@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 
 import { instantiateImpeller, modelExportUrl, synthesizeImpeller } from "./apiClient.js";
-import { apiDefault, presets, selectedPreset } from "./appModel.js";
+import { apiDefault, overridesAfterParameterChange, presets, selectedPreset } from "./appModel.js";
 import { defaultVisibleLayers } from "./workspaceModel.js";
 import { BladeCurveEditor } from "./components/BladeCurveEditor.js";
 import { GenerationStagePanel } from "./components/GenerationStagePanel.js";
@@ -88,6 +88,13 @@ export function App() {
 
   function updateParameter(name, value) {
     setParameters((current) => ({ ...current, [name]: value }));
+    const nextOverrides = overridesAfterParameterChange(name, profileOverrides, curveOverrides);
+    if (nextOverrides.profileOverrides !== profileOverrides) {
+      setProfileOverrides(nextOverrides.profileOverrides);
+    }
+    if (nextOverrides.curveOverrides !== curveOverrides) {
+      setCurveOverrides(nextOverrides.curveOverrides);
+    }
   }
 
   function updateFacet(name, value) {

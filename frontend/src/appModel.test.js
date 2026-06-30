@@ -6,6 +6,7 @@ import {
   buildSynthesizePayload,
   exportUrl,
   facetSchema,
+  overridesAfterParameterChange,
   parameterGroups,
   parameterSchema,
   presets,
@@ -168,6 +169,36 @@ describe("impeller frontend model", () => {
     assert.equal(payload.geometry_stage, "blade_surfaces");
     assert.deepEqual(payload.profile_overrides, profileOverrides);
     assert.deepEqual(payload.curve_overrides, curveOverrides);
+  });
+
+  test("changing hub profile driver clears stale profile overrides", () => {
+    const profileOverrides = {
+      hub_profile: { control_points: [[1, 1], [2, 2], [3, 3], [4, 4]] },
+      tip_or_shroud_profile: { control_points: [[2, 3], [3, 4], [4, 5], [5, 6]] },
+    };
+    const curveOverrides = {
+      blade_mean: {
+        theta_center_u_curve: {
+          coordinate_system: "u_theta_deg",
+          control_points: [[0, 0], [1, -118]],
+        },
+      },
+    };
+
+    const next = overridesAfterParameterChange("hub_curve_height_mm", profileOverrides, curveOverrides);
+
+    assert.equal(next.profileOverrides, null);
+    assert.deepEqual(next.curveOverrides, curveOverrides);
+  });
+
+  test("changing blade curve driver clears stale curve overrides", () => {
+    const profileOverrides = { hub_profile: { control_points: [] } };
+    const curveOverrides = { thickness: { thickness_u_curve: { control_points: [[0, 18], [1, 9]] } } };
+
+    const next = overridesAfterParameterChange("blade_wrap_deg", profileOverrides, curveOverrides);
+
+    assert.deepEqual(next.profileOverrides, profileOverrides);
+    assert.equal(next.curveOverrides, null);
   });
 
   test("exportUrl builds API export paths", () => {
