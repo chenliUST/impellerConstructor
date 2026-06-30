@@ -8,6 +8,7 @@ export const parameterGroups = [
   { id: "blade_boundaries", label: "Blade boundaries" },
   { id: "blade_surface", label: "Blade surface" },
   { id: "blade_profile", label: "Blade profile" },
+  { id: "solid_material", label: "Solid material" },
   { id: "edge_treatment", label: "Edge treatment" },
 ];
 
@@ -30,6 +31,12 @@ export const parameterSchema = {
   trailing_edge_sweep_mm: { label: "Trailing edge sweep", unit: "mm", step: 1, default: -45, group: "blade_boundaries" },
   blade_thickness_mm: { label: "Blade thickness", unit: "mm", step: 0.5, default: 18, group: "blade_profile" },
   root_fillet_radius_mm: { label: "Root fillet radius", unit: "mm", step: 0.5, default: 8, group: "edge_treatment" },
+  hub_wall_thickness_mm: { label: "Hub wall thickness", unit: "mm", step: 0.5, default: 18, group: "solid_material" },
+  hub_bottom_thickness_mm: { label: "Hub bottom thickness", unit: "mm", step: 0.5, default: 24, group: "solid_material" },
+  hub_top_cap_thickness_mm: { label: "Hub top cap thickness", unit: "mm", step: 0.5, default: 8, group: "solid_material" },
+  hub_chamfer_radius_mm: { label: "Hub chamfer radius", unit: "mm", step: 0.5, default: 3, group: "edge_treatment" },
+  hood_wall_thickness_mm: { label: "Hood wall thickness", unit: "mm", step: 0.5, default: 12, group: "solid_material" },
+  hood_chamfer_radius_mm: { label: "Hood chamfer radius", unit: "mm", step: 0.5, default: 3, group: "edge_treatment" },
 };
 
 export const facetSchema = {
@@ -44,10 +51,10 @@ export const facetSchema = {
 export const presets = [
   {
     id: "axisymmetric-nurbs-open-throughflow",
-    presetId: "radial_open_reference",
-    name: "NURBS open throughflow",
-    summary: "Open impeller: revolved NURBS hub/tip profiles with conformal pressure and suction surfaces.",
-    tags: ["open", "NURBS", "throughflow"],
+    presetId: "radial_open_reference_v0_3",
+    name: "NURBS open throughflow v0.3",
+    summary: "Open impeller: finite hub solid, hidden construction-only tip support, conformal blade surfaces.",
+    tags: ["open", "NURBS", "v0.3"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -73,14 +80,20 @@ export const presets = [
       trailing_edge_sweep_mm: -45,
       blade_thickness_mm: 18,
       root_fillet_radius_mm: 8,
+      hub_wall_thickness_mm: 18,
+      hub_bottom_thickness_mm: 24,
+      hub_top_cap_thickness_mm: 8,
+      hub_chamfer_radius_mm: 3,
+      hood_wall_thickness_mm: 12,
+      hood_chamfer_radius_mm: 3,
     },
   },
   {
     id: "axisymmetric-nurbs-closed-throughflow",
-    presetId: "radial_closed_reference",
-    name: "NURBS closed throughflow",
-    summary: "Closed impeller: revolved NURBS hub/shroud profiles with conformal pressure and suction surfaces.",
-    tags: ["closed", "NURBS", "throughflow"],
+    presetId: "radial_closed_reference_v0_3",
+    name: "NURBS closed throughflow v0.3",
+    summary: "Closed impeller: finite hub solid and finite hood shell with conformal blade surfaces.",
+    tags: ["closed", "NURBS", "v0.3"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -106,6 +119,12 @@ export const presets = [
       trailing_edge_sweep_mm: -36,
       blade_thickness_mm: 16,
       root_fillet_radius_mm: 7,
+      hub_wall_thickness_mm: 18,
+      hub_bottom_thickness_mm: 24,
+      hub_top_cap_thickness_mm: 8,
+      hub_chamfer_radius_mm: 3,
+      hood_wall_thickness_mm: 12,
+      hood_chamfer_radius_mm: 3,
     },
   },
 ];

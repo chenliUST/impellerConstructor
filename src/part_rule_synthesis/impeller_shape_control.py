@@ -7,7 +7,7 @@ def normalize_shape_control_space(
     shape_control_schema: dict[str, Any],
     shape_controls: dict[str, Any],
 ) -> dict[str, Any]:
-    default_stage = int(shape_control_schema["default_stage"])
+    default_stage = int(shape_controls.get("optimization_stage", shape_control_schema["default_stage"]))
     stage_def = next(
         stage for stage in shape_control_schema["optimization_stages"] if int(stage["stage"]) == default_stage
     )
@@ -38,8 +38,20 @@ def normalize_shape_control_space(
         for handle in policy.get("semantic_handles", []):
             semantic_handles.append({**handle, "target_entity": target_entity})
 
+    for target_entity, material_controls in shape_controls.get("material_domain_controls", {}).items():
+        for variable in material_controls.get("control_variables", []):
+            normalized_variable = {
+                **variable,
+                "target_entity": target_entity,
+                "topology_locked": locked_topology,
+            }
+            if variable.get("editable", False):
+                editable_variables.append(normalized_variable)
+            if variable.get("optimizable", False):
+                optimizable_variables.append(normalized_variable)
+
     return {
-        "schema_version": shape_control_schema["shape_control_schema_version"],
+        "schema_version": shape_controls.get("shape_control_version", shape_control_schema["shape_control_schema_version"]),
         "optimization_stage": default_stage,
         "locked_topology": locked_topology,
         "active_policies": list(active_policies.keys()),

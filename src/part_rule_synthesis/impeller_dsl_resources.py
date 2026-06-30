@@ -7,8 +7,9 @@ from typing import Any
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-ONTOLOGY_ROOT = PACKAGE_ROOT / "ontology" / "impeller" / "v0_2"
-DSL_ROOT = PACKAGE_ROOT / "dsl" / "impeller" / "axisymmetric_throughflow_radial_bladed" / "v0_2"
+ONTOLOGY_BASE = PACKAGE_ROOT / "ontology" / "impeller"
+DSL_BASE = PACKAGE_ROOT / "dsl" / "impeller" / "axisymmetric_throughflow_radial_bladed"
+DEFAULT_DSL_VERSION = "v0_2"
 
 
 @dataclass(frozen=True)
@@ -26,30 +27,43 @@ class ImpellerDslBundle:
     aliases: dict[str, str]
 
 
-def load_impeller_dsl_bundle() -> ImpellerDslBundle:
-    constructors = {
-        "axisymmetric_throughflow_radial_bladed.open": _read_json(
-            DSL_ROOT / "constructors" / "open_impeller.json"
-        ),
-        "axisymmetric_throughflow_radial_bladed.closed": _read_json(
-            DSL_ROOT / "constructors" / "closed_impeller.json"
-        ),
-    }
-    presets = {
-        "radial_open_reference": _read_json(DSL_ROOT / "presets" / "radial_open_reference.json"),
-        "radial_closed_reference": _read_json(DSL_ROOT / "presets" / "radial_closed_reference.json"),
-    }
-    aliases = _read_json(DSL_ROOT / "aliases.json")["legacy_preset_aliases"]
+def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslBundle:
+    ontology_root = ONTOLOGY_BASE / version
+    dsl_root = DSL_BASE / version
+    fallback_ontology_root = ONTOLOGY_BASE / DEFAULT_DSL_VERSION
+    fallback_dsl_root = DSL_BASE / DEFAULT_DSL_VERSION
+    if not dsl_root.exists():
+        raise ValueError(f"unknown impeller DSL version: {version}")
+
+    constructors = _load_json_directory_by_id(dsl_root / "constructors", "constructor_id")
+    presets = _load_json_directory_by_id(dsl_root / "presets", "preset_id")
+    aliases = _read_json(dsl_root / "aliases.json")["legacy_preset_aliases"]
+    shape_controls = _read_json(dsl_root / "shape_controls" / "default_shape_controls.json")
+    if "policies" not in shape_controls:
+        carried_forward = _read_json(fallback_dsl_root / "shape_controls" / "default_shape_controls.json")
+        shape_controls = {
+            **shape_controls,
+            "policies": carried_forward["policies"],
+        }
     bundle = ImpellerDslBundle(
-        slice=_read_json(ONTOLOGY_ROOT / "slice.json"),
-        entities=_read_json(ONTOLOGY_ROOT / "entities.json"),
-        relations=_read_json(ONTOLOGY_ROOT / "relations.json"),
-        shape_control_schema=_read_json(ONTOLOGY_ROOT / "shape_control_schema.json"),
-        validity_contracts=_read_json(ONTOLOGY_ROOT / "validity_contracts.json"),
-        loss_schema=_read_json(ONTOLOGY_ROOT / "loss_schema.json"),
-        schema=_read_json(DSL_ROOT / "schema.json"),
+        slice=_read_json_with_fallback(ontology_root / "slice.json", fallback_ontology_root / "slice.json"),
+        entities=_read_json_with_fallback(ontology_root / "entities.json", fallback_ontology_root / "entities.json"),
+        relations=_read_json_with_fallback(ontology_root / "relations.json", fallback_ontology_root / "relations.json"),
+        shape_control_schema=_read_json_with_fallback(
+            ontology_root / "shape_control_schema.json",
+            fallback_ontology_root / "shape_control_schema.json",
+        ),
+        validity_contracts=_read_json_with_fallback(
+            ontology_root / "validity_contracts.json",
+            fallback_ontology_root / "validity_contracts.json",
+        ),
+        loss_schema=_read_json_with_fallback(
+            ontology_root / "loss_schema.json",
+            fallback_ontology_root / "loss_schema.json",
+        ),
+        schema=_read_json(dsl_root / "schema.json"),
         constructors=constructors,
-        shape_controls=_read_json(DSL_ROOT / "shape_controls" / "default_shape_controls.json"),
+        shape_controls=shape_controls,
         presets=presets,
         aliases=aliases,
     )
@@ -59,6 +73,18 @@ def load_impeller_dsl_bundle() -> ImpellerDslBundle:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_json_with_fallback(path: Path, fallback_path: Path) -> dict[str, Any]:
+    return _read_json(path if path.exists() else fallback_path)
+
+
+def _load_json_directory_by_id(path: Path, id_field: str) -> dict[str, dict[str, Any]]:
+    items = {}
+    for item_path in sorted(path.glob("*.json")):
+        item = _read_json(item_path)
+        items[item[id_field]] = item
+    return items
 
 
 def _validate_bundle(bundle: ImpellerDslBundle) -> None:
@@ -90,7 +116,8 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
 def _validate_shape_control_policies(bundle: ImpellerDslBundle) -> None:
     target_entities = set(bundle.shape_controls["target_entities"])
     policy_entities = set(bundle.shape_controls["policies"])
-    missing = target_entities - policy_entities
+    material_domain_entities = set(bundle.shape_controls.get("material_domain_controls", {}))
+    missing = target_entities - policy_entities - material_domain_entities
     if missing:
         raise ValueError(f"default shape controls missing policies: {sorted(missing)}")
     allowed = set(bundle.shape_control_schema["allowed_representations"])

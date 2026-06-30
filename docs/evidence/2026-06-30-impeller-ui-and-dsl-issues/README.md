@@ -6,6 +6,11 @@ Evidence screenshot:
 
 - `current-open-impeller-ui-issue.png`
 
+Post-implementation smoke evidence:
+
+- `v03-open-smoke.png`
+- `v03-closed-smoke.png`
+
 Observed issues captured from the current frontend:
 
 1. Curve editor panels are visually too small for controlled manipulation.

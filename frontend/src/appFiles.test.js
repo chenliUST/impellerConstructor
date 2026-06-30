@@ -106,4 +106,21 @@ describe("frontend application files", () => {
     assert.match(appSource, /geometryStage/);
     assert.match(appSource, /GenerationStagePanel/);
   });
+
+  test("curve editors expose engineering-unit numeric control-point inputs", () => {
+    const profileSource = readFileSync(resolve(root, "src/components/ProfileCurveEditor.js"), "utf-8");
+    const bladeSource = readFileSync(resolve(root, "src/components/BladeCurveEditor.js"), "utf-8");
+    const styles = readFileSync(resolve(root, "src/styles.css"), "utf-8");
+
+    assert.match(profileSource, /width:\s*520/);
+    assert.match(profileSource, /height:\s*320/);
+    assert.match(profileSource, /profile-control-table/);
+    assert.match(profileSource, /type:\s*"number"/);
+    assert.match(bladeSource, /width:\s*420/);
+    assert.match(bladeSource, /height:\s*128/);
+    assert.match(bladeSource, /curve-control-table/);
+    assert.match(bladeSource, /type:\s*"number"/);
+    assert.match(styles, /profile-control-table/);
+    assert.match(styles, /curve-control-table/);
+  });
 });

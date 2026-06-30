@@ -84,12 +84,18 @@ describe("impeller frontend model", () => {
       "trailing_edge_sweep_mm",
       "blade_thickness_mm",
       "root_fillet_radius_mm",
+      "hub_wall_thickness_mm",
+      "hub_bottom_thickness_mm",
+      "hub_top_cap_thickness_mm",
+      "hub_chamfer_radius_mm",
+      "hood_wall_thickness_mm",
+      "hood_chamfer_radius_mm",
     ]);
   });
 
   test("presets include focused open and closed NURBS throughflow studies", () => {
-    const open = presets.find((preset) => preset.presetId === "radial_open_reference");
-    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference");
+    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_3");
+    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_3");
 
     assert.ok(open);
     assert.ok(closed);
@@ -99,6 +105,8 @@ describe("impeller frontend model", () => {
     assert.equal(closed.facets.passage_topology, "throughflow_bladed_channel");
     assert.ok(open.parameters.blade_wrap_deg > 0);
     assert.ok(closed.parameters.blade_wrap_deg > 0);
+    assert.ok(open.parameters.hub_wall_thickness_mm > 0);
+    assert.ok(closed.parameters.hood_wall_thickness_mm > 0);
   });
 
   test("declares parameter groups in display order", () => {
@@ -110,6 +118,7 @@ describe("impeller frontend model", () => {
       "blade_boundaries",
       "blade_surface",
       "blade_profile",
+      "solid_material",
       "edge_treatment",
     ]);
   });

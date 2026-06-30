@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
-from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset, impeller_json_preset_ids
 from part_rule_synthesis.impeller_taxonomy import (
     IMPELLER_FACET_AXES,
     IMPELLER_PRESETS,
@@ -38,7 +38,7 @@ PRIMITIVES = {
 }
 
 _IMPELLER_DSL_BUNDLE = load_impeller_dsl_bundle()
-_JSON_IMPELLER_PRESET_IDS = set(_IMPELLER_DSL_BUNDLE.presets) | set(_IMPELLER_DSL_BUNDLE.aliases)
+_JSON_IMPELLER_PRESET_IDS = impeller_json_preset_ids()
 
 
 @dataclass(frozen=True)
@@ -148,6 +148,7 @@ class RuleSynthesisService:
             profile_overrides=normalized_profile_overrides,
             curve_overrides=normalized_curve_overrides,
             geometry_stage=normalized_geometry_stage,
+            dsl_context=dsl,
         )
         export_strategy = _export_strategy(dsl["part_family"])
         geometry_validity = _geometry_validity_metadata(
@@ -157,6 +158,7 @@ class RuleSynthesisService:
             profile_overrides=normalized_profile_overrides,
             curve_overrides=normalized_curve_overrides,
             geometry_stage=normalized_geometry_stage,
+            dsl_context=dsl,
         )
         manifest = {
             "run_id": run_id,
@@ -187,6 +189,7 @@ class RuleSynthesisService:
                 profile_overrides=normalized_profile_overrides,
                 curve_overrides=normalized_curve_overrides,
                 geometry_stage=normalized_geometry_stage,
+                dsl_context=dsl,
             ),
             "geometry": _geometry_metadata(
                 dsl["part_family"],
@@ -195,6 +198,7 @@ class RuleSynthesisService:
                 profile_overrides=normalized_profile_overrides,
                 curve_overrides=normalized_curve_overrides,
                 geometry_stage=normalized_geometry_stage,
+                dsl_context=dsl,
             ),
             "shape_control": _manifest_shape_control(dsl.get("shape_control", {})),
             "validity": _manifest_validity(dsl, geometry_validity),
@@ -609,6 +613,7 @@ def _geometry_metadata(
     profile_overrides: dict[str, Any] | None = None,
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
+    dsl_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     is_impeller = part_family in {"centrifugal_impeller", "impeller"}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {}) if is_impeller else {}
@@ -619,6 +624,7 @@ def _geometry_metadata(
             profile_overrides=profile_overrides,
             curve_overrides=curve_overrides,
             geometry_stage=geometry_stage,
+            **_impeller_geometry_options(dsl_context),
         )
         if is_impeller
         else {}
@@ -657,6 +663,7 @@ def _geometry_kernel_metadata(
     profile_overrides: dict[str, Any] | None = None,
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
+    dsl_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if part_family not in {"centrifugal_impeller", "impeller"}:
         return {}
@@ -667,6 +674,7 @@ def _geometry_kernel_metadata(
         profile_overrides=profile_overrides,
         curve_overrides=curve_overrides,
         geometry_stage=geometry_stage,
+        **_impeller_geometry_options(dsl_context),
     )
     return geometry["kernel"]
 
@@ -678,6 +686,7 @@ def _geometry_validity_metadata(
     profile_overrides: dict[str, Any] | None = None,
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
+    dsl_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if part_family not in {"centrifugal_impeller", "impeller"}:
         return {}
@@ -688,8 +697,18 @@ def _geometry_validity_metadata(
         profile_overrides=profile_overrides,
         curve_overrides=curve_overrides,
         geometry_stage=geometry_stage,
+        **_impeller_geometry_options(dsl_context),
     )
     return geometry["validity"]
+
+
+def _impeller_geometry_options(dsl_context: dict[str, Any] | None) -> dict[str, Any]:
+    dsl_context = dsl_context or {}
+    return {
+        "display_policy": dsl_context.get("display_policy"),
+        "material_domain": dsl_context.get("material_domain"),
+        "solid_features": dsl_context.get("solid_features"),
+    }
 
 
 def _dsl_version(dsl: dict[str, Any]) -> str:
@@ -771,6 +790,7 @@ def _write_exports(
     profile_overrides: dict[str, Any] | None = None,
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
+    dsl_context: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
@@ -784,6 +804,7 @@ def _write_exports(
             profile_overrides=profile_overrides,
             curve_overrides=curve_overrides,
             geometry_stage=geometry_stage,
+            dsl_context=dsl_context,
         )
     try:
         import cadquery as cq
@@ -858,6 +879,7 @@ def _write_impeller_preview_exports(
     profile_overrides: dict[str, Any] | None = None,
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
+    dsl_context: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     resolved_facets = _resolved_impeller_facets(part_family, facets)
     geometry = build_impeller_geometry(
@@ -866,6 +888,7 @@ def _write_impeller_preview_exports(
         profile_overrides=profile_overrides,
         curve_overrides=curve_overrides,
         geometry_stage=geometry_stage,
+        **_impeller_geometry_options(dsl_context),
     )
     step.write_text(
         "\n".join(

@@ -251,6 +251,66 @@ def test_acceptance_open_and_closed_impellers_share_tip_support_surface_semantic
         assert manifest["geometry"]["construction_lines"]["blade_boundaries"]
 
 
+def test_acceptance_v03_open_impeller_hides_tip_support_and_records_finite_hub(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_3"},
+    ).json()
+    manifest = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}},
+    ).json()["manifest"]
+
+    surface_graph = manifest["geometry"]["surface_graph"]
+    surfaces = {surface["id"]: surface for surface in surface_graph["surfaces"]}
+    surface_uv_ids = {
+        line["surface_id"]
+        for line in manifest["geometry"]["construction_lines"]["surface_uv"]
+    }
+    geometry_checks = {check["name"]: check for check in manifest["geometry_validity"]["geometry_checks"]}
+    topology_checks = {check["name"]: check for check in manifest["geometry_validity"]["topology_checks"]}
+
+    assert manifest["dsl_version"] == "0.3"
+    assert "tip_reference_surface" not in surfaces
+    assert "tip_reference_surface" not in surface_uv_ids
+    assert "hub_top_cap_face" in surfaces
+    assert "hub_chamfer_top_cap_surface" in surfaces
+    assert surfaces["mounting_bore_cylinder"]["role"] == "mounting_bore"
+    assert manifest["geometry_kernel"]["material_domains"]["hub"]["kind"] == "capped_revolved_solid_with_bore"
+    assert manifest["geometry_kernel"]["material_domains"]["hub"]["wall_thickness_mm"] > 0.0
+    assert geometry_checks["material_domain_positive_thickness"]["status"] == "PASS"
+    assert topology_checks["open_tip_support_surface_hidden_from_display_graph"]["status"] == "PASS"
+    assert topology_checks["hub_solid_has_caps_and_bore"]["status"] == "PASS"
+
+
+def test_acceptance_v03_closed_impeller_displays_finite_hood_shell(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_closed_reference_v0_3"},
+    ).json()
+    manifest = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}},
+    ).json()["manifest"]
+
+    surfaces = {surface["id"]: surface for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_checks = {check["name"]: check for check in manifest["geometry_validity"]["geometry_checks"]}
+    topology_checks = {check["name"]: check for check in manifest["geometry_validity"]["topology_checks"]}
+
+    assert manifest["dsl_version"] == "0.3"
+    assert surfaces["shroud_surface"]["role"] == "front_shroud_inner_surface"
+    assert "hood_outer_surface" in surfaces
+    assert "hood_outlet_cap_surface" in surfaces
+    assert manifest["geometry_kernel"]["material_domains"]["front_hood"]["kind"] == "finite_thickness_revolved_shell"
+    assert manifest["geometry_kernel"]["material_domains"]["front_hood"]["wall_thickness_mm"] > 0.0
+    assert geometry_checks["material_domain_positive_thickness"]["status"] == "PASS"
+    assert topology_checks["closed_hood_shell_surfaces_present"]["status"] == "PASS"
+
+
 def test_acceptance_impeller_rule_engine_records_facets_rules_and_construction_lines(tmp_path: Path):
     client = TestClient(create_app(tmp_path))
 

@@ -34,7 +34,7 @@ button:disabled {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(280px, 330px) minmax(420px, 1fr) minmax(300px, 360px);
+  grid-template-columns: minmax(360px, 440px) minmax(420px, 1fr) minmax(300px, 360px);
   gap: 14px;
   height: 100vh;
   padding: 14px;
@@ -526,7 +526,7 @@ pre {
 
 .curve-editor-svg {
   width: 100%;
-  min-height: 180px;
+  min-height: 320px;
   border: 1px solid #d8e0dc;
   border-radius: 6px;
   background: #f8faf9;
@@ -534,7 +534,7 @@ pre {
 }
 
 .small-curve-editor-svg {
-  min-height: 72px;
+  min-height: 128px;
 }
 
 .curve-editor-svg.invalid {
@@ -547,6 +547,11 @@ pre {
 
 .curve-handle:active {
   cursor: grabbing;
+}
+
+.curve-handle.selected circle {
+  stroke: #17231f;
+  stroke-width: 2;
 }
 
 .svg-label {
@@ -593,6 +598,68 @@ pre {
   grid-column: 1 / -1;
 }
 
+.profile-control-table,
+.curve-control-table {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.profile-control-block {
+  display: grid;
+  gap: 5px;
+}
+
+.curve-control-heading {
+  color: #40514b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.coordinate-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  align-items: end;
+  border: 1px solid #e1e8e4;
+  border-radius: 6px;
+  background: #fbfcfb;
+  padding: 6px;
+}
+
+.coordinate-row.selected {
+  border-color: #1f6f66;
+  background: #edf7f4;
+}
+
+.coordinate-index {
+  align-self: center;
+  color: #17231f;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.coordinate-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: #52615c;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.coordinate-field input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cbd5d1;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #17231f;
+  padding: 5px 6px;
+  font-size: 11px;
+}
+
 .curve-row-title {
   overflow: hidden;
   color: #17231f;
@@ -604,7 +671,7 @@ pre {
 
 @media (max-width: 1180px) {
   .app-shell {
-    grid-template-columns: minmax(280px, 330px) minmax(420px, 1fr);
+    grid-template-columns: minmax(340px, 420px) minmax(420px, 1fr);
   }
 
   .right-panel {

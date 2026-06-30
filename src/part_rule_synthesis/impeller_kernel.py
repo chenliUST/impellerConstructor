@@ -19,6 +19,9 @@ def build_impeller_geometry(
     profile_overrides: dict[str, Any] | None = None,
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
+    display_policy: dict[str, Any] | None = None,
+    material_domain: dict[str, Any] | None = None,
+    solid_features: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build deterministic impeller geometry metadata from one sampled meridional kernel."""
     if "blade_wrap_deg" in parameters:
@@ -28,6 +31,9 @@ def build_impeller_geometry(
             profile_overrides=profile_overrides,
             curve_overrides=curve_overrides,
             geometry_stage=geometry_stage,
+            display_policy=display_policy,
+            material_domain=material_domain,
+            solid_features=solid_features,
         )
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)

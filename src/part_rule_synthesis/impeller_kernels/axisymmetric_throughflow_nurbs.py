@@ -28,6 +28,9 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     profile_overrides: dict[str, Any] | None = None,
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
+    display_policy: dict[str, Any] | None = None,
+    material_domain: dict[str, Any] | None = None,
+    solid_features: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
@@ -37,10 +40,29 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     hub_curve = _sample_profile_curve(hub_profile, SURFACE_U_COUNT)
     tip_curve = _sample_profile_curve(tip_profile, SURFACE_U_COUNT)
     sampled_blades = _pattern_blades(params, resolved_facets, hub_profile, tip_profile, curve_controls)
-    surface_graph = _surface_graph(params, resolved_facets, hub_profile, tip_profile, sampled_blades)
+    material_domains = _material_domains(params, resolved_facets, material_domain)
+    surface_graph = _surface_graph(
+        params,
+        resolved_facets,
+        hub_profile,
+        tip_profile,
+        sampled_blades,
+        display_policy=display_policy,
+        material_domain=material_domain,
+        solid_features=solid_features,
+    )
     construction_lines = _construction_lines(surface_graph, sampled_blades)
     surface_graph, construction_lines = _filter_by_geometry_stage(surface_graph, construction_lines, stage)
-    validity = _validity_report(surface_graph, sampled_blades, construction_lines, stage)
+    validity = _validity_report(
+        surface_graph,
+        sampled_blades,
+        construction_lines,
+        params,
+        resolved_facets,
+        stage,
+        display_policy=display_policy,
+        material_domain=material_domain,
+    )
     passage_model = {
         "type": "throughflow_bladed_channel",
         "throughflow_bladed_channel": True,
@@ -88,6 +110,8 @@ def build_axisymmetric_throughflow_nurbs_geometry(
             },
             "passage_model": passage_model,
             "geometry_stage": stage,
+            "material_domains": material_domains,
+            "solid_features": _solid_feature_metadata(params, resolved_facets, solid_features),
         },
         "passage_model": passage_model,
         "shape_control": shape_control
@@ -143,6 +167,12 @@ def _normalized_parameters(parameters: dict[str, Any]) -> dict[str, float]:
     numeric.setdefault("inlet_blade_angle_deg", 21.0)
     numeric.setdefault("outlet_blade_angle_deg", 42.0)
     numeric.setdefault("mounting_bore_radius_mm", max(12.0, numeric["inlet_radius_mm"] * 0.22))
+    numeric.setdefault("hub_wall_thickness_mm", 18.0)
+    numeric.setdefault("hub_bottom_thickness_mm", 24.0)
+    numeric.setdefault("hub_top_cap_thickness_mm", 8.0)
+    numeric.setdefault("hub_chamfer_radius_mm", 3.0)
+    numeric.setdefault("hood_wall_thickness_mm", 12.0)
+    numeric.setdefault("hood_chamfer_radius_mm", 3.0)
     numeric["mounting_bore_radius_mm"] = min(
         max(1.0, numeric["mounting_bore_radius_mm"]),
         max(2.0, numeric["inlet_radius_mm"] * 0.52),
@@ -160,6 +190,72 @@ def _normalized_facets(facets: dict[str, str]) -> dict[str, str]:
         "working_domain": facets.get("working_domain", "pump"),
         "passage_topology": facets.get("passage_topology", "throughflow_bladed_channel"),
     }
+
+
+def _material_domains(
+    params: dict[str, float],
+    facets: dict[str, str],
+    material_domain: dict[str, Any] | None,
+) -> dict[str, Any]:
+    hub_domain = (material_domain or {}).get("hub", {})
+    front_hood_domain = (material_domain or {}).get("front_shroud", {})
+    return {
+        "hub": {
+            "kind": hub_domain.get("kind", "revolved_solid_with_bore"),
+            "wall_thickness_mm": _round(params["hub_wall_thickness_mm"]),
+            "bottom_thickness_mm": _round(params["hub_bottom_thickness_mm"]),
+            "top_cap_thickness_mm": _round(params["hub_top_cap_thickness_mm"]),
+            "mounting_bore_radius_mm": _round(params["mounting_bore_radius_mm"]),
+            "chamfer_radius_mm": _round(params["hub_chamfer_radius_mm"]),
+            "faces": [
+                "hub_revolve_surface",
+                "inner_hub_bottom_face",
+                "hub_top_cap_face",
+                "mounting_bore_cylinder",
+            ],
+        },
+        "front_hood": (
+            {
+                "kind": front_hood_domain.get("kind", "finite_thickness_revolved_shell"),
+                "wall_thickness_mm": _round(params["hood_wall_thickness_mm"]),
+                "chamfer_radius_mm": _round(params["hood_chamfer_radius_mm"]),
+                "faces": [
+                    "shroud_surface",
+                    "hood_outer_surface",
+                    "hood_inlet_cap_surface",
+                    "hood_outlet_cap_surface",
+                ],
+            }
+            if facets["shroud_topology"] == "closed"
+            else {"kind": "none"}
+        ),
+    }
+
+
+def _solid_feature_metadata(
+    params: dict[str, float],
+    facets: dict[str, str],
+    solid_features: dict[str, Any] | None,
+) -> dict[str, Any]:
+    declared = solid_features or {}
+    features = {
+        "hub_bore": {
+            "kind": declared.get("hub_bore", {}).get("kind", "cylindrical_cut"),
+            "radius_mm": _round(params["mounting_bore_radius_mm"]),
+            "axis": "z",
+            "extent": "through_hub_solid",
+        },
+        "hub_chamfers": {
+            "kind": declared.get("hub_chamfers", {}).get("kind", "chamfer_or_fillet_feature_set"),
+            "radius_mm": _round(params["hub_chamfer_radius_mm"]),
+        },
+    }
+    if facets["shroud_topology"] == "closed":
+        features["hood_chamfers"] = {
+            "kind": declared.get("hood_chamfers", {}).get("kind", "chamfer_or_fillet_feature_set"),
+            "radius_mm": _round(params["hood_chamfer_radius_mm"]),
+        }
+    return features
 
 
 def _profile_definitions(
@@ -596,6 +692,9 @@ def _surface_graph(
     hub_profile: dict[str, Any],
     tip_profile: dict[str, Any],
     sampled_blades: list[dict[str, Any]],
+    display_policy: dict[str, Any] | None = None,
+    material_domain: dict[str, Any] | None = None,
+    solid_features: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     surfaces = [
         {
@@ -604,6 +703,7 @@ def _surface_graph(
             "role": "hub",
             "ontology_id": "hub_support_surface",
             "material": True,
+            "material_domain": "hub",
             "profile": hub_profile,
             "uv_grid": _revolve_grid(hub_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
             "profile_samples_rz": _profile_samples_rz(hub_profile, SURFACE_U_COUNT),
@@ -611,26 +711,38 @@ def _surface_graph(
             "boundary_ids": ["hub_inlet_circle", "hub_outlet_circle"],
         }
     ]
-    surfaces.extend(_hub_solid_surfaces(params, hub_profile))
+    surfaces.extend(_hub_solid_surfaces(params, hub_profile, solid_features))
     tip_surface_id = "shroud_surface" if facets["shroud_topology"] == "closed" else "tip_reference_surface"
     surfaces.append(
         {
             "id": tip_surface_id,
             "kind": "nurbs_revolve_surface",
-            "role": "front_shroud_inner_surface" if facets["shroud_topology"] == "closed" else "reference_only",
+            "role": (
+                "front_shroud_inner_surface"
+                if facets["shroud_topology"] == "closed"
+                else (
+                    "construction_support_only"
+                    if _surface_hidden_by_policy("blade_tip_support_surface", display_policy)
+                    else "reference_only"
+                )
+            ),
             "display_role": "shroud" if facets["shroud_topology"] == "closed" else "open_tip_reference",
             "ontology_id": "blade_tip_support_surface",
             "material": facets["shroud_topology"] == "closed",
+            "material_domain": "front_hood" if facets["shroud_topology"] == "closed" else None,
             "profile": tip_profile,
             "uv_grid": _revolve_grid(tip_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
             "profile_samples_rz": _profile_samples_rz(tip_profile, SURFACE_U_COUNT),
             "display": {
                 "color": "#9db7c5" if facets["shroud_topology"] == "closed" else "#c8c08d",
                 "opacity": 0.34 if facets["shroud_topology"] == "open" else 0.72,
+                "visible_by_default": not _surface_hidden_by_policy("blade_tip_support_surface", display_policy),
             },
             "boundary_ids": ["tip_inlet_circle", "tip_outlet_circle"],
         }
     )
+    if facets["shroud_topology"] == "closed":
+        surfaces.extend(_hood_shell_surfaces(params, tip_profile, material_domain, solid_features))
 
     edges = [
         {
@@ -851,19 +963,25 @@ def _surface_graph(
                     },
                 ]
             )
-    return {
+    surface_graph = {
         "surfaces": surfaces,
         "edges": edges,
         "boundary_curves": boundary_curves,
         "named_boundary_curves": named_boundary_curves,
     }
+    return _apply_display_policy(surface_graph, display_policy)
 
 
-def _hub_solid_surfaces(params: dict[str, float], hub_profile: dict[str, Any]) -> list[dict[str, Any]]:
+def _hub_solid_surfaces(
+    params: dict[str, float],
+    hub_profile: dict[str, Any],
+    solid_features: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     control_points = hub_profile["control_points"]
     bottom = min(control_points, key=lambda point: point[1])
     top = max(control_points, key=lambda point: point[1])
     bore_radius = min(params["mounting_bore_radius_mm"], bottom[0] * 0.72, top[0] * 0.86)
+    chamfer = max(0.001, params.get("hub_chamfer_radius_mm", 0.0))
     outer_profile = {
         **hub_profile,
         "id": "outer_hub_shell_profile",
@@ -871,11 +989,13 @@ def _hub_solid_surfaces(params: dict[str, float], hub_profile: dict[str, Any]) -
         "weights": hub_profile["weights"][:],
         "knots": hub_profile["knots"][:],
     }
-    return [
+    surfaces = [
         {
             "id": "outer_hub_shell_surface",
             "kind": "nurbs_revolve_surface",
             "role": "outer_hub_shell",
+            "material_domain": "hub",
+            "wall_thickness_mm": _round(params["hub_wall_thickness_mm"]),
             "profile": outer_profile,
             "uv_grid": _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
             "profile_samples_rz": _profile_samples_rz(outer_profile, SURFACE_U_COUNT),
@@ -886,6 +1006,8 @@ def _hub_solid_surfaces(params: dict[str, float], hub_profile: dict[str, Any]) -
             "id": "inner_hub_bottom_face",
             "kind": "annular_plane_surface",
             "role": "inner_hub_bottom",
+            "material_domain": "hub",
+            "bottom_thickness_mm": _round(params["hub_bottom_thickness_mm"]),
             "inner_radius_mm": _round(bore_radius),
             "outer_radius_mm": _round(bottom[0]),
             "z_mm": _round(bottom[1]),
@@ -894,9 +1016,24 @@ def _hub_solid_surfaces(params: dict[str, float], hub_profile: dict[str, Any]) -
             "boundary_ids": ["mounting_bore_bottom_circle", "outer_hub_bottom_circle"],
         },
         {
+            "id": "hub_top_cap_face",
+            "kind": "annular_plane_surface",
+            "role": "hub_top_cap",
+            "material_domain": "hub",
+            "top_cap_thickness_mm": _round(params["hub_top_cap_thickness_mm"]),
+            "inner_radius_mm": _round(bore_radius),
+            "outer_radius_mm": _round(top[0]),
+            "z_mm": _round(top[1]),
+            "uv_grid": _annular_plane_grid(bore_radius, top[0], top[1], 8, SURFACE_V_COUNT),
+            "display": {"color": "#768c68", "opacity": 0.82},
+            "boundary_ids": ["mounting_bore_top_circle", "outer_hub_top_circle"],
+        },
+        {
             "id": "mounting_bore_cylinder",
             "kind": "cylindrical_surface",
             "role": "mounting_bore",
+            "material_domain": "hub",
+            "boolean_role": "removed_cylinder_boundary",
             "radius_mm": _round(bore_radius),
             "z_min_mm": _round(bottom[1]),
             "z_max_mm": _round(top[1]),
@@ -904,7 +1041,121 @@ def _hub_solid_surfaces(params: dict[str, float], hub_profile: dict[str, Any]) -
             "display": {"color": "#4b5563", "opacity": 0.86},
             "boundary_ids": ["mounting_bore_bottom_circle", "mounting_bore_top_circle"],
         },
+        {
+            "id": "hub_chamfer_bottom_outer_surface",
+            "kind": "chamfer_surface",
+            "role": "hub_chamfer",
+            "material_domain": "hub",
+            "radius_mm": _round(params["hub_chamfer_radius_mm"]),
+            "uv_grid": _chamfer_band_grid(max(bore_radius, bottom[0] - chamfer), bottom[0], bottom[1], bottom[1] + chamfer),
+            "display": {"color": "#91aa80", "opacity": 0.9},
+            "boundary_ids": ["hub_bottom_outer_chamfer_a", "hub_bottom_outer_chamfer_b"],
+        },
+        {
+            "id": "hub_chamfer_top_cap_surface",
+            "kind": "chamfer_surface",
+            "role": "hub_chamfer",
+            "material_domain": "hub",
+            "radius_mm": _round(params["hub_chamfer_radius_mm"]),
+            "uv_grid": _chamfer_band_grid(max(bore_radius, top[0] - chamfer), top[0], top[1] - chamfer, top[1]),
+            "display": {"color": "#91aa80", "opacity": 0.9},
+            "boundary_ids": ["hub_top_cap_chamfer_a", "hub_top_cap_chamfer_b"],
+        },
+        {
+            "id": "hub_chamfer_bore_top_surface",
+            "kind": "chamfer_surface",
+            "role": "hub_chamfer",
+            "material_domain": "hub",
+            "radius_mm": _round(params["hub_chamfer_radius_mm"]),
+            "uv_grid": _chamfer_band_grid(bore_radius, bore_radius + chamfer, top[1] - chamfer, top[1]),
+            "display": {"color": "#91aa80", "opacity": 0.86},
+            "boundary_ids": ["mounting_bore_top_chamfer_a", "mounting_bore_top_chamfer_b"],
+        },
+        {
+            "id": "hub_chamfer_bore_bottom_surface",
+            "kind": "chamfer_surface",
+            "role": "hub_chamfer",
+            "material_domain": "hub",
+            "radius_mm": _round(params["hub_chamfer_radius_mm"]),
+            "uv_grid": _chamfer_band_grid(bore_radius, bore_radius + chamfer, bottom[1], bottom[1] + chamfer),
+            "display": {"color": "#91aa80", "opacity": 0.86},
+            "boundary_ids": ["mounting_bore_bottom_chamfer_a", "mounting_bore_bottom_chamfer_b"],
+        },
     ]
+    if not solid_features:
+        legacy_ids = {"outer_hub_shell_surface", "inner_hub_bottom_face", "mounting_bore_cylinder"}
+        return [surface for surface in surfaces if surface["id"] in legacy_ids]
+    return surfaces
+
+
+def _hood_shell_surfaces(
+    params: dict[str, float],
+    tip_profile: dict[str, Any],
+    material_domain: dict[str, Any] | None,
+    solid_features: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    thickness = params["hood_wall_thickness_mm"]
+    chamfer = max(0.001, params.get("hood_chamfer_radius_mm", 0.0))
+    inner_points = tip_profile["control_points"]
+    outer_profile = {
+        **tip_profile,
+        "id": "hood_outer_profile",
+        "control_points": [[point[0], _round(point[1] + thickness)] for point in inner_points],
+        "weights": tip_profile["weights"][:],
+        "knots": tip_profile["knots"][:],
+    }
+    inlet_inner = inner_points[0]
+    outlet_inner = inner_points[-1]
+    inlet_outer = outer_profile["control_points"][0]
+    outlet_outer = outer_profile["control_points"][-1]
+    surfaces = [
+        {
+            "id": "hood_outer_surface",
+            "kind": "nurbs_revolve_surface",
+            "role": "front_hood_outer_surface",
+            "ontology_id": "front_hood_shell",
+            "material": True,
+            "material_domain": "front_hood",
+            "wall_thickness_mm": _round(thickness),
+            "profile": outer_profile,
+            "uv_grid": _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "profile_samples_rz": _profile_samples_rz(outer_profile, SURFACE_U_COUNT),
+            "display": {"color": "#b6cbd5", "opacity": 0.68},
+            "boundary_ids": ["hood_outer_inlet_circle", "hood_outer_outlet_circle"],
+        },
+        {
+            "id": "hood_inlet_cap_surface",
+            "kind": "annular_axial_cap_surface",
+            "role": "hood_cap",
+            "material": True,
+            "material_domain": "front_hood",
+            "uv_grid": _axial_cap_grid(inlet_inner[0], inlet_inner[1], inlet_outer[1], SURFACE_V_COUNT),
+            "display": {"color": "#a7bfca", "opacity": 0.7},
+            "boundary_ids": ["shroud_inlet_circle", "hood_outer_inlet_circle"],
+        },
+        {
+            "id": "hood_outlet_cap_surface",
+            "kind": "annular_axial_cap_surface",
+            "role": "hood_cap",
+            "material": True,
+            "material_domain": "front_hood",
+            "uv_grid": _axial_cap_grid(outlet_inner[0], outlet_inner[1], outlet_outer[1], SURFACE_V_COUNT),
+            "display": {"color": "#a7bfca", "opacity": 0.7},
+            "boundary_ids": ["shroud_outlet_circle", "hood_outer_outlet_circle"],
+        },
+        {
+            "id": "hood_chamfer_outlet_surface",
+            "kind": "chamfer_surface",
+            "role": "hood_chamfer",
+            "material": True,
+            "material_domain": "front_hood",
+            "radius_mm": _round(params["hood_chamfer_radius_mm"]),
+            "uv_grid": _chamfer_band_grid(max(1.0, outlet_inner[0] - chamfer), outlet_inner[0], outlet_inner[1], outlet_inner[1] + chamfer),
+            "display": {"color": "#c5d4da", "opacity": 0.76},
+            "boundary_ids": ["hood_outlet_chamfer_a", "hood_outlet_chamfer_b"],
+        },
+    ]
+    return surfaces
 
 
 def _construction_lines(
@@ -922,7 +1173,7 @@ def _construction_lines(
         "surface_uv": _surface_uv_lines(surface_graph),
     }
     for surface in surface_graph["surfaces"]:
-        if surface["id"] == "hub_revolve_surface":
+        if surface.get("material_domain") == "hub" or surface["id"] == "hub_revolve_surface":
             lines["hub"].extend(_sparse_surface_lines(surface))
         elif surface["id"] == "shroud_surface":
             lines["shroud"].extend(_sparse_surface_lines(surface))
@@ -1077,7 +1328,20 @@ def _filter_by_geometry_stage(
 
 def _surface_visible_in_stage(surface: dict[str, Any], geometry_stage: str) -> bool:
     role = surface.get("role")
-    if role in {"hub", "outer_hub_shell", "inner_hub_bottom", "mounting_bore", "reference_only", "front_shroud_inner_surface"}:
+    if role in {
+        "hub",
+        "outer_hub_shell",
+        "inner_hub_bottom",
+        "hub_top_cap",
+        "mounting_bore",
+        "hub_chamfer",
+        "reference_only",
+        "construction_support_only",
+        "front_shroud_inner_surface",
+        "front_hood_outer_surface",
+        "hood_cap",
+        "hood_chamfer",
+    }:
         return True
     if geometry_stage == "hub_support":
         return False
@@ -1112,11 +1376,46 @@ def _sparse_surface_lines(surface: dict[str, Any]) -> list[dict[str, Any]]:
     return lines
 
 
+def _surface_hidden_by_policy(surface_key: str, display_policy: dict[str, Any] | None) -> bool:
+    hidden = set((display_policy or {}).get("hide_surfaces", []))
+    return surface_key in hidden
+
+
+def _apply_display_policy(surface_graph: dict[str, Any], display_policy: dict[str, Any] | None) -> dict[str, Any]:
+    hidden = set((display_policy or {}).get("hide_surfaces", []))
+    if not hidden:
+        return surface_graph
+    surfaces = [
+        surface
+        for surface in surface_graph["surfaces"]
+        if surface["id"] not in hidden and surface.get("ontology_id") not in hidden
+    ]
+    visible_ids = {surface["id"] for surface in surfaces}
+    return {
+        **surface_graph,
+        "surfaces": surfaces,
+        "edges": [
+            edge
+            for edge in surface_graph["edges"]
+            if all(surface_id in visible_ids for surface_id in edge.get("surfaces", []))
+        ],
+        "construction_support_surfaces": [
+            surface
+            for surface in surface_graph["surfaces"]
+            if surface["id"] in hidden or surface.get("ontology_id") in hidden
+        ],
+    }
+
+
 def _validity_report(
     surface_graph: dict[str, Any],
     sampled_blades: list[dict[str, Any]],
     construction_lines: dict[str, list[dict[str, Any]]],
+    params: dict[str, float],
+    facets: dict[str, str],
     geometry_stage: str = "edge_closures",
+    display_policy: dict[str, Any] | None = None,
+    material_domain: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     topology_checks = [_check_stage_completeness(surface_graph, geometry_stage)]
     if geometry_stage in {"blade_surfaces", "edge_closures"}:
@@ -1136,10 +1435,17 @@ def _validity_report(
             ]
         )
     topology_checks.append(_check_every_surface_has_uv_lines(surface_graph, construction_lines))
+    if _requires_capped_hub(material_domain):
+        topology_checks.append(_check_hub_solid_has_caps_and_bore(surface_graph))
+    if _surface_hidden_by_policy("blade_tip_support_surface", display_policy):
+        topology_checks.append(_check_open_tip_support_hidden_from_display_graph(surface_graph, facets))
+    if facets["shroud_topology"] == "closed" and (material_domain or {}).get("front_shroud", {}).get("kind") == "finite_thickness_revolved_shell":
+        topology_checks.append(_check_closed_hood_shell_surfaces_present(surface_graph))
     geometry_checks = [
         _check_finite_surface_points(surface_graph),
         _check_positive_radii(surface_graph),
         _check_hub_profile_bottom_radius_larger(surface_graph),
+        _check_material_domain_positive_thickness(params, facets, material_domain),
         {
             "name": "profile_validity",
             "status": "PASS",
@@ -1172,6 +1478,72 @@ def _validity_report(
         "geometry_checks": geometry_checks,
         "topology_checks": topology_checks,
         "engineering_checks": engineering_checks,
+    }
+
+
+def _requires_capped_hub(material_domain: dict[str, Any] | None) -> bool:
+    return (material_domain or {}).get("hub", {}).get("kind") == "capped_revolved_solid_with_bore"
+
+
+def _check_material_domain_positive_thickness(
+    params: dict[str, float],
+    facets: dict[str, str],
+    material_domain: dict[str, Any] | None,
+) -> dict[str, Any]:
+    required = [
+        "hub_wall_thickness_mm",
+        "hub_bottom_thickness_mm",
+        "hub_top_cap_thickness_mm",
+    ]
+    if facets["shroud_topology"] == "closed" and (material_domain or {}).get("front_shroud", {}).get("kind") == "finite_thickness_revolved_shell":
+        required.append("hood_wall_thickness_mm")
+    failing = [name for name in required if params.get(name, 0.0) <= 0.0]
+    return {
+        "name": "material_domain_positive_thickness",
+        "status": "FAIL" if failing else "PASS",
+        "checked_parameters": required,
+        "failing_parameters": failing,
+    }
+
+
+def _check_hub_solid_has_caps_and_bore(surface_graph: dict[str, Any]) -> dict[str, str]:
+    surface_ids = {surface["id"] for surface in surface_graph["surfaces"]}
+    required = {
+        "hub_revolve_surface",
+        "inner_hub_bottom_face",
+        "hub_top_cap_face",
+        "mounting_bore_cylinder",
+    }
+    return {
+        "name": "hub_solid_has_caps_and_bore",
+        "status": "PASS" if required.issubset(surface_ids) else "FAIL",
+    }
+
+
+def _check_open_tip_support_hidden_from_display_graph(
+    surface_graph: dict[str, Any],
+    facets: dict[str, str],
+) -> dict[str, str]:
+    if facets["shroud_topology"] != "open":
+        return {"name": "open_tip_support_surface_hidden_from_display_graph", "status": "PASS"}
+    present = any(surface.get("ontology_id") == "blade_tip_support_surface" for surface in surface_graph["surfaces"])
+    return {
+        "name": "open_tip_support_surface_hidden_from_display_graph",
+        "status": "FAIL" if present else "PASS",
+    }
+
+
+def _check_closed_hood_shell_surfaces_present(surface_graph: dict[str, Any]) -> dict[str, str]:
+    surface_ids = {surface["id"] for surface in surface_graph["surfaces"]}
+    required = {
+        "shroud_surface",
+        "hood_outer_surface",
+        "hood_inlet_cap_surface",
+        "hood_outlet_cap_surface",
+    }
+    return {
+        "name": "closed_hood_shell_surfaces_present",
+        "status": "PASS" if required.issubset(surface_ids) else "FAIL",
     }
 
 
@@ -1354,6 +1726,40 @@ def _annular_plane_grid(
             for theta_index in range(theta_count)
         ]
         for radial_index in range(radial_count)
+    ]
+
+
+def _chamfer_band_grid(
+    inner_radius: float,
+    outer_radius: float,
+    z_min: float,
+    z_max: float,
+) -> list[list[list[float]]]:
+    return [
+        [
+            _polar_point(
+                inner_radius + (outer_radius - inner_radius) * radial_index / 2,
+                2.0 * math.pi * theta_index / (SURFACE_V_COUNT - 1),
+                z_min + (z_max - z_min) * radial_index / 2,
+            )
+            for theta_index in range(SURFACE_V_COUNT)
+        ]
+        for radial_index in range(3)
+    ]
+
+
+def _axial_cap_grid(
+    radius: float,
+    z_min: float,
+    z_max: float,
+    theta_count: int,
+) -> list[list[list[float]]]:
+    return [
+        [
+            _polar_point(radius, 2.0 * math.pi * theta_index / (theta_count - 1), z)
+            for theta_index in range(theta_count)
+        ]
+        for z in [z_min, z_max]
     ]
 
 

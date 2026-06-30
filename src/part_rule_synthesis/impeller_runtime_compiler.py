@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
+from part_rule_synthesis.impeller_dsl_resources import ImpellerDslBundle, load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_shape_control import normalize_shape_control_space
 
+
+IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3")
 
 IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
     "blade_count": {"min": 2, "max": 64},
@@ -24,6 +26,12 @@ IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
     "outlet_blade_angle_deg": {"min": -89.0, "max": 89.0},
     "blade_thickness_mm": {"min": 0.01, "max": 1000.0},
     "root_fillet_radius_mm": {"min": 0.0, "max": 1000.0},
+    "hub_wall_thickness_mm": {"min": 0.001, "max": 120.0},
+    "hub_bottom_thickness_mm": {"min": 0.001, "max": 160.0},
+    "hub_top_cap_thickness_mm": {"min": 0.001, "max": 80.0},
+    "hub_chamfer_radius_mm": {"min": 0.0, "max": 30.0},
+    "hood_wall_thickness_mm": {"min": 0.001, "max": 80.0},
+    "hood_chamfer_radius_mm": {"min": 0.0, "max": 30.0},
 }
 
 
@@ -31,18 +39,16 @@ def compile_impeller_runtime_preset(
     preset_id: str | None = None,
     facet_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    bundle = load_impeller_dsl_bundle()
     requested_preset_id = preset_id or "radial_open_reference"
-    resolved_preset_id = bundle.aliases.get(requested_preset_id, requested_preset_id)
-    if resolved_preset_id not in bundle.presets:
-        raise ValueError(f"unknown impeller preset: {requested_preset_id}")
+    bundle, resolved_preset_id = _bundle_for_preset(requested_preset_id)
     preset = bundle.presets[resolved_preset_id]
     constructor = bundle.constructors[preset["constructor_id"]]
     facets = {**constructor["classification"], **(facet_overrides or {})}
     _validate_facets(bundle, facets)
     shape_control = normalize_shape_control_space(bundle.shape_control_schema, bundle.shape_controls)
+    dsl_version = str(bundle.schema["dsl_version"])
     return {
-        "version": "0.2.0",
+        "version": f"{dsl_version}.0",
         "part_family": "impeller",
         "preset_id": resolved_preset_id,
         "legacy_preset_id": requested_preset_id if requested_preset_id != resolved_preset_id else None,
@@ -57,6 +63,9 @@ def compile_impeller_runtime_preset(
         "rule_implications": _rule_implications(constructor),
         "unsupported_or_inferred_regions": _inferred_regions(constructor),
         "dsl_sections": constructor,
+        "display_policy": constructor.get("display_policy", {}),
+        "material_domain": constructor.get("material_domain", {}),
+        "solid_features": constructor.get("solid_features", {}),
         "shape_control": shape_control,
         "validity_contracts": bundle.validity_contracts,
         "loss_schema": bundle.loss_schema,
@@ -65,18 +74,39 @@ def compile_impeller_runtime_preset(
 
 
 def compiled_impeller_presets() -> dict[str, dict[str, Any]]:
-    bundle = load_impeller_dsl_bundle()
     result = {}
-    for preset_id, preset in bundle.presets.items():
-        constructor = bundle.constructors[preset["constructor_id"]]
-        result[preset_id] = {
-            "name": preset["display_name"],
-            "summary": preset["summary"],
-            "facets": constructor["classification"],
-            "parameters": preset["parameter_values"],
-            "constructor_id": preset["constructor_id"],
-        }
+    for bundle in _available_bundles():
+        for preset_id, preset in bundle.presets.items():
+            constructor = bundle.constructors[preset["constructor_id"]]
+            result[preset_id] = {
+                "name": preset["display_name"],
+                "summary": preset["summary"],
+                "facets": constructor["classification"],
+                "parameters": preset["parameter_values"],
+                "constructor_id": preset["constructor_id"],
+                "dsl_version": bundle.schema["dsl_version"],
+            }
     return result
+
+
+def impeller_json_preset_ids() -> set[str]:
+    ids: set[str] = set()
+    for bundle in _available_bundles():
+        ids.update(bundle.presets)
+        ids.update(bundle.aliases)
+    return ids
+
+
+def _available_bundles() -> list[ImpellerDslBundle]:
+    return [load_impeller_dsl_bundle(version) for version in IMPELLER_DSL_VERSIONS]
+
+
+def _bundle_for_preset(requested_preset_id: str) -> tuple[ImpellerDslBundle, str]:
+    for bundle in _available_bundles():
+        resolved_preset_id = bundle.aliases.get(requested_preset_id, requested_preset_id)
+        if resolved_preset_id in bundle.presets:
+            return bundle, resolved_preset_id
+    raise ValueError(f"unknown impeller preset: {requested_preset_id}")
 
 
 def _validate_facets(bundle: Any, facets: dict[str, str]) -> None:
