@@ -98,6 +98,7 @@ describe("frontend application files", () => {
 
     assert.match(appSource, /simulationViewMode/);
     assert.match(appSource, /CfdManifestPanel/);
+    assert.match(appSource, /h\(ManifestPanel,\s*\{[\s\S]*before:\s*h\(CfdManifestPanel,/);
     assert.match(viewerSource, /surfaceVisibleInView/);
     assert.match(viewerSource, /patchSurfaceIds/);
     assert.match(cfdPanelSource, /cfdPatchGroups/);
