@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from part_rule_synthesis.impeller_design_space import build_campaign_signature
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset, impeller_json_preset_ids
@@ -160,6 +161,16 @@ class RuleSynthesisService:
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
         )
+        campaign_signature = (
+            build_campaign_signature(
+                dsl,
+                normalized_profile_overrides,
+                dsl.get("feature_states", {}),
+                patch_groups=[],
+            )
+            if _dsl_version(dsl) == "0.4"
+            else None
+        )
         manifest = {
             "run_id": run_id,
             "engine_id": engine_id,
@@ -201,6 +212,7 @@ class RuleSynthesisService:
                 dsl_context=dsl,
             ),
             "shape_control": _manifest_shape_control(dsl.get("shape_control", {})),
+            "campaign_signature": campaign_signature,
             "validity": _manifest_validity(dsl, geometry_validity),
             "loss_records": [],
             "geometry_validity": geometry_validity,
