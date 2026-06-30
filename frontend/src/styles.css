@@ -316,6 +316,41 @@ input[type="range"] {
   padding: 14px;
 }
 
+.viewer-header-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.view-mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  padding-top: 8px;
+}
+
+.view-mode-tabs button,
+.patch-row {
+  border: 1px solid #cbd4cf;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17211d;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.view-mode-tabs button {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.view-mode-tabs button.selected,
+.patch-row.selected {
+  border-color: #b86721;
+  background: #fff7ed;
+}
+
 .error-banner {
   border: 1px solid #e6b9a8;
   border-radius: 8px;
@@ -500,6 +535,57 @@ pre {
   border: 1px dashed #cbd5d1;
   border-radius: 8px;
   padding: 12px;
+}
+
+.right-panel > .panel-section:first-child {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.cfd-panel-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.cfd-manifest-panel .patch-list {
+  display: grid;
+  gap: 6px;
+}
+
+.patch-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+}
+
+.patch-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-pill {
+  display: inline-block;
+  border: 1px solid #1f7a5a;
+  color: #1f7a5a;
+  padding: 4px 7px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.subtle-label {
+  margin-top: 7px;
+  color: #64746e;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .stage-row {
@@ -690,6 +776,12 @@ pre {
   .viewer-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .viewer-header-actions,
+  .view-mode-tabs {
+    justify-items: start;
+    justify-content: flex-start;
   }
 
   .viewer-shell {

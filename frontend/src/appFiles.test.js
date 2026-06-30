@@ -23,8 +23,10 @@ describe("frontend application files", () => {
       "src/components/FacetPanel.js",
       "src/components/ParameterPanel.js",
       "src/components/GeometryLayerPanel.js",
+      "src/components/CfdManifestPanel.js",
       "src/components/ModelViewer.js",
       "src/components/ManifestPanel.js",
+      "src/simulationViewModel.js",
       "src/workspaceModel.js",
       "src/styles.css",
     ]) {
@@ -88,6 +90,18 @@ describe("frontend application files", () => {
     assert.match(viewerSource, /layerForConstructionFeature/);
   });
 
+  test("application includes cfd simulation inspection view controls", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const cfdPanelSource = readFileSync(resolve(root, "src/components/CfdManifestPanel.js"), "utf-8");
+
+    assert.match(appSource, /simulationViewMode/);
+    assert.match(appSource, /CfdManifestPanel/);
+    assert.match(viewerSource, /surfaceVisibleInView/);
+    assert.match(viewerSource, /patchSurfaceIds/);
+    assert.match(cfdPanelSource, /cfdPatchGroups/);
+  });
+
   test("application includes curve editors and staged generation controls", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
 
@@ -122,5 +136,14 @@ describe("frontend application files", () => {
     assert.match(bladeSource, /type:\s*"number"/);
     assert.match(styles, /profile-control-table/);
     assert.match(styles, /curve-control-table/);
+  });
+
+  test("application includes CFD manifest panel and simulation view model", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    const modelSource = readFileSync(resolve(root, "src/simulationViewModel.js"), "utf-8");
+
+    assert.match(appSource, /CfdManifestPanel/);
+    assert.match(modelSource, /cfdPatchGroups/);
+    assert.match(modelSource, /surfaceVisibleInView/);
   });
 });

@@ -2,8 +2,10 @@ import React, { useMemo, useState } from "react";
 
 import { instantiateImpeller, modelExportUrl, synthesizeImpeller } from "./apiClient.js";
 import { apiDefault, overridesAfterParameterChange, presets, selectedPreset } from "./appModel.js";
+import { viewModeOptions } from "./simulationViewModel.js";
 import { defaultVisibleLayers } from "./workspaceModel.js";
 import { BladeCurveEditor } from "./components/BladeCurveEditor.js";
+import { CfdManifestPanel } from "./components/CfdManifestPanel.js";
 import { GenerationStagePanel } from "./components/GenerationStagePanel.js";
 import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js";
 import { ManifestPanel } from "./components/ManifestPanel.js";
@@ -24,6 +26,8 @@ export function App() {
   const [manifest, setManifest] = useState(null);
   const [stlUrl, setStlUrl] = useState("");
   const [viewMode, setViewMode] = useState("combined");
+  const [simulationViewMode, setSimulationViewMode] = useState("cad_review_360");
+  const [selectedPatch, setSelectedPatch] = useState(null);
   const [autoRotate, setAutoRotate] = useState(false);
   const [visibleLayers, setVisibleLayers] = useState(defaultVisibleLayers);
   const [profileOverrides, setProfileOverrides] = useState(null);
@@ -47,6 +51,7 @@ export function App() {
       step: modelExportUrl(apiBase, manifest.run_id, "step"),
     };
   }, [apiBase, manifest]);
+  const simulationModes = viewModeOptions();
 
   async function generateModel() {
     setLoading(true);
@@ -67,6 +72,7 @@ export function App() {
       );
       setManifest(run.manifest);
       setStlUrl(modelExportUrl(apiBase, run.run_id, "stl"));
+      setSelectedPatch(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -81,6 +87,7 @@ export function App() {
     setEngineId("");
     setManifest(null);
     setStlUrl("");
+    setSelectedPatch(null);
     setProfileOverrides(null);
     setCurveOverrides(null);
     setGeometryStage("edge_closures");
@@ -100,6 +107,7 @@ export function App() {
   function updateFacet(name, value) {
     setFacets((current) => ({ ...current, [name]: value }));
     setEngineId("");
+    setSelectedPatch(null);
   }
 
   function updateLayer(layerId, visible) {
@@ -185,9 +193,29 @@ export function App() {
           ),
         ),
         h(
-          "button",
-          { className: "primary-action", onClick: generateModel, disabled: loading },
-          loading ? "Generating..." : "Generate",
+          "div",
+          { className: "viewer-header-actions" },
+          h(
+            "div",
+            { className: "view-mode-tabs" },
+            simulationModes.map((mode) =>
+              h(
+                "button",
+                {
+                  key: mode.id,
+                  className: simulationViewMode === mode.id ? "selected" : "",
+                  type: "button",
+                  onClick: () => setSimulationViewMode(mode.id),
+                },
+                mode.label,
+              ),
+            ),
+          ),
+          h(
+            "button",
+            { className: "primary-action", onClick: generateModel, disabled: loading },
+            loading ? "Generating..." : "Generate",
+          ),
         ),
       ),
       error ? h("div", { className: "error-banner" }, error) : null,
@@ -197,9 +225,17 @@ export function App() {
         constructionLines: manifest?.geometry?.construction_lines || {},
         viewMode,
         setViewMode,
+        simulationViewMode,
+        selectedPatch,
+        manifest,
         autoRotate,
         setAutoRotate,
         visibleLayers,
+      }),
+      h(CfdManifestPanel, {
+        manifest,
+        selectedPatch,
+        onSelectPatch: setSelectedPatch,
       }),
     ),
     h(ManifestPanel, {

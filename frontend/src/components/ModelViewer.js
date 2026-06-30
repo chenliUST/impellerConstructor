@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
+import { patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js";
 import { defaultVisibleLayers, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
 
 const h = React.createElement;
@@ -13,6 +14,9 @@ export function ModelViewer({
   constructionLines = {},
   viewMode,
   setViewMode,
+  simulationViewMode = "cad_review_360",
+  selectedPatch = null,
+  manifest = null,
   autoRotate,
   setAutoRotate,
   visibleLayers = defaultVisibleLayers(),
@@ -93,7 +97,7 @@ export function ModelViewer({
 
   useEffect(() => {
     updateVisibility();
-  }, [viewMode, visibleLayers]);
+  }, [viewMode, visibleLayers, simulationViewMode]);
 
   useEffect(() => {
     renderConstructionLines(mergeConstructionLines(constructionLines, surfaceGraph));
@@ -107,16 +111,18 @@ export function ModelViewer({
 
     setStatus("Rendering surface graph...");
     clearModel();
-    const bounds = surfaceGraphBounds(surfaceGraph);
+    const visibleSurfaceGraph = filterSurfaceGraph(surfaceGraph, simulationViewMode);
+    const bounds = surfaceGraphBounds(visibleSurfaceGraph);
     centerRef.current.copy(bounds.center);
-    const shaded = createSurfaceGraphGroup(surfaceGraph, bounds.center);
+    const selectedSurfaceIds = patchSurfaceIds(manifest, selectedPatch);
+    const shaded = createSurfaceGraphGroup(visibleSurfaceGraph, bounds.center, simulationViewMode, selectedSurfaceIds);
     modelRef.current.shaded = shaded;
     sceneRef.current.add(shaded);
     renderConstructionLines(mergeConstructionLines(constructionLines, surfaceGraph));
     frameCamera(bounds.radius || 1000);
     updateVisibility();
     setStatus("Surface graph rendered");
-  }, [surfaceGraph]);
+  }, [surfaceGraph, simulationViewMode, selectedPatch, manifest]);
 
   useEffect(() => {
     if (surfaceGraph?.surfaces?.length) {
@@ -188,7 +194,7 @@ export function ModelViewer({
       });
     }
     if (constructionGroup) {
-      const showConstruction = viewMode !== "shaded";
+      const showConstruction = viewMode !== "shaded" && simulationViewMode !== "cfd_full_360";
       constructionGroup.visible = showConstruction;
       constructionGroup.traverse((child) => {
         if (child.isLineSegments && child.userData.layer) {
@@ -292,13 +298,15 @@ export function ModelViewer({
   );
 }
 
-function createSurfaceGraphGroup(surfaceGraph, center) {
+function createSurfaceGraphGroup(surfaceGraph, center, simulationViewMode, selectedSurfaceIds = new Set()) {
   const group = new THREE.Group();
   const colors = {
     hub: "#7aa58f",
+    hub_wall: "#7aa58f",
     open_tip_reference: "#b5c7a0",
     reference_only: "#b5c7a0",
     shroud: "#9db7c5",
+    tip_or_shroud_wall: "#9db7c5",
     front_shroud_inner_surface: "#9db7c5",
     blade_pressure: "#6f9b85",
     blade_suction: "#5d806f",
@@ -309,6 +317,9 @@ function createSurfaceGraphGroup(surfaceGraph, center) {
   };
 
   for (const surface of surfaceGraph.surfaces || []) {
+    if (!surfaceVisibleInView(surface, simulationViewMode)) {
+      continue;
+    }
     const grid = surface.uv_grid || [];
     if (grid.length < 2 || grid[0].length < 2) {
       continue;
@@ -317,16 +328,32 @@ function createSurfaceGraphGroup(surfaceGraph, center) {
     geometry.computeVertexNormals();
     const display = surface.display || {};
     const isEdgeClosure = surface.kind === "edge_closure_surface";
+    const surfaceId = surface.id || surface.surface_graph_id;
+    const isSelected = selectedSurfaceIds.has(surfaceId);
+    const hasSelection = selectedSurfaceIds.size > 0;
     const material = new THREE.MeshStandardMaterial({
-      color: display.color || colors[surface.role] || "#7aa58f",
+      color: isSelected ? "#f97316" : display.color || colors[surface.cfd_role] || colors[surface.role] || "#7aa58f",
+      emissive: isSelected ? "#7c2d12" : "#000000",
+      emissiveIntensity: isSelected ? 0.18 : 0,
       roughness: 0.58,
       metalness: 0.16,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: display.opacity ?? (surface.role === "open_tip_reference" || surface.role === "reference_only" ? 0.3 : isEdgeClosure ? 1.0 : 0.92),
+      opacity:
+        display.opacity ??
+        (isSelected
+          ? 1.0
+          : hasSelection
+            ? 0.42
+            : surface.role === "open_tip_reference" || surface.role === "reference_only"
+              ? 0.3
+              : isEdgeClosure
+                ? 1.0
+                : 0.92),
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.layer = layerForSurface(surface);
+    mesh.userData.surfaceId = surfaceId;
     group.add(mesh);
   }
 
@@ -358,6 +385,13 @@ function surfaceGridGeometry(grid, center) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setIndex(indices);
   return geometry;
+}
+
+function filterSurfaceGraph(surfaceGraph, simulationViewMode) {
+  return {
+    ...(surfaceGraph || {}),
+    surfaces: (surfaceGraph?.surfaces || []).filter((surface) => surfaceVisibleInView(surface, simulationViewMode)),
+  };
 }
 
 function surfaceGraphBounds(surfaceGraph) {

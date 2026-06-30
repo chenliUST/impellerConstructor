@@ -14,10 +14,19 @@ export function defaultVisibleLayers() {
 }
 
 export function layerForSurface(surface = {}) {
+  const cfdRole = surface.cfd_role || "";
   if (surface.kind === "edge_closure_surface") {
     return "edge_closures";
   }
-  if (surface.role === "hub" || surface.ontology_id === "hub_support_surface") {
+  if (
+    cfdRole === "leading_edge_transition" ||
+    cfdRole === "trailing_edge_transition" ||
+    cfdRole === "root_transition" ||
+    cfdRole === "tip_transition"
+  ) {
+    return "edge_closures";
+  }
+  if (surface.role === "hub" || cfdRole === "hub_wall" || surface.ontology_id === "hub_support_surface") {
     return "hub_support";
   }
   if (
@@ -25,11 +34,12 @@ export function layerForSurface(surface = {}) {
     surface.role === "open_tip_reference" ||
     surface.role === "reference_only" ||
     surface.role === "front_shroud_inner_surface" ||
+    cfdRole === "tip_or_shroud_wall" ||
     surface.ontology_id === "blade_tip_support_surface"
   ) {
     return "tip_support";
   }
-  if (String(surface.role || "").startsWith("blade_")) {
+  if (String(surface.role || "").startsWith("blade_") || cfdRole.startsWith("blade_")) {
     return "blade_surfaces";
   }
   return "shaded_surfaces";
