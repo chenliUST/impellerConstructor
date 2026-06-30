@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="760" viewBox="0 0 1120 760">
+<defs>
+<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+<path d="M0,0 L0,6 L9,3 z" fill="context-stroke" />
+</marker>
+<style>
+.title{font:700 26px Arial,sans-serif;fill:#17231f}
+.subtitle{font:700 16px Arial,sans-serif;fill:#24342f}
+.label{font:700 13px Arial,sans-serif;fill:#17231f}
+.small{font:12px Arial,sans-serif;fill:#40514b}
+</style>
+</defs>
+<rect x="0" y="0" width="100%" height="100%" fill="#f5f7f6"/>
+<text x="50.00" y="48.00" class="title">Blade thickness, pressure/suction offset, and lean</text>
+<text x="50.00" y="76.00" class="small">Generated from pressure_surface, suction_surface, and mean_surface samples.</text>
+<rect x="95.00" y="138.00" width="270.00" height="410.00" rx="8" fill="#ffffff" stroke="#d8e0dc" stroke-width="1"/>
+<text x="125.00" y="166.00" class="subtitle">u=0 leading edge</text>
+<line x1="230.00" y1="184.00" x2="230.00" y2="498.00" stroke="#64748b" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="5 4"/>
+<polyline points="301.94,498.00 301.94,478.38 301.94,458.75 301.95,439.12 301.95,419.50 301.95,399.88 301.95,380.25 301.96,360.62 301.96,341.00 301.96,321.38 301.96,301.75 301.97,282.12 301.97,262.50 301.97,242.88 301.97,223.25 301.97,203.62 301.97,184.00" fill="none" stroke="#2f7d67" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="158.06,498.00 158.06,478.38 158.06,458.75 158.05,439.12 158.05,419.50 158.05,399.88 158.05,380.25 158.04,360.62 158.04,341.00 158.04,321.38 158.04,301.75 158.03,282.12 158.03,262.50 158.03,242.88 158.03,223.25 158.03,203.62 158.03,184.00" fill="none" stroke="#2f6f9e" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="230.00,498.00 230.00,478.38 230.00,458.75 230.00,439.12 230.00,419.50 230.00,399.88 230.00,380.25 230.00,360.62 230.00,341.00 230.00,321.38 230.00,301.75 230.00,282.12 230.00,262.50 230.00,242.88 230.00,223.25 230.00,203.62 230.00,184.00" fill="none" stroke="#111827" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+<line x1="158.04" y1="341.00" x2="301.96" y2="341.00" stroke="#d64545" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<text x="123.04" y="329.00" class="small">local thickness</text>
+<text x="282.00" y="189.00" class="small">v=1 tip</text>
+<text x="282.00" y="498.00" class="small">v=0 hub</text>
+<rect x="395.00" y="138.00" width="270.00" height="410.00" rx="8" fill="#ffffff" stroke="#d8e0dc" stroke-width="1"/>
+<text x="425.00" y="166.00" class="subtitle">u=0.5 mid blade</text>
+<line x1="530.00" y1="184.00" x2="530.00" y2="498.00" stroke="#64748b" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="5 4"/>
+<polyline points="585.80,498.00 585.80,478.38 585.80,458.75 585.80,439.12 585.80,419.50 585.80,399.88 585.80,380.25 585.80,360.62 585.80,341.00 585.80,321.38 585.80,301.75 585.80,282.12 585.80,262.50 585.80,242.88 585.80,223.25 585.80,203.62 585.80,184.00" fill="none" stroke="#2f7d67" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="474.20,498.00 474.20,478.38 474.20,458.75 474.20,439.12 474.20,419.50 474.20,399.88 474.20,380.25 474.20,360.62 474.20,341.00 474.20,321.38 474.20,301.75 474.20,282.12 474.20,262.50 474.20,242.88 474.20,223.25 474.20,203.62 474.20,184.00" fill="none" stroke="#2f6f9e" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="530.00,498.00 530.00,478.38 530.00,458.75 530.00,439.12 530.00,419.50 530.00,399.88 530.00,380.25 530.00,360.62 530.00,341.00 530.00,321.38 530.00,301.75 530.00,282.12 530.00,262.50 530.00,242.88 530.00,223.25 530.00,203.62 530.00,184.00" fill="none" stroke="#111827" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+<line x1="474.20" y1="341.00" x2="585.80" y2="341.00" stroke="#d64545" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<text x="439.20" y="329.00" class="small">local thickness</text>
+<text x="582.00" y="189.00" class="small">v=1 tip</text>
+<text x="582.00" y="498.00" class="small">v=0 hub</text>
+<rect x="695.00" y="138.00" width="270.00" height="410.00" rx="8" fill="#ffffff" stroke="#d8e0dc" stroke-width="1"/>
+<text x="725.00" y="166.00" class="subtitle">u=1 trailing edge</text>
+<line x1="830.00" y1="184.00" x2="830.00" y2="498.00" stroke="#64748b" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="5 4"/>
+<polyline points="869.60,498.00 869.60,478.38 869.60,458.75 869.60,439.12 869.60,419.50 869.60,399.88 869.60,380.25 869.60,360.62 869.60,341.00 869.60,321.38 869.60,301.75 869.60,282.12 869.60,262.50 869.60,242.88 869.60,223.25 869.60,203.62 869.60,184.00" fill="none" stroke="#2f7d67" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="790.40,498.00 790.40,478.38 790.40,458.75 790.40,439.12 790.40,419.50 790.40,399.88 790.40,380.25 790.40,360.62 790.40,341.00 790.40,321.38 790.40,301.75 790.40,282.12 790.40,262.50 790.40,242.88 790.40,223.25 790.40,203.62 790.40,184.00" fill="none" stroke="#2f6f9e" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="830.00,498.00 830.00,478.38 830.00,458.75 830.00,439.12 830.00,419.50 830.00,399.88 830.00,380.25 830.00,360.62 830.00,341.00 830.00,321.38 830.00,301.75 830.00,282.12 830.00,262.50 830.00,242.88 830.00,223.25 830.00,203.62 830.00,184.00" fill="none" stroke="#111827" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"/>
+<line x1="790.40" y1="341.00" x2="869.60" y2="341.00" stroke="#d64545" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<text x="755.40" y="329.00" class="small">local thickness</text>
+<text x="882.00" y="189.00" class="small">v=1 tip</text>
+<text x="882.00" y="498.00" class="small">v=0 hub</text>
+<rect x="70.00" y="560.00" width="470.00" height="132.00" rx="8" fill="#ffffff" stroke="#d8e0dc" stroke-width="1"/>
+<text x="86.00" y="586.00" class="label">blade_thickness_mm = 18.0</text>
+<text x="86.00" y="604.00" class="small">Pressure and suction are angular offsets around the mean surface.</text>
+<text x="86.00" y="622.00" class="small">The kernel tapers thickness along u:</text>
+<text x="86.00" y="640.00" class="small">thickness(u) = blade_thickness_mm * (1 - 0.45*smoothstep(u))</text>
+<rect x="590.00" y="560.00" width="460.00" height="132.00" rx="8" fill="#ffffff" stroke="#d8e0dc" stroke-width="1"/>
+<text x="606.00" y="586.00" class="label">blade_lean_deg = 8.0</text>
+<text x="606.00" y="604.00" class="small">leading_edge_lean_deg = 12.0</text>
+<text x="606.00" y="622.00" class="small">trailing_edge_lean_deg = -8.0</text>
+<text x="606.00" y="640.00" class="small">These change theta as a spanwise angular term multiplied by (v - 0.5).</text>
+</svg>
