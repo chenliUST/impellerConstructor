@@ -39,6 +39,7 @@ PRIMITIVES = {
 }
 
 _IMPELLER_DSL_BUNDLE = load_impeller_dsl_bundle()
+_IMPELLER_V04_DSL_BUNDLE = load_impeller_dsl_bundle("v0_4")
 _JSON_IMPELLER_PRESET_IDS = impeller_json_preset_ids()
 
 
@@ -213,10 +214,9 @@ class RuleSynthesisService:
         }
         if manifest["dsl_version"] == "0.4":
             manifest["campaign_signature"] = build_campaign_signature(
-                dsl,
+                _campaign_signature_runtime_context(dsl),
                 normalized_profile_overrides,
-                dsl.get("feature_states", {}),
-                patch_groups=[],
+                dsl.get("feature_states"),
             )
         (run_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True),
@@ -725,6 +725,18 @@ def _dsl_version(dsl: dict[str, Any]) -> str:
         return dsl_sections["dsl_version"]
     version = str(dsl.get("version", ""))
     return version[:-2] if version.endswith(".0") else version
+
+
+def _campaign_signature_runtime_context(dsl: dict[str, Any]) -> dict[str, Any]:
+    if _dsl_version(dsl) != "0.4":
+        return dsl
+    return {
+        **dsl,
+        "shape_control": {
+            **_IMPELLER_V04_DSL_BUNDLE.shape_controls,
+            **dsl.get("shape_control", {}),
+        },
+    }
 
 
 def _manifest_validity(dsl: dict[str, Any], geometry_validity: dict[str, Any]) -> dict[str, Any]:

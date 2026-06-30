@@ -45,8 +45,10 @@ def test_campaign_signature_freezes_topology_not_numeric_values():
 
     assert signature["dsl_version"] == "0.4"
     assert signature["profile_topology"]["hub_profile"]["control_point_count"] == 4
+    assert signature["profile_topology"]["tip_profile"]["control_point_count"] == 4
+    assert "tip_or_shroud_profile" not in signature["profile_topology"]
     assert signature["enabled_features"] == ["keyway", "mounting_bore"]
-    assert signature["design_vector_length"] == 18
+    assert signature["design_vector_length"] == 2
 
 
 def test_campaign_signature_allows_numeric_only_profile_changes():
@@ -113,6 +115,24 @@ def test_campaign_signature_detects_topology_change():
         require_campaign_compatible(baseline, changed)
 
 
+def test_campaign_signature_detects_design_vector_length_change():
+    baseline = {
+        "profile_topology": {"hub_profile": {"control_point_count": 4}},
+        "enabled_features": ["mounting_bore"],
+        "patch_groups": ["hub_wall"],
+        "design_vector_length": 18,
+    }
+    changed = {
+        "profile_topology": {"hub_profile": {"control_point_count": 4}},
+        "enabled_features": ["mounting_bore"],
+        "patch_groups": ["hub_wall"],
+        "design_vector_length": 19,
+    }
+
+    with pytest.raises(ValueError, match="campaign topology changed: design_vector_length"):
+        require_campaign_compatible(baseline, changed)
+
+
 def test_flatten_design_vector_returns_stable_sorted_values():
     values = {
         "root_fillet.radius_mm": 3.0,
@@ -134,10 +154,30 @@ def test_service_manifest_adds_campaign_signature_only_for_v04(tmp_path):
 
     v04_engine = service.synthesize("impeller", "radial_open_reference_v0_4", {})
     v04_run = service.instantiate(v04_engine.engine_id, {})
+    v04_dsl = service.engines[v04_engine.engine_id]
+    signature = v04_run.manifest["campaign_signature"]
+    expected_features = sorted(
+        feature_id
+        for feature_group in v04_dsl["feature_graph"].values()
+        for feature_id in feature_group
+    )
+    expected_patch_groups = sorted(
+        v04_dsl["simulation_views"]["cfd_full_360"]["required_patch_groups"]
+    )
+    expected_vector_length = len(v04_dsl["shape_control"]["optimizable_variables"])
 
     assert v04_run.manifest["dsl_version"] == "0.4"
-    assert v04_run.manifest["campaign_signature"]["dsl_version"] == "0.4"
-    assert v04_run.manifest["campaign_signature"]["preset_id"] == "radial_open_reference_v0_4"
+    assert signature["dsl_version"] == "0.4"
+    assert signature["preset_id"] == "radial_open_reference_v0_4"
+    assert signature["profile_topology"]["hub_profile"]["control_point_count"] == 6
+    assert signature["profile_topology"]["tip_profile"]["control_point_count"] == 6
+    assert signature["profile_topology"]["blade_surface"]["guide_curve_count"] == 3
+    assert signature["profile_topology"]["blade_surface"]["spanwise_layer_count"] == 4
+    assert "tip_or_shroud_profile" not in signature["profile_topology"]
+    assert signature["enabled_features"] == expected_features
+    assert signature["patch_groups"] == expected_patch_groups
+    assert signature["design_vector_length"] == expected_vector_length
+    assert signature["design_vector_length"] > 0
 
     for preset_id, expected_dsl_version in [
         ("radial_open_reference", "0.2"),
