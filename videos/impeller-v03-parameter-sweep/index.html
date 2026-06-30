@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Impeller v0.3 Parameter Sweep</title>
+    <script src="assets/gsap.min.js"></script>
+    <script src="data/impeller_sweep_data.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        margin: 0;
+        overflow: hidden;
+        background: #edf2ef;
+      }
+
+      body {
+        font-family: "IBM Plex Mono", monospace;
+        color: #17211d;
+      }
+
+      #root {
+        width: 1920px;
+        height: 1080px;
+        background: #edf2ef;
+        overflow: hidden;
+      }
+
+      .scene-content {
+        width: 100%;
+        height: 100%;
+        padding: 32px;
+        display: grid;
+        grid-template-columns: 1fr 560px;
+        gap: 28px;
+      }
+
+      .left-stack {
+        display: grid;
+        grid-template-rows: 1fr 1fr;
+        gap: 24px;
+        min-width: 0;
+      }
+
+      .viewport-card,
+      .dashboard {
+        background: #f8faf7;
+        border: 1px solid #b9c5be;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+      }
+
+      .viewport-card {
+        position: relative;
+        display: grid;
+        grid-template-rows: 44px 1fr;
+        min-height: 0;
+      }
+
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 18px;
+        border-bottom: 1px solid #cbd4cf;
+        font-family: "IBM Plex Mono", monospace;
+        letter-spacing: 0;
+      }
+
+      .card-title {
+        font-size: 22px;
+        font-weight: 700;
+        color: #17211d;
+      }
+
+      .card-subtitle {
+        font-size: 15px;
+        color: #5d6b65;
+      }
+
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .dashboard {
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        min-width: 0;
+      }
+
+      .eyebrow {
+        font-size: 16px;
+        color: #5d6b65;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      h1 {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 44px;
+        line-height: 1.02;
+        margin: 0;
+        letter-spacing: 0;
+      }
+
+      .phase {
+        display: grid;
+        gap: 8px;
+      }
+
+      .phase-name {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .phase-detail {
+        font-size: 17px;
+        line-height: 1.42;
+        color: #46534e;
+      }
+
+      .progress-track {
+        height: 12px;
+        background: #dde6e0;
+        border: 1px solid #c0cac4;
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: #b86721;
+      }
+
+      .status-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        align-items: center;
+        border-top: 1px solid #cbd4cf;
+        border-bottom: 1px solid #cbd4cf;
+        padding: 14px 0;
+      }
+
+      .status-row > div:first-child {
+        min-width: 0;
+      }
+
+      #constructorLabel {
+        overflow-wrap: anywhere;
+        font-size: 15px;
+      }
+
+      .status-badge {
+        padding: 6px 12px;
+        border: 1px solid #1f7a5a;
+        color: #1f7a5a;
+        font-weight: 700;
+        font-size: 17px;
+        justify-self: end;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .metric {
+        border: 1px solid #cbd4cf;
+        padding: 12px;
+        background: #ffffff;
+        min-height: 78px;
+      }
+
+      .metric-label {
+        color: #5d6b65;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .metric-value {
+        margin-top: 8px;
+        font-size: 26px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: #17211d;
+      }
+
+      .metric-value small {
+        font-size: 15px;
+        color: #5d6b65;
+        font-weight: 500;
+      }
+
+      .profile-box {
+        border: 1px solid #cbd4cf;
+        background: #ffffff;
+        padding: 12px;
+      }
+
+      .profile-title {
+        display: flex;
+        justify-content: space-between;
+        font-size: 15px;
+        color: #5d6b65;
+        margin-bottom: 8px;
+      }
+
+      .profile-svg {
+        display: block;
+        width: 100%;
+        height: 146px;
+        background: #f1f5f2;
+        border: 1px solid #d6ded9;
+      }
+
+      .notes {
+        margin-top: auto;
+        display: grid;
+        gap: 5px;
+        color: #46534e;
+        font-size: 14px;
+        line-height: 1.28;
+      }
+
+      .note {
+        display: grid;
+        grid-template-columns: 13px 1fr;
+        gap: 8px;
+      }
+
+      .note::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        margin-top: 6px;
+        background: #b86721;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="32"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div class="scene-content" id="layout">
+        <div class="left-stack">
+          <section class="viewport-card">
+            <header class="card-head">
+              <div class="card-title">Wireframe</div>
+              <div class="card-subtitle">surface UV lines + named blade boundaries</div>
+            </header>
+            <canvas id="wireCanvas" width="1280" height="470"></canvas>
+          </section>
+
+          <section class="viewport-card">
+            <header class="card-head">
+              <div class="card-title">Shaded model</div>
+              <div class="card-subtitle">same v0.3 surface graph, orthographic inspection view</div>
+            </header>
+            <canvas id="shadeCanvas" width="1280" height="470"></canvas>
+          </section>
+        </div>
+
+        <aside class="dashboard">
+          <div>
+            <div class="eyebrow">AxisymmetricThroughflowRadialBladedImpeller</div>
+            <h1>v0.3 parameter sweep</h1>
+          </div>
+
+          <div class="phase">
+            <div class="phase-name" id="phaseName">Open profile sweep</div>
+            <div class="phase-detail" id="phaseDetail">Loading deterministic geometry frames.</div>
+            <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+          </div>
+
+          <div class="status-row">
+            <div>
+              <div class="metric-label">Constructor</div>
+              <div id="constructorLabel" class="phase-detail"></div>
+            </div>
+            <div class="status-badge" id="validityStatus">PASS</div>
+          </div>
+
+          <div class="metric-grid">
+            <div class="metric">
+              <div class="metric-label">Blade count</div>
+              <div class="metric-value" id="bladeCount">0</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">D:H envelope</div>
+              <div class="metric-value" id="ratioValue">0.000</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Diameter</div>
+              <div class="metric-value" id="diameterValue">0 <small>mm</small></div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Height</div>
+              <div class="metric-value" id="heightValue">0 <small>mm</small></div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Blade wrap</div>
+              <div class="metric-value" id="wrapValue">0 <small>deg</small></div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Max edge offset</div>
+              <div class="metric-value" id="edgeOffsetValue">0.000</div>
+            </div>
+          </div>
+
+          <div class="profile-box">
+            <div class="profile-title">
+              <span>Meridional NURBS control polygon</span>
+              <span id="topDelta"></span>
+            </div>
+            <svg class="profile-svg" id="profileSvg" viewBox="0 0 480 146" role="img" aria-label="hub and tip profile control points"></svg>
+          </div>
+
+          <div class="notes">
+            <div class="note">Top wireframe is generated from every displayed surface grid, not STL triangle edges.</div>
+            <div class="note">Open tip reference support is construction-only; closed impeller keeps a visible finite hood shell.</div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+
+      const DATA = window.IMPELLER_SWEEP_DATA;
+      const frames = DATA.frames;
+      const duration = DATA.duration_seconds;
+      const wireCanvas = document.getElementById("wireCanvas");
+      const shadeCanvas = document.getElementById("shadeCanvas");
+      const wireCtx = wireCanvas.getContext("2d");
+      const shadeCtx = shadeCanvas.getContext("2d");
+
+      const ui = {
+        phaseName: document.getElementById("phaseName"),
+        phaseDetail: document.getElementById("phaseDetail"),
+        progressFill: document.getElementById("progressFill"),
+        constructorLabel: document.getElementById("constructorLabel"),
+        validityStatus: document.getElementById("validityStatus"),
+        bladeCount: document.getElementById("bladeCount"),
+        ratioValue: document.getElementById("ratioValue"),
+        diameterValue: document.getElementById("diameterValue"),
+        heightValue: document.getElementById("heightValue"),
+        wrapValue: document.getElementById("wrapValue"),
+        edgeOffsetValue: document.getElementById("edgeOffsetValue"),
+        profileSvg: document.getElementById("profileSvg"),
+        topDelta: document.getElementById("topDelta"),
+      };
+
+      const basis = makeBasis();
+      let currentFrameIndex = -1;
+
+      renderFrame(0);
+
+      const tl = gsap.timeline({ paused: true });
+      const driver = { frame: 0 };
+      tl.from("#layout", { opacity: 0, y: 18, duration: 0.5, ease: "power3.out" }, 0.15);
+      tl.from(".viewport-card", { opacity: 0, x: -24, duration: 0.55, stagger: 0.12, ease: "expo.out" }, 0.22);
+      tl.from(".dashboard", { opacity: 0, x: 24, duration: 0.55, ease: "power2.out" }, 0.32);
+      tl.to(
+        driver,
+        {
+          frame: frames.length - 1,
+          duration: duration - 0.7,
+          ease: "none",
+          snap: { frame: 1 },
+          onUpdate: () => renderFrame(Math.round(driver.frame)),
+        },
+        0.55,
+      );
+      window.__timelines["main"] = tl;
+
+      function renderFrame(index) {
+        const clampedIndex = Math.max(0, Math.min(frames.length - 1, index));
+        if (clampedIndex === currentFrameIndex) {
+          return;
+        }
+        currentFrameIndex = clampedIndex;
+        const frame = frames[clampedIndex];
+        const projector = makeProjector(frame, wireCanvas.width, wireCanvas.height);
+        drawWireframe(wireCtx, wireCanvas, frame, projector);
+        drawShaded(shadeCtx, shadeCanvas, frame, projector);
+        updateDashboard(frame);
+      }
+
+      function drawWireframe(ctx, canvas, frame, projector) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#edf2ef";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.lineCap = "round";
+        for (const surface of frame.surface_graph.surfaces) {
+          const grid = surface.uv_grid;
+          const stroke = wireColor(surface.role);
+          ctx.globalAlpha = surface.role && surface.role.includes("blade") ? 0.9 : 0.62;
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = surface.role && surface.role.includes("blade") ? 1.2 : 0.9;
+          for (let u = 0; u < grid.length; u += 1) {
+            drawPolyline(ctx, grid[u].map(projector.project));
+          }
+          for (let v = 0; v < grid[0].length; v += 1) {
+            const line = [];
+            for (let u = 0; u < grid.length; u += 1) {
+              line.push(projector.project(grid[u][v]));
+            }
+            drawPolyline(ctx, line);
+          }
+        }
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "#b86721";
+        ctx.lineWidth = 2.2;
+        for (const curve of frame.surface_graph.named_boundary_curves) {
+          drawPolyline(ctx, curve.points.map(projector.project));
+        }
+      }
+
+      function drawShaded(ctx, canvas, frame, projector) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#edf2ef";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const triangles = [];
+        for (const surface of frame.surface_graph.surfaces) {
+          const grid = surface.uv_grid;
+          if (!grid || grid.length < 2 || grid[0].length < 2) {
+            continue;
+          }
+          for (let u = 0; u < grid.length - 1; u += 1) {
+            for (let v = 0; v < grid[u].length - 1; v += 1) {
+              addTriangle(triangles, grid[u][v], grid[u + 1][v], grid[u][v + 1], surface);
+              addTriangle(triangles, grid[u + 1][v], grid[u + 1][v + 1], grid[u][v + 1], surface);
+            }
+          }
+        }
+        triangles.sort((a, b) => a.depth - b.depth);
+        for (const tri of triangles) {
+          const p0 = projector.project(tri.points[0]);
+          const p1 = projector.project(tri.points[1]);
+          const p2 = projector.project(tri.points[2]);
+          ctx.globalAlpha = tri.opacity;
+          ctx.fillStyle = shadeColor(tri.color, tri.light);
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "rgba(18,50,65,0.28)";
+        ctx.lineWidth = 0.7;
+        for (const surface of frame.surface_graph.surfaces) {
+          if (surface.role && surface.role.includes("blade")) {
+            const grid = surface.uv_grid;
+            for (let u = 0; u < grid.length; u += Math.max(1, Math.floor(grid.length / 5))) {
+              drawPolyline(ctx, grid[u].map(projector.project));
+            }
+          }
+        }
+      }
+
+      function addTriangle(triangles, a, b, c, surface) {
+        const ab = sub(b, a);
+        const ac = sub(c, a);
+        const normal = normalize(cross(ab, ac));
+        const light = Math.max(0.28, Math.min(1, 0.46 + 0.54 * Math.abs(dot(normal, [-0.34, -0.42, 0.84]))));
+        const depth = (projectDepth(a) + projectDepth(b) + projectDepth(c)) / 3;
+        triangles.push({
+          points: [a, b, c],
+          depth,
+          light,
+          opacity: surface.opacity ?? 0.92,
+          color: surface.color || colorForRole(surface.role),
+        });
+      }
+
+      function drawPolyline(ctx, points) {
+        if (!points.length) {
+          return;
+        }
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i += 1) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.stroke();
+      }
+
+      function updateDashboard(frame) {
+        const p = frame.parameters;
+        ui.phaseName.textContent = frame.phase;
+        ui.phaseDetail.textContent = frame.phase_detail;
+        ui.progressFill.style.width = `${Math.round(frame.progress * 100)}%`;
+        ui.constructorLabel.textContent = frame.constructor_id;
+        ui.validityStatus.textContent = frame.validity.status;
+        ui.validityStatus.style.borderColor = frame.validity.status === "PASS" ? "#1f7a5a" : "#b91c1c";
+        ui.validityStatus.style.color = frame.validity.status === "PASS" ? "#1f7a5a" : "#b91c1c";
+        ui.bladeCount.textContent = p.blade_count;
+        ui.ratioValue.textContent = `${p.diameter_to_height.toFixed(3)}:1`;
+        ui.diameterValue.innerHTML = `${p.diameter_mm.toFixed(0)} <small>mm</small>`;
+        ui.heightValue.innerHTML = `${p.height_mm.toFixed(0)} <small>mm</small>`;
+        ui.wrapValue.innerHTML = `${p.blade_wrap_deg.toFixed(0)} <small>deg</small>`;
+        ui.edgeOffsetValue.textContent = Math.max(p.leading_edge_offset, p.trailing_edge_offset).toFixed(3);
+        ui.topDelta.textContent = `tip-hub top dz ${p.hub_top_tip_top_delta_mm.toFixed(0)} mm`;
+        drawProfileSvg(frame.profile_control_points);
+      }
+
+      function drawProfileSvg(profile) {
+        const points = [...profile.hub, ...profile.tip];
+        const minR = Math.min(...points.map((point) => point[0]));
+        const maxR = Math.max(...points.map((point) => point[0]));
+        const minZ = Math.min(...points.map((point) => point[1]));
+        const maxZ = Math.max(...points.map((point) => point[1]));
+        const pad = 18;
+        const width = 480;
+        const height = 146;
+        const sx = (r) => pad + ((r - minR) / Math.max(1, maxR - minR)) * (width - pad * 2);
+        const sy = (z) => height - pad - ((z - minZ) / Math.max(1, maxZ - minZ)) * (height - pad * 2);
+        const poly = (arr) => arr.map((point) => `${sx(point[0]).toFixed(1)},${sy(point[1]).toFixed(1)}`).join(" ");
+        const circles = (arr, color) =>
+          arr
+            .map((point) => `<circle cx="${sx(point[0]).toFixed(1)}" cy="${sy(point[1]).toFixed(1)}" r="4.2" fill="${color}"></circle>`)
+            .join("");
+        ui.profileSvg.innerHTML = `
+          <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="#cbd4cf" />
+          <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" stroke="#cbd4cf" />
+          <polyline points="${poly(profile.tip)}" fill="none" stroke="#b86721" stroke-width="2.2" />
+          <polyline points="${poly(profile.hub)}" fill="none" stroke="#1f7a5a" stroke-width="2.2" />
+          ${circles(profile.tip, "#b86721")}
+          ${circles(profile.hub, "#1f7a5a")}
+        `;
+      }
+
+      function makeProjector(frame, width, height) {
+        const allPoints = [];
+        for (const surface of frame.surface_graph.surfaces) {
+          for (const row of surface.uv_grid) {
+            for (const point of row) {
+              allPoints.push(point);
+            }
+          }
+        }
+        const center = [
+          (Math.min(...allPoints.map((p) => p[0])) + Math.max(...allPoints.map((p) => p[0]))) / 2,
+          (Math.min(...allPoints.map((p) => p[1])) + Math.max(...allPoints.map((p) => p[1]))) / 2,
+          (Math.min(...allPoints.map((p) => p[2])) + Math.max(...allPoints.map((p) => p[2]))) / 2,
+        ];
+        const projected = allPoints.map((point) => rawProject(point, center));
+        const xs = projected.map((point) => point.x);
+        const ys = projected.map((point) => point.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        const scale = 0.82 * Math.min(width / Math.max(1, maxX - minX), height / Math.max(1, maxY - minY));
+        return {
+          project: (point) => {
+            const raw = rawProject(point, center);
+            return {
+              x: width / 2 + raw.x * scale,
+              y: height / 2 - raw.y * scale,
+              z: raw.z,
+            };
+          },
+        };
+      }
+
+      function rawProject(point, center) {
+        const p = sub(point, center);
+        return {
+          x: dot(p, basis.right),
+          y: dot(p, basis.up),
+          z: dot(p, basis.depth),
+        };
+      }
+
+      function projectDepth(point) {
+        return dot(point, basis.depth);
+      }
+
+      function makeBasis() {
+        const right = normalize([0.78, 0.62, 0]);
+        const up = normalize([-0.28, 0.35, 0.89]);
+        return { right, up, depth: normalize(cross(right, up)) };
+      }
+
+      function colorForRole(role) {
+        if (!role) return "#70977f";
+        if (role.includes("suction")) return "#5f826e";
+        if (role.includes("pressure")) return "#70977f";
+        if (role.includes("edge") || role.includes("closure")) return "#b98045";
+        if (role.includes("hood") || role.includes("shroud")) return "#8ba8ad";
+        if (role.includes("hub")) return "#7ca38c";
+        return "#70977f";
+      }
+
+      function wireColor(role) {
+        if (!role) return "#123241";
+        if (role.includes("hub")) return "#1f7a5a";
+        if (role.includes("hood") || role.includes("shroud")) return "#b86721";
+        if (role.includes("edge") || role.includes("closure")) return "#ad4f25";
+        if (role.includes("blade")) return "#123241";
+        return "#315f72";
+      }
+
+      function shadeColor(hex, light) {
+        const rgb = parseHex(hex || "#70977f");
+        const mixed = rgb.map((value) => Math.round(value * light + 245 * (1 - light) * 0.18));
+        return `rgb(${mixed[0]},${mixed[1]},${mixed[2]})`;
+      }
+
+      function parseHex(hex) {
+        const clean = hex.replace("#", "");
+        return [0, 2, 4].map((offset) => parseInt(clean.slice(offset, offset + 2), 16));
+      }
+
+      function sub(a, b) {
+        return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+      }
+
+      function dot(a, b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      }
+
+      function cross(a, b) {
+        return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+      }
+
+      function normalize(v) {
+        const length = Math.max(0.000001, Math.hypot(v[0], v[1], v[2]));
+        return [v[0] / length, v[1] / length, v[2] / length];
+      }
+    </script>
+  </body>
+</html>
