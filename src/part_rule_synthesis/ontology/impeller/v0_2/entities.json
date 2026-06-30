@@ -1,0 +1,63 @@
+{
+  "coordinate_system": [
+    "rotation_axis",
+    "meridional_plane",
+    "cylindrical_frame"
+  ],
+  "primary_flow_path": [
+    "hub_meridional_profile",
+    "blade_tip_meridional_profile",
+    "inlet_flow_path_boundary",
+    "outlet_flow_path_boundary",
+    "meridional_channel_wire"
+  ],
+  "support_surfaces": [
+    "hub_support_surface",
+    "blade_tip_support_surface"
+  ],
+  "material_domain": [
+    "hub_material_solid",
+    "mounting_bore",
+    "back_disk_or_back_shroud",
+    "front_shroud_material_solid",
+    "material_closure_faces"
+  ],
+  "blade": [
+    "blade_mean_surface",
+    "blade_root_boundary",
+    "blade_tip_boundary",
+    "leading_edge_boundary",
+    "trailing_edge_boundary",
+    "pressure_surface",
+    "suction_surface",
+    "blade_thickness_distribution",
+    "leading_edge_closure_surface",
+    "trailing_edge_closure_surface",
+    "root_closure_or_fillet_surface",
+    "tip_closure_or_shroud_join_surface"
+  ],
+  "topology": [
+    "blade_instance",
+    "blade_pattern",
+    "surface_graph",
+    "adjacency_graph",
+    "named_boundary_curve"
+  ],
+  "shape_control": [
+    "shape_control_policy",
+    "shape_control_variable",
+    "semantic_handle",
+    "control_point_coordinate",
+    "control_net_topology",
+    "knot_vector_policy",
+    "weight_policy",
+    "shape_loss_record",
+    "shape_patch"
+  ],
+  "validation": [
+    "geometry_validity_report",
+    "topology_validity_report",
+    "engineering_warning_report",
+    "loss_record"
+  ]
+}

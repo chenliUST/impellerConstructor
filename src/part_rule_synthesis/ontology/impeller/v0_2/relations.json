@@ -1,0 +1,28 @@
+{
+  "relations": [
+    "revolves_about(profile_curve, rotation_axis)",
+    "generates_surface(profile_curve, support_surface)",
+    "bounds_meridional_channel(hub_meridional_profile, blade_tip_meridional_profile)",
+    "lies_on(boundary_curve, support_surface)",
+    "conforms_to(blade_root_boundary, hub_support_surface)",
+    "conforms_to(blade_tip_boundary, blade_tip_support_surface)",
+    "connects_between(leading_edge_boundary, hub_support_surface, blade_tip_support_surface)",
+    "connects_between(trailing_edge_boundary, hub_support_surface, blade_tip_support_surface)",
+    "offsets_from(pressure_surface, blade_mean_surface)",
+    "offsets_from(suction_surface, blade_mean_surface)",
+    "closes_between(edge_closure_surface, pressure_surface, suction_surface)",
+    "joins_to(root_closure_or_fillet_surface, hub_material_solid)",
+    "joins_to(tip_closure_or_shroud_join_surface, blade_tip_support_surface)",
+    "patterns_around_axis(blade_instance, rotation_axis)",
+    "shares_boundary(surface_a, surface_b, named_boundary_curve)",
+    "encloses_material(surface_graph, material_domain)",
+    "controls_shape_of(shape_control_policy, target_entity)",
+    "parameterizes(shape_control_variable, control_point_coordinate)",
+    "locks_topology(control_net_topology, target_entity)",
+    "defines_knot_vector(knot_vector_policy, target_entity)",
+    "defines_weights(weight_policy, target_entity)",
+    "exposes_handle(semantic_handle, shape_control_variable)",
+    "patches_shape(shape_patch, shape_control_policy)",
+    "records_shape_loss(shape_loss_record, target_entity)"
+  ]
+}

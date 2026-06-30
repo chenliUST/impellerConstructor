@@ -1,0 +1,6 @@
+{
+  "legacy_preset_aliases": {
+    "axisymmetric_nurbs_open_throughflow_study": "radial_open_reference",
+    "axisymmetric_nurbs_closed_throughflow_study": "radial_closed_reference"
+  }
+}

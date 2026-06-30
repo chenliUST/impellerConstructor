@@ -1,0 +1,56 @@
+{
+  "shape_control_schema_version": "0.2",
+  "allowed_representations": [
+    "nurbs_curve_rz",
+    "nurbs_curve_xyz",
+    "nurbs_surface_uv_xyz",
+    "scalar_field_uv"
+  ],
+  "required_policy_fields": [
+    "target_entity",
+    "representation",
+    "representation_topology",
+    "control_variables",
+    "semantic_handles",
+    "constraints"
+  ],
+  "optimization_stages": [
+    {
+      "stage": 1,
+      "name": "coordinate_only",
+      "degree": "locked",
+      "control_point_count": "locked",
+      "knot_vector": "locked",
+      "weights": "locked_positive_unit",
+      "control_point_coordinates": "editable_optimizable"
+    },
+    {
+      "stage": 2,
+      "name": "finite_control_net_choices",
+      "degree": "locked",
+      "control_point_count": "finite_choices",
+      "knot_vector": "regenerated_from_policy",
+      "weights": "locked_positive_unit",
+      "control_point_coordinates": "editable_optimizable"
+    },
+    {
+      "stage": 3,
+      "name": "knot_policy_search",
+      "degree": "locked_or_finite_choices",
+      "control_point_count": "finite_choices",
+      "knot_vector": "policy_or_interior_knots_optimizable",
+      "weights": "locked_positive_unit",
+      "control_point_coordinates": "editable_optimizable"
+    },
+    {
+      "stage": 4,
+      "name": "rational_nurbs_search",
+      "degree": "finite_choices",
+      "control_point_count": "finite_choices",
+      "knot_vector": "policy_or_interior_knots_optimizable",
+      "weights": "positive_bounded_optimizable",
+      "control_point_coordinates": "editable_optimizable"
+    }
+  ],
+  "default_stage": 1
+}

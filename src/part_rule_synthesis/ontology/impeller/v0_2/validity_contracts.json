@@ -1,0 +1,39 @@
+{
+  "geometry_contracts": [
+    "radius_positive",
+    "hub_tip_profiles_do_not_cross",
+    "no_internal_axis_touch",
+    "blade_root_boundary_conforms_to_hub_support_surface",
+    "blade_tip_boundary_conforms_to_blade_tip_support_surface",
+    "leading_edge_boundary_connects_hub_to_tip_support",
+    "trailing_edge_boundary_connects_hub_to_tip_support",
+    "pressure_suction_surfaces_do_not_swap",
+    "nurbs_degree_allowed",
+    "control_net_dimension_matches_degree",
+    "nurbs_knot_vector_non_decreasing",
+    "nurbs_knot_multiplicity_valid",
+    "nurbs_weights_positive",
+    "hub_profile_base_radius_greater_than_nose_radius",
+    "shape_control_variables_within_bounds",
+    "construction_lines_sampled_from_surface_graph"
+  ],
+  "topology_contracts": [
+    "blade_has_four_primary_boundaries",
+    "blade_has_pressure_and_suction_surfaces",
+    "blade_has_leading_and_trailing_edge_closures",
+    "blade_has_root_and_tip_treatment",
+    "open_impeller_has_no_front_shroud_material",
+    "closed_impeller_has_front_shroud_material",
+    "adjacent_surfaces_share_named_boundary_curves",
+    "hub_material_domain_has_bore_and_back_face"
+  ],
+  "engineering_warnings": [
+    "beta_angle_plausibility",
+    "wrap_angle_plausibility",
+    "blade_count_plausibility",
+    "leading_edge_thickness_plausibility",
+    "root_fillet_radius_positive",
+    "bore_wall_thickness_plausibility",
+    "shape_control_stage_matches_validation_strength"
+  ]
+}
