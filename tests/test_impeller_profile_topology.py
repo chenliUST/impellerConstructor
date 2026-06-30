@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from part_rule_synthesis.impeller_kernels.axisymmetric_throughflow_nurbs import (
     build_axisymmetric_throughflow_nurbs_geometry,
 )
@@ -86,3 +88,16 @@ def test_kernel_rejects_invalid_knot_count_for_variable_profile():
         assert "knot count" in str(exc)
     else:
         raise AssertionError("expected invalid knot count to fail")
+
+
+def test_kernel_rejects_non_integer_profile_degree():
+    profiles = {
+        "hub_profile": {
+            **clamped_curve([[120, 160], [170, 130], [240, 90], [340, 40], [470, 12], [570, 0]]),
+            "degree": 3.5,
+        },
+        "tip_or_shroud_profile": clamped_curve([[190, 320], [250, 292], [350, 230], [455, 150], [560, 96], [630, 78]]),
+    }
+
+    with pytest.raises(ValueError, match="degree"):
+        build_axisymmetric_throughflow_nurbs_geometry(PARAMS, FACETS, profile_overrides=profiles)

@@ -313,8 +313,8 @@ def _validated_profile_override(
         return fallback
     if override.get("kind") != "nurbs_curve":
         raise ValueError(f"{name} must be kind nurbs_curve")
-    degree = int(override.get("degree", -1))
-    if degree != 3:
+    degree = override.get("degree")
+    if type(degree) is not int or degree != 3:
         raise ValueError(f"{name} degree must be 3")
     points = override.get("control_points")
     if not isinstance(points, list) or len(points) < degree + 1:
