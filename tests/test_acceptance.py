@@ -311,19 +311,41 @@ def test_acceptance_v03_closed_impeller_displays_finite_hood_shell(tmp_path: Pat
     assert topology_checks["closed_hood_shell_surfaces_present"]["status"] == "PASS"
 
 
-def test_impeller_v04_manifest_includes_cfd_full_360_patch_groups(tmp_path):
+def test_impeller_v04_manifest_includes_valid_cfd_full_360_patch_groups(tmp_path):
     service = RuleSynthesisService(tmp_path)
-    engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
-    parameters = {name: spec["default"] for name, spec in service.engines[engine.engine_id]["parameters"].items()}
 
-    run = service.instantiate(engine.engine_id, parameters)
-    cfd = run.manifest["simulation_manifests"]["cfd_full_360"]
+    for preset_id in ["radial_open_reference_v0_4", "radial_closed_reference_v0_4"]:
+        engine = service.synthesize("impeller", preset_id=preset_id)
+        dsl = service.engines[engine.engine_id]
+        parameters = {name: spec["default"] for name, spec in dsl["parameters"].items()}
 
-    assert cfd["domain_kind"] == "full_360_wetted_surface"
-    assert "blade_pressure_wall" in cfd["patch_groups"]
-    assert "blade_suction_wall" in cfd["patch_groups"]
-    assert cfd["feature_suppression"]["suppressed_features"]
-    assert cfd["validity"]["status"] in {"PASS", "FAIL"}
+        run = service.instantiate(engine.engine_id, parameters)
+        cfd = run.manifest["simulation_manifests"]["cfd_full_360"]
+
+        assert cfd["domain_kind"] == "full_360_wetted_surface"
+        assert cfd["feature_suppression"]["suppressed_features"]
+        assert cfd["validity"]["status"] == "PASS"
+        for group_id in dsl["simulation_views"]["cfd_full_360"]["required_patch_groups"]:
+            assert group_id in cfd["patch_groups"]
+            assert cfd["patch_groups"][group_id]["instances"], f"{preset_id} missing {group_id}"
+        assert all(
+            cfd["patch_instances"][instance_id]["source_type"] == "boundary_curve"
+            for instance_id in cfd["patch_groups"]["inlet_patch"]["instances"]
+        )
+        assert all(
+            cfd["patch_instances"][instance_id]["source_type"] == "boundary_curve"
+            for instance_id in cfd["patch_groups"]["outlet_patch"]["instances"]
+        )
+        assert all("mounting_bore" not in instance_id for instance_id in cfd["patch_instances"])
+
+
+def test_impeller_legacy_manifest_keeps_empty_simulation_manifests_for_compatibility(tmp_path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_3")
+
+    run = service.instantiate(engine.engine_id, {})
+
+    assert run.manifest["simulation_manifests"] == {}
 
 
 def test_acceptance_impeller_rule_engine_records_facets_rules_and_construction_lines(tmp_path: Path):

@@ -214,3 +214,77 @@ def test_cfd_manifest_fails_when_required_patch_group_is_empty():
 
     assert manifest["validity"]["status"] == "FAIL"
     assert "missing_patch_group_instances:hub_wall" in manifest["validity"]["failures"]
+
+
+def test_cfd_manifest_resolves_patch_group_sources_from_surfaces_and_boundary_curves():
+    surface_graph = {
+        "surfaces": [
+            {
+                "id": "blade_0_tip_closure_surface",
+                "role": "blade_tip_closure",
+                "cfd_role": "tip_transition",
+                "feature_id": "blade_00.tip_transition",
+                "uv_grid": [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]],
+            }
+        ],
+        "named_boundary_curves": [
+            {"id": "blade_0_leading_edge_boundary", "role": "leading_edge_boundary"},
+            {"id": "blade_0_trailing_edge_boundary", "role": "trailing_edge_boundary"},
+        ],
+    }
+    view = {
+        "feature_suppression": {"suppressed_features": []},
+        "required_patch_groups": ["tip_fillet_wall", "tip_or_shroud_wall", "inlet_patch", "outlet_patch"],
+        "patch_group_sources": {
+            "tip_fillet_wall": ["tip_transition"],
+            "tip_or_shroud_wall": {"open": ["tip_transition"], "closed": ["blade_tip_support_surface"]},
+            "inlet_patch": ["leading_edge_boundary"],
+            "outlet_patch": ["trailing_edge_boundary"],
+        },
+    }
+
+    manifest = build_cfd_full_360_manifest(surface_graph, view, blade_count=1)
+
+    assert manifest["patch_groups"]["tip_fillet_wall"]["instances"] == [
+        "tip_fillet_wall:blade_0_tip_closure_surface"
+    ]
+    assert manifest["patch_groups"]["tip_or_shroud_wall"]["instances"] == [
+        "tip_or_shroud_wall:blade_0_tip_closure_surface"
+    ]
+    assert manifest["patch_instances"]["tip_or_shroud_wall:blade_0_tip_closure_surface"][
+        "source_token"
+    ] == "tip_transition"
+    assert manifest["patch_instances"]["blade_0_leading_edge_boundary"]["source_type"] == "boundary_curve"
+    assert manifest["patch_instances"]["blade_0_leading_edge_boundary"]["source_token"] == "leading_edge_boundary"
+    assert manifest["patch_instances"]["blade_0_trailing_edge_boundary"]["group"] == "outlet_patch"
+    assert manifest["validity"]["status"] == "PASS"
+
+
+def test_cfd_manifest_fails_visibly_for_unmapped_cfd_roles():
+    surface_graph = {
+        "surfaces": [
+            {
+                "id": "mystery_surface",
+                "role": "candidate_wall",
+                "cfd_role": "mystery_wall",
+                "uv_grid": [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]],
+            }
+        ]
+    }
+    view = {
+        "feature_suppression": {"suppressed_features": []},
+        "required_patch_groups": [],
+        "patch_group_sources": {},
+    }
+
+    manifest = build_cfd_full_360_manifest(surface_graph, view, blade_count=1)
+
+    assert manifest["validity"]["status"] == "FAIL"
+    assert "unmapped_cfd_role:mystery_wall:mystery_surface" in manifest["validity"]["failures"]
+    assert manifest["validity"]["unmapped_instances"] == [
+        {
+            "surface_graph_id": "mystery_surface",
+            "cfd_role": "mystery_wall",
+            "surface_role": "candidate_wall",
+        }
+    ]
