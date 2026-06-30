@@ -770,6 +770,8 @@ def _surface_graph(
             "id": "hub_revolve_surface",
             "kind": "nurbs_revolve_surface",
             "role": "hub",
+            "cfd_role": "hub_wall",
+            "feature_id": "hub",
             "ontology_id": "hub_support_surface",
             "material": True,
             "material_domain": "hub",
@@ -795,6 +797,8 @@ def _surface_graph(
                     else "reference_only"
                 )
             ),
+            "cfd_role": "tip_or_shroud_wall",
+            "feature_id": "front_shroud" if facets["shroud_topology"] == "closed" else "tip_reference",
             "display_role": "shroud" if facets["shroud_topology"] == "closed" else "open_tip_reference",
             "ontology_id": "blade_tip_support_surface",
             "material": facets["shroud_topology"] == "closed",
@@ -834,6 +838,7 @@ def _surface_graph(
     named_boundary_curves: list[dict[str, Any]] = []
     for blade in sampled_blades:
         prefix = f"blade_{blade['index']}"
+        blade_feature_id = f"blade_{blade['index']:02d}"
         boundary_curves[f"{prefix}_pressure_hub_boundary"] = blade["pressure_hub_boundary"]
         boundary_curves[f"{prefix}_suction_hub_boundary"] = blade["suction_hub_boundary"]
         boundary_curves[f"{prefix}_pressure_tip_boundary"] = blade["pressure_tip_boundary"]
@@ -884,6 +889,8 @@ def _surface_graph(
                     "id": f"{prefix}_pressure_surface",
                     "kind": "nurbs_surface",
                     "role": "blade_pressure",
+                    "cfd_role": "blade_pressure",
+                    "feature_id": blade_feature_id,
                     "degree_u": 3,
                     "degree_v": 3,
                     "control_net": _control_net_from_grid(blade["pressure_surface"]),
@@ -900,6 +907,8 @@ def _surface_graph(
                     "id": f"{prefix}_suction_surface",
                     "kind": "nurbs_surface",
                     "role": "blade_suction",
+                    "cfd_role": "blade_suction",
+                    "feature_id": blade_feature_id,
                     "degree_u": 3,
                     "degree_v": 3,
                     "control_net": _control_net_from_grid(blade["suction_surface"]),
@@ -916,6 +925,8 @@ def _surface_graph(
                     "id": f"{prefix}_leading_edge_surface",
                     "kind": "edge_closure_surface",
                     "role": "blade_leading_edge_closure",
+                    "cfd_role": "leading_edge_transition",
+                    "feature_id": f"{blade_feature_id}.leading_edge_round",
                     "closure_model": "ruled_pressure_mean_suction",
                     "uv_grid": blade["leading_edge_surface"],
                     "display": {"color": "#f59e0b", "opacity": 1.0, "edge_highlight": True},
@@ -928,6 +939,8 @@ def _surface_graph(
                     "id": f"{prefix}_trailing_edge_surface",
                     "kind": "edge_closure_surface",
                     "role": "blade_trailing_edge_closure",
+                    "cfd_role": "trailing_edge_transition",
+                    "feature_id": f"{blade_feature_id}.trailing_edge_round",
                     "closure_model": "ruled_pressure_mean_suction",
                     "uv_grid": blade["trailing_edge_surface"],
                     "display": {"color": "#ef4444", "opacity": 1.0, "edge_highlight": True},
@@ -940,6 +953,8 @@ def _surface_graph(
                     "id": f"{prefix}_root_closure_surface",
                     "kind": "edge_closure_surface",
                     "role": "blade_root_hub_closure",
+                    "cfd_role": "root_transition",
+                    "feature_id": f"{blade_feature_id}.root_fillet",
                     "closure_model": "ruled_pressure_mean_suction",
                     "uv_grid": blade["root_closure_surface"],
                     "display": {"color": "#22c55e", "opacity": 1.0, "edge_highlight": True},
@@ -952,6 +967,8 @@ def _surface_graph(
                     "id": f"{prefix}_tip_closure_surface",
                     "kind": "edge_closure_surface",
                     "role": "blade_tip_closure",
+                    "cfd_role": "tip_transition",
+                    "feature_id": f"{blade_feature_id}.tip_transition",
                     "closure_model": "ruled_pressure_mean_suction",
                     "uv_grid": blade["tip_closure_surface"],
                     "display": {"color": "#38bdf8", "opacity": 1.0, "edge_highlight": True},
