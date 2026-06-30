@@ -321,20 +321,35 @@ def _validated_profile_override(
         raise ValueError(f"{name} must have at least {degree + 1} control points")
     cleaned_points = []
     for point in points:
-        if not isinstance(point, list) or len(point) != 2:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
             raise ValueError(f"{name} control point must be [r_mm, z_mm]")
-        r, z = float(point[0]), float(point[1])
+        try:
+            r, z = float(point[0]), float(point[1])
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} control point values must be finite") from None
         if not math.isfinite(r) or not math.isfinite(z):
             raise ValueError(f"{name} control point values must be finite")
         if r <= 0.0:
             raise ValueError(f"{name} requires positive radius")
         cleaned_points.append([_round(r), _round(z)])
-    weights = [float(value) for value in override.get("weights", fallback["weights"])]
+    raw_weights = override.get("weights", fallback["weights"])
+    if not isinstance(raw_weights, list):
+        raise ValueError(f"{name} weights must be a list")
+    try:
+        weights = [float(value) for value in raw_weights]
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} weights must be positive finite values") from None
     if len(weights) != len(cleaned_points):
         raise ValueError(f"{name} weight count must match control point count")
     if any(value <= 0.0 or not math.isfinite(value) for value in weights):
         raise ValueError(f"{name} weights must be positive finite values")
-    knots = [float(value) for value in override.get("knots", fallback["knots"])]
+    raw_knots = override.get("knots", fallback["knots"])
+    if not isinstance(raw_knots, list):
+        raise ValueError(f"{name} knots must be a list")
+    try:
+        knots = [float(value) for value in raw_knots]
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} knots must be finite") from None
     if len(knots) != len(cleaned_points) + degree + 1:
         raise ValueError(f"{name} knot count must equal control point count + degree + 1")
     if any(not math.isfinite(value) for value in knots):
@@ -343,6 +358,15 @@ def _validated_profile_override(
         raise ValueError(f"{name} knots must be non-decreasing")
     if knots[: degree + 1] != [0.0] * (degree + 1) or knots[-(degree + 1) :] != [1.0] * (degree + 1):
         raise ValueError(f"{name} knots must be clamped to 0 and 1")
+    interior_knots = knots[degree + 1 : -(degree + 1)]
+    if any(value <= 0.0 or value >= 1.0 for value in interior_knots):
+        raise ValueError(f"{name} interior knots must be in the open interval (0, 1)")
+    if interior_knots:
+        multiplicity = 1
+        for previous, current in zip(interior_knots, interior_knots[1:]):
+            multiplicity = multiplicity + 1 if current == previous else 1
+            if multiplicity > degree:
+                raise ValueError(f"{name} interior knot multiplicity must not exceed degree")
     if override.get("coordinate_system", "rz_meridional_mm") != "rz_meridional_mm":
         raise ValueError(f"{name} coordinate_system must be rz_meridional_mm")
     return {
@@ -1872,11 +1896,6 @@ def _cad_features(facets: dict[str, str]) -> list[str]:
     else:
         features.append("open_tip_reference_nurbs_surface")
     return features
-
-
-def _cubic_basis(u: float) -> list[float]:
-    one = 1.0 - u
-    return [one**3, 3.0 * one * one * u, 3.0 * one * u * u, u**3]
 
 
 def _smoothstep(value: float) -> float:

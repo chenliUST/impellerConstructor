@@ -70,7 +70,39 @@ def test_kernel_accepts_six_point_hub_and_tip_profiles():
 
     hub_surface = next(surface for surface in geometry["surface_graph"]["surfaces"] if surface["id"] == "hub_revolve_surface")
     assert hub_surface["profile"]["control_points"] == profiles["hub_profile"]["control_points"]
+    assert geometry["kernel"]["meridional_curves"]["hub"][0]["r_mm"] == profiles["hub_profile"]["control_points"][0][0]
+    assert geometry["kernel"]["meridional_curves"]["hub"][0]["z_mm"] == profiles["hub_profile"]["control_points"][0][1]
+    assert geometry["kernel"]["meridional_curves"]["hub"][-1]["r_mm"] == profiles["hub_profile"]["control_points"][-1][0]
+    assert geometry["kernel"]["meridional_curves"]["hub"][-1]["z_mm"] == profiles["hub_profile"]["control_points"][-1][1]
+    assert (
+        geometry["kernel"]["meridional_curves"]["tip_or_shroud"][0]["r_mm"]
+        == profiles["tip_or_shroud_profile"]["control_points"][0][0]
+    )
+    assert (
+        geometry["kernel"]["meridional_curves"]["tip_or_shroud"][-1]["z_mm"]
+        == profiles["tip_or_shroud_profile"]["control_points"][-1][1]
+    )
     assert geometry["validity"]["status"] == "PASS"
+
+
+def test_kernel_uses_declared_profile_interior_knots():
+    hub = clamped_curve([[120, 160], [170, 130], [240, 90], [340, 40], [470, 12], [570, 0]])
+    tip = clamped_curve([[190, 320], [250, 292], [350, 230], [455, 150], [560, 96], [630, 78]])
+    open_uniform = build_axisymmetric_throughflow_nurbs_geometry(
+        PARAMS,
+        FACETS,
+        profile_overrides={"hub_profile": hub, "tip_or_shroud_profile": tip},
+    )
+    custom_knots = build_axisymmetric_throughflow_nurbs_geometry(
+        PARAMS,
+        FACETS,
+        profile_overrides={
+            "hub_profile": {**hub, "knots": [0, 0, 0, 0, 0.2, 0.75, 1, 1, 1, 1]},
+            "tip_or_shroud_profile": tip,
+        },
+    )
+
+    assert custom_knots["kernel"]["meridional_curves"]["hub"][20] != open_uniform["kernel"]["meridional_curves"]["hub"][20]
 
 
 def test_kernel_rejects_invalid_knot_count_for_variable_profile():
@@ -100,4 +132,46 @@ def test_kernel_rejects_non_integer_profile_degree():
     }
 
     with pytest.raises(ValueError, match="degree"):
+        build_axisymmetric_throughflow_nurbs_geometry(PARAMS, FACETS, profile_overrides=profiles)
+
+
+def test_kernel_rejects_endpoint_values_in_interior_knots():
+    profiles = {
+        "hub_profile": {
+            **clamped_curve([[120, 160], [170, 130], [240, 90], [340, 40], [470, 12], [570, 0]]),
+            "knots": [0, 0, 0, 0, 0, 0.5, 1, 1, 1, 1],
+        },
+        "tip_or_shroud_profile": {
+            **clamped_curve([[190, 320], [250, 292], [350, 230], [455, 150], [560, 96], [630, 78]]),
+            "knots": [0, 0, 0, 0, 0, 0.5, 1, 1, 1, 1],
+        },
+    }
+
+    with pytest.raises(ValueError, match="interior knots"):
+        build_axisymmetric_throughflow_nurbs_geometry(PARAMS, FACETS, profile_overrides=profiles)
+
+
+def test_kernel_rejects_string_profile_weights():
+    profiles = {
+        "hub_profile": {
+            **clamped_curve([[120, 160], [170, 130], [240, 90], [340, 40], [470, 12], [570, 0]]),
+            "weights": "111111",
+        },
+        "tip_or_shroud_profile": clamped_curve([[190, 320], [250, 292], [350, 230], [455, 150], [560, 96], [630, 78]]),
+    }
+
+    with pytest.raises(ValueError, match="weights"):
+        build_axisymmetric_throughflow_nurbs_geometry(PARAMS, FACETS, profile_overrides=profiles)
+
+
+def test_kernel_rejects_string_profile_knots():
+    profiles = {
+        "hub_profile": {
+            **clamped_curve([[120, 160], [170, 130], [240, 90], [340, 40], [470, 12], [570, 0]]),
+            "knots": "0000001111",
+        },
+        "tip_or_shroud_profile": clamped_curve([[190, 320], [250, 292], [350, 230], [455, 150], [560, 96], [630, 78]]),
+    }
+
+    with pytest.raises(ValueError, match="knots"):
         build_axisymmetric_throughflow_nurbs_geometry(PARAMS, FACETS, profile_overrides=profiles)
