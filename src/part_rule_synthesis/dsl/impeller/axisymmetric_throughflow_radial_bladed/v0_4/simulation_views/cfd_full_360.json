@@ -1,0 +1,44 @@
+{
+  "view_id": "cfd_full_360",
+  "domain_kind": "full_360_wetted_surface",
+  "status": "research_grade_executable",
+  "patch_naming": "group_and_instance",
+  "feature_suppression": {
+    "suppressed_features": [
+      "mounting_bore",
+      "shaft_seat",
+      "keyway",
+      "rear_hub_groove"
+    ],
+    "reason": "internal assembly features are not part of the wetted CFD flow domain"
+  },
+  "required_patch_groups": [
+    "blade_pressure_wall",
+    "blade_suction_wall",
+    "leading_edge_wall",
+    "trailing_edge_wall",
+    "root_fillet_wall",
+    "tip_fillet_wall",
+    "hub_wall",
+    "tip_or_shroud_wall",
+    "inlet_patch",
+    "outlet_patch"
+  ],
+  "mesh_hints": {
+    "global": {
+      "target_surface_size_mm": 4.0,
+      "curvature_refinement": true,
+      "min_feature_size_mm": 1.0
+    },
+    "patch_overrides": {
+      "leading_edge_wall": {
+        "target_surface_size_mm": 1.2,
+        "inflation_layers": 8
+      },
+      "root_fillet_wall": {
+        "target_surface_size_mm": 1.0,
+        "inflation_layers": 10
+      }
+    }
+  }
+}

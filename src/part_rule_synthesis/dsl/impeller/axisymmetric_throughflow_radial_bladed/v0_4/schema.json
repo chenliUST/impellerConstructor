@@ -1,0 +1,20 @@
+{
+  "dsl_version": "0.4",
+  "supersedes": "../v0_3/schema.json",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "patch_naming_policy": "group_and_instance",
+  "required_sections": [
+    "classification",
+    "coordinate_system",
+    "design_space",
+    "main_dimensions",
+    "primary_flow_path",
+    "support_surfaces",
+    "blade_surface_model",
+    "surface_graph_contract",
+    "feature_graph_contract",
+    "simulation_views",
+    "display_policy",
+    "validation"
+  ]
+}

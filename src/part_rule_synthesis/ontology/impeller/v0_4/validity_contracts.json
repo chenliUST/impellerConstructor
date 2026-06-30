@@ -1,0 +1,40 @@
+{
+  "contract_version": "0.4",
+  "supersedes": "ontology/impeller/v0_2/validity_contracts.json",
+  "geometry_contracts": [
+    "radius_positive",
+    "hub_tip_profiles_do_not_cross",
+    "curve_values_are_finite",
+    "generated_surfaces_have_nonzero_area",
+    "no_nan_or_inf_coordinates",
+    "blade_root_boundary_conforms_to_hub_support_surface",
+    "blade_tip_boundary_conforms_to_blade_tip_support_surface",
+    "transition_surfaces_connect_declared_input_boundaries",
+    "research_grade_sampled_surfaces_are_labeled"
+  ],
+  "topology_contracts": [
+    "blade_has_four_primary_boundaries",
+    "feature_source_edges_exist",
+    "generated_feature_surfaces_registered_in_surface_graph",
+    "adjacent_surfaces_share_named_boundary_curves",
+    "open_impeller_has_no_front_shroud_material",
+    "closed_impeller_has_front_shroud_material",
+    "campaign_topology_variables_are_frozen"
+  ],
+  "simulation_view_contracts": [
+    "cfd_full_360_uses_group_and_instance_patch_naming",
+    "every_wetted_surface_has_one_cfd_patch_group",
+    "every_required_cfd_patch_group_has_instances",
+    "suppressed_assembly_features_do_not_appear_in_cfd_patch_groups",
+    "fea_solid_is_schema_only_v0_4"
+  ],
+  "engineering_warnings": [
+    "beta_angle_plausibility",
+    "wrap_angle_plausibility",
+    "blade_count_plausibility",
+    "trailing_edge_thickness_minimum",
+    "root_fillet_radius_within_local_thickness_bounds",
+    "mounting_bore_radius_compatible_with_hub_radius",
+    "keyway_depth_preserves_minimum_hub_wall"
+  ]
+}

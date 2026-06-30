@@ -1,0 +1,310 @@
+{
+  "dsl_version": "0.4",
+  "supersedes": "../v0_3/constructors/closed_impeller.json",
+  "constructor_id": "axisymmetric_throughflow_radial_bladed.closed.v0_4",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "classification": {
+    "part_family": "impeller",
+    "flow_topology": "radial",
+    "passage_topology": "throughflow_bladed_channel",
+    "shroud_topology": "closed",
+    "entry_topology": "single_entry",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "blade_population": "full_blade_set",
+    "working_domain": "pump"
+  },
+  "coordinate_system": {
+    "units": "mm",
+    "frame": "cylindrical",
+    "rotation_axis": "z",
+    "positive_rotation": "counterclockwise_viewed_from_inlet"
+  },
+  "design_space": {
+    "design_space_ref": "shape_controls/default_shape_controls.json"
+  },
+  "main_dimensions": {
+    "required_parameters": [
+      "blade_count",
+      "inlet_radius_mm",
+      "exit_radius_mm",
+      "inlet_blade_height_mm",
+      "outlet_blade_height_mm",
+      "mounting_bore_radius_mm",
+      "hub_wall_thickness_mm",
+      "hub_bottom_thickness_mm",
+      "hub_top_cap_thickness_mm",
+      "hub_chamfer_radius_mm",
+      "hood_wall_thickness_mm",
+      "hood_chamfer_radius_mm"
+    ]
+  },
+  "primary_flow_path": {
+    "hub_meridional_profile": "hub_meridional_profile",
+    "blade_tip_meridional_profile": "blade_tip_meridional_profile",
+    "blade_tip_meridional_profile_use": "front_shroud_inner_surface",
+    "inlet_flow_path_boundary": "leading_edge_boundary",
+    "outlet_flow_path_boundary": "trailing_edge_boundary"
+  },
+  "support_surfaces": {
+    "hub_support_surface": {
+      "kind": "revolved_nurbs_surface",
+      "source_profile": "hub_meridional_profile",
+      "material": true,
+      "display": "visible"
+    },
+    "blade_tip_support_surface": {
+      "kind": "revolved_nurbs_surface",
+      "source_profile": "blade_tip_meridional_profile",
+      "role": "front_shroud_inner_surface",
+      "material": true,
+      "display": "visible"
+    }
+  },
+  "shape_control": {
+    "shape_control_ref": "shape_controls/default_shape_controls.json",
+    "optimization_stage": 2,
+    "target_entities": [
+      "hub_meridional_profile",
+      "blade_tip_meridional_profile",
+      "leading_edge_boundary",
+      "trailing_edge_boundary",
+      "blade_mean_surface",
+      "blade_thickness_distribution",
+      "hub_material_solid",
+      "front_hood_shell",
+      "hub_chamfer_features",
+      "hood_chamfer_features"
+    ]
+  },
+  "material_domain": {
+    "hub": {
+      "kind": "capped_revolved_solid_with_bore",
+      "functional_surface": "hub_support_surface",
+      "requires_back_face": true,
+      "requires_top_cap_face": true,
+      "requires_bottom_thickness": true,
+      "requires_mounting_bore": true,
+      "wall_thickness_parameter": "hub_wall_thickness_mm",
+      "bottom_thickness_parameter": "hub_bottom_thickness_mm",
+      "top_cap_thickness_parameter": "hub_top_cap_thickness_mm",
+      "bore_parameter": "mounting_bore_radius_mm"
+    },
+    "front_shroud": {
+      "kind": "finite_thickness_revolved_shell",
+      "inner_surface": "blade_tip_support_surface",
+      "requires_outer_surface": true,
+      "requires_inlet_eye_opening": true,
+      "wall_thickness_parameter": "hood_wall_thickness_mm"
+    }
+  },
+  "blade_pattern": {
+    "kind": "circular_pattern",
+    "count_parameter": "blade_count",
+    "axis": "rotation_axis"
+  },
+  "blade_boundaries": {
+    "root": {
+      "id": "blade_root_boundary",
+      "support_surface": "hub_support_surface",
+      "parameter": "v=0"
+    },
+    "tip": {
+      "id": "blade_tip_boundary",
+      "support_surface": "blade_tip_support_surface",
+      "parameter": "v=1"
+    },
+    "leading_edge": {
+      "id": "leading_edge_boundary",
+      "kind": "spanwise_nurbs_curve",
+      "parameter": "u=0"
+    },
+    "trailing_edge": {
+      "id": "trailing_edge_boundary",
+      "kind": "spanwise_nurbs_curve",
+      "parameter": "u=1"
+    }
+  },
+  "blade_surface_model": {
+    "kind": "boundary_guided_camber_surface_with_thickness",
+    "parameter_domain": {
+      "u": "streamwise_leading_to_trailing",
+      "v": "spanwise_hub_to_tip"
+    },
+    "boundary_curves": {
+      "hub_edge": "conformed_to_hub_surface",
+      "tip_edge": "conformed_to_front_shroud_inner_surface",
+      "leading_edge": "spanwise_curve",
+      "trailing_edge": "spanwise_curve"
+    },
+    "thickness_field": {
+      "primary_parameter": "blade_thickness_mm",
+      "reserved_field": "u_v_thickness_distribution"
+    },
+    "output_surfaces": [
+      "camber_surface",
+      "pressure_surface",
+      "suction_surface",
+      "leading_edge_transition",
+      "trailing_edge_transition",
+      "root_transition",
+      "tip_transition"
+    ]
+  },
+  "blade_surface_construction": {
+    "kind": "nurbs_coons_with_internal_controls",
+    "boundary_contract": "four_boundary_curves_required",
+    "internal_shape_controls": {
+      "theta_law": "beta_integral_or_intrinsic_curve_override",
+      "wrap_angle": "parameterized",
+      "camber_control_points": "parameterized",
+      "spanwise_twist_law": "parameterized"
+    }
+  },
+  "blade_profile": {
+    "thickness_field": "blade_thickness_distribution",
+    "pressure_surface": "offset_from_mean_surface",
+    "suction_surface": "offset_from_mean_surface"
+  },
+  "blade_edges": {
+    "leading_edge": {
+      "kind": "ellipse_or_rounded_nurbs_patch"
+    },
+    "trailing_edge": {
+      "kind": "ellipse_or_rounded_nurbs_patch"
+    },
+    "root": {
+      "kind": "fillet_patch"
+    },
+    "tip": {
+      "kind": "shroud_join"
+    }
+  },
+  "solid_features": {
+    "hub_bore": {
+      "kind": "cylindrical_cut",
+      "axis": "rotation_axis",
+      "radius_parameter": "mounting_bore_radius_mm",
+      "extent": "through_hub_solid"
+    },
+    "hub_chamfers": {
+      "kind": "chamfer_or_fillet_feature_set",
+      "radius_parameter": "hub_chamfer_radius_mm",
+      "applies_to": [
+        "hub_bottom_outer_edge",
+        "hub_top_cap_outer_edge",
+        "mounting_bore_top_edge",
+        "mounting_bore_bottom_edge"
+      ]
+    },
+    "hood_chamfers": {
+      "kind": "chamfer_or_fillet_feature_set",
+      "radius_parameter": "hood_chamfer_radius_mm",
+      "applies_to": [
+        "hood_inlet_eye_edge",
+        "hood_outer_shell_inlet_edge",
+        "hood_outer_shell_outlet_edge"
+      ]
+    }
+  },
+  "surface_graph_contract": {
+    "requires_named_boundary_curves": true,
+    "requires_adjacency": true,
+    "requires_stable_surface_ids": true,
+    "requires_cfd_roles": true,
+    "requires_closed_hood_shell_candidate": true,
+    "patch_naming": "group_and_instance",
+    "cad_exactness": "research_grade_sampled_surface",
+    "intended_cad_operation": "boundary_guided_nurbs_or_bspline_surface"
+  },
+  "feature_graph_contract": {
+    "requires_feature_nodes": [
+      "blade_transition_features",
+      "assembly_features",
+      "tuning_features"
+    ],
+    "requires_generated_surface_registration": true,
+    "requires_simulation_visibility": true
+  },
+  "feature_graph": {
+    "blade_transition_features": {
+      "leading_edge_round": {
+        "kind": "rounded_edge_transition",
+        "cfd_patch_group": "leading_edge_wall"
+      },
+      "trailing_edge_round": {
+        "kind": "rounded_or_cutback_edge_transition",
+        "cfd_patch_group": "trailing_edge_wall"
+      },
+      "root_fillet": {
+        "kind": "sampled_surface_blend",
+        "cfd_patch_group": "root_fillet_wall"
+      },
+      "tip_transition": {
+        "kind": "tip_closure_or_shroud_blend",
+        "semantics": "blade_to_front_shroud_blend",
+        "cfd_patch_group": "tip_fillet_wall"
+      }
+    },
+    "assembly_features": {
+      "mounting_bore": {"kind": "axisymmetric_subtractive_cylinder"},
+      "shaft_seat": {"kind": "axisymmetric_step_or_counterbore"},
+      "keyway": {"kind": "angular_subtractive_slot"},
+      "rear_hub_groove": {"kind": "axisymmetric_rear_groove"}
+    },
+    "tuning_features": {
+      "balance_holes": {"status": "schema_only_v0_4"},
+      "trim_edge": {"status": "schema_only_v0_4"},
+      "lightening_slots": {"status": "schema_only_v0_4"}
+    }
+  },
+  "simulation_views": {
+    "cad_review_360": {
+      "status": "schema_defined",
+      "domain_kind": "full_360_solid_or_surface"
+    },
+    "cfd_full_360": {
+      "view_ref": "simulation_views/cfd_full_360.json"
+    },
+    "fea_solid": {
+      "view_ref": "simulation_views/fea_solid_schema.json"
+    }
+  },
+  "display_policy": {
+    "hide_surfaces": [],
+    "show_construction_lines": [
+      "hub",
+      "shroud",
+      "blade_boundaries",
+      "blade_u",
+      "blade_v",
+      "blade_edges",
+      "surface_uv"
+    ]
+  },
+  "surface_graph": {
+    "requires_named_boundary_curves": true,
+    "requires_adjacency": true,
+    "requires_closed_hub_solid_candidate": true,
+    "requires_closed_hood_shell_candidate": true
+  },
+  "validation": {
+    "geometry_contracts": [
+      "blade_root_boundary_conforms_to_hub_support_surface",
+      "blade_tip_boundary_conforms_to_blade_tip_support_surface",
+      "construction_lines_sampled_from_surface_graph",
+      "hub_wall_thickness_positive",
+      "hub_bottom_thickness_positive",
+      "hood_wall_thickness_positive",
+      "transition_surfaces_connect_declared_input_boundaries"
+    ],
+    "topology_contracts": [
+      "blade_has_four_primary_boundaries",
+      "closed_impeller_has_front_shroud_material",
+      "hub_solid_has_top_and_bottom_cap_faces",
+      "front_hood_shell_has_inner_and_outer_surfaces",
+      "mounting_bore_is_through_cut",
+      "every_wetted_surface_has_one_cfd_patch_group"
+    ]
+  }
+}

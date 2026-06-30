@@ -1,0 +1,25 @@
+{
+  "view_id": "fea_solid",
+  "domain_kind": "full_360_material_solid",
+  "status": "schema_only_v0_4",
+  "purpose": "Future structural view preserving material-domain and assembly-feature semantics.",
+  "feature_visibility": {
+    "mounting_bore": true,
+    "shaft_seat": true,
+    "keyway": true,
+    "rear_hub_groove": true,
+    "balance_holes": "schema_only_v0_4",
+    "trim_edge": "schema_only_v0_4",
+    "lightening_slots": "schema_only_v0_4"
+  },
+  "required_domains": [
+    "hub_material_solid",
+    "blade_material",
+    "front_shroud_material_when_closed"
+  ],
+  "out_of_scope": [
+    "solver_adapter",
+    "mesh_adapter",
+    "load_case_generation"
+  ]
+}
