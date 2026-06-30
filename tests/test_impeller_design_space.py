@@ -49,6 +49,54 @@ def test_campaign_signature_freezes_topology_not_numeric_values():
     assert signature["design_vector_length"] == 18
 
 
+def test_campaign_signature_allows_numeric_only_profile_changes():
+    runtime = {
+        "preset_id": "radial_open_reference_v0_4",
+        "constructor_id": "axisymmetric_throughflow_radial_bladed.open.v0_4",
+        "dsl_version": "0.4",
+    }
+    baseline_profiles = {
+        "hub_profile": {
+            "degree": 3,
+            "control_points": [[100, 50], [150, 30], [220, 10], [300, 0]],
+        },
+        "tip_or_shroud_profile": {
+            "degree": 3,
+            "control_points": [[140, 70], [180, 50], [260, 30], [340, 20]],
+        },
+    }
+    numeric_edit_profiles = {
+        "hub_profile": {
+            "degree": 3,
+            "control_points": [[102, 52], [151, 33], [219, 12], [301, 1]],
+        },
+        "tip_or_shroud_profile": {
+            "degree": 3,
+            "control_points": [[141, 72], [181, 51], [261, 29], [339, 21]],
+        },
+    }
+    features = {"mounting_bore": {"enabled": True}, "keyway": {"enabled": True}}
+
+    baseline = build_campaign_signature(
+        runtime,
+        baseline_profiles,
+        features,
+        patch_groups=["hub_wall"],
+    )
+    numeric_edit = build_campaign_signature(
+        runtime,
+        numeric_edit_profiles,
+        features,
+        patch_groups=["hub_wall"],
+    )
+
+    require_campaign_compatible(baseline, numeric_edit)
+    assert numeric_edit["profile_topology"] == baseline["profile_topology"]
+    assert numeric_edit["enabled_features"] == baseline["enabled_features"]
+    assert numeric_edit["patch_groups"] == baseline["patch_groups"]
+    assert numeric_edit["design_vector_length"] == baseline["design_vector_length"]
+
+
 def test_campaign_signature_detects_topology_change():
     baseline = {
         "profile_topology": {"hub_profile": {"control_point_count": 4}},
@@ -99,4 +147,4 @@ def test_service_manifest_adds_campaign_signature_only_for_v04(tmp_path):
         run = service.instantiate(engine.engine_id, {})
 
         assert run.manifest["dsl_version"] == expected_dsl_version
-        assert run.manifest["campaign_signature"] is None
+        assert "campaign_signature" not in run.manifest

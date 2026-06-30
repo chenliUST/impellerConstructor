@@ -161,16 +161,6 @@ class RuleSynthesisService:
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
         )
-        campaign_signature = (
-            build_campaign_signature(
-                dsl,
-                normalized_profile_overrides,
-                dsl.get("feature_states", {}),
-                patch_groups=[],
-            )
-            if _dsl_version(dsl) == "0.4"
-            else None
-        )
         manifest = {
             "run_id": run_id,
             "engine_id": engine_id,
@@ -212,7 +202,6 @@ class RuleSynthesisService:
                 dsl_context=dsl,
             ),
             "shape_control": _manifest_shape_control(dsl.get("shape_control", {})),
-            "campaign_signature": campaign_signature,
             "validity": _manifest_validity(dsl, geometry_validity),
             "loss_records": [],
             "geometry_validity": geometry_validity,
@@ -222,6 +211,13 @@ class RuleSynthesisService:
             "exports": exports,
             "notice": "Research geometry; inferred regions are not released for operation.",
         }
+        if manifest["dsl_version"] == "0.4":
+            manifest["campaign_signature"] = build_campaign_signature(
+                dsl,
+                normalized_profile_overrides,
+                dsl.get("feature_states", {}),
+                patch_groups=[],
+            )
         (run_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True),
             encoding="utf-8",
