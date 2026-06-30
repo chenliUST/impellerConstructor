@@ -232,15 +232,15 @@ export function App() {
         setAutoRotate,
         visibleLayers,
       }),
-      h(CfdManifestPanel, {
-        manifest,
-        selectedPatch,
-        onSelectPatch: setSelectedPatch,
-      }),
     ),
     h(ManifestPanel, {
       manifest,
       exportLinks,
+      before: h(CfdManifestPanel, {
+        manifest,
+        selectedPatch,
+        onSelectPatch: setSelectedPatch,
+      }),
     }),
   );
 }

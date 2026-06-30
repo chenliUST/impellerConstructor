@@ -94,12 +94,14 @@ describe("frontend application files", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
     const cfdPanelSource = readFileSync(resolve(root, "src/components/CfdManifestPanel.js"), "utf-8");
+    const manifestPanelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
 
     assert.match(appSource, /simulationViewMode/);
     assert.match(appSource, /CfdManifestPanel/);
     assert.match(viewerSource, /surfaceVisibleInView/);
     assert.match(viewerSource, /patchSurfaceIds/);
     assert.match(cfdPanelSource, /cfdPatchGroups/);
+    assert.match(manifestPanelSource, /before/);
   });
 
   test("application includes curve editors and staged generation controls", () => {

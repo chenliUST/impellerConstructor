@@ -543,14 +543,6 @@ pre {
   padding-top: 0;
 }
 
-.cfd-panel-header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
 .cfd-manifest-panel .patch-list {
   display: grid;
   gap: 6px;

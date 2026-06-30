@@ -4,7 +4,7 @@ import { manifestSummary } from "../appModel.js";
 
 const h = React.createElement;
 
-export function ManifestPanel({ manifest, exportLinks }) {
+export function ManifestPanel({ manifest, exportLinks, before = null }) {
   const summary = manifestSummary(manifest);
   const ontology_slice = manifest?.ontology_slice || "";
   const constructor_family = manifest?.constructor_family || "";
@@ -16,6 +16,7 @@ export function ManifestPanel({ manifest, exportLinks }) {
   return h(
     "aside",
     { className: "right-panel" },
+    before,
     h("div", { className: "section-title" }, "Run manifest"),
     h(
       "div",

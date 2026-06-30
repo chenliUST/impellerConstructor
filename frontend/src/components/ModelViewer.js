@@ -340,16 +340,16 @@ function createSurfaceGraphGroup(surfaceGraph, center, simulationViewMode, selec
       side: THREE.DoubleSide,
       transparent: true,
       opacity:
-        display.opacity ??
-        (isSelected
+        isSelected
           ? 1.0
           : hasSelection
             ? 0.42
-            : surface.role === "open_tip_reference" || surface.role === "reference_only"
-              ? 0.3
-              : isEdgeClosure
-                ? 1.0
-                : 0.92),
+            : display.opacity ??
+              (surface.role === "open_tip_reference" || surface.role === "reference_only"
+                ? 0.3
+                : isEdgeClosure
+                  ? 1.0
+                  : 0.92),
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.layer = layerForSurface(surface);
