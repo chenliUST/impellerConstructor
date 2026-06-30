@@ -129,6 +129,36 @@ def test_acceptance_impeller_manifest_includes_ontology_constructor_validity_los
     assert manifest["loss_records"] == []
 
 
+def test_acceptance_open_and_closed_impellers_share_tip_support_surface_semantics(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    cases = [
+        ("radial_open_reference", "reference_only", False),
+        ("radial_closed_reference", "front_shroud_inner_surface", True),
+    ]
+
+    for preset_id, expected_role, expected_material in cases:
+        engine = client.post(
+            "/api/rule-engines/synthesize",
+            json={"part_family_id": "impeller", "preset_id": preset_id},
+        ).json()
+        manifest = client.post(
+            f"/api/rule-engines/{engine['engine_id']}/instantiate",
+            json={"parameters": {}},
+        ).json()["manifest"]
+        tip_surfaces = [
+            surface
+            for surface in manifest["geometry"]["surface_graph"]["surfaces"]
+            if surface.get("ontology_id") == "blade_tip_support_surface"
+        ]
+
+        assert len(tip_surfaces) == 1
+        assert tip_surfaces[0]["role"] == expected_role
+        assert tip_surfaces[0]["material"] is expected_material
+        assert manifest["geometry"]["surface_graph"]["named_boundary_curves"]
+        assert manifest["geometry"]["construction_lines"]["blade_boundaries"]
+
+
 def test_acceptance_impeller_rule_engine_records_facets_rules_and_construction_lines(tmp_path: Path):
     client = TestClient(create_app(tmp_path))
 

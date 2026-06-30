@@ -389,10 +389,10 @@ def _surface_graph(
         {
             "id": tip_surface_id,
             "kind": "nurbs_revolve_surface",
-            "role": "shroud" if facets["shroud_topology"] == "closed" else "open_tip_reference",
+            "role": "front_shroud_inner_surface" if facets["shroud_topology"] == "closed" else "reference_only",
+            "display_role": "shroud" if facets["shroud_topology"] == "closed" else "open_tip_reference",
             "ontology_id": "blade_tip_support_surface",
             "material": facets["shroud_topology"] == "closed",
-            "support_role": "front_shroud_inner_surface" if facets["shroud_topology"] == "closed" else "reference_only",
             "profile": tip_profile,
             "uv_grid": _revolve_grid(tip_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
             "profile_samples_rz": _profile_samples_rz(tip_profile, SURFACE_U_COUNT),
