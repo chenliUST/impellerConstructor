@@ -24,6 +24,7 @@ CONSTRUCTION_SEQUENCE = [
 def build_axisymmetric_throughflow_nurbs_geometry(
     parameters: dict[str, Any],
     facets: dict[str, str],
+    shape_control: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
@@ -77,6 +78,12 @@ def build_axisymmetric_throughflow_nurbs_geometry(
             "passage_model": passage_model,
         },
         "passage_model": passage_model,
+        "shape_control": shape_control
+        or {
+            "optimization_stage": 1,
+            "locked_topology": True,
+            "active_policies": [],
+        },
         "sampled_blades": sampled_blades,
         "surface_graph": surface_graph,
         "blade_surface": {
@@ -117,6 +124,10 @@ def _normalized_parameters(parameters: dict[str, Any]) -> dict[str, float]:
     numeric.setdefault("blade_thickness_mm", 18.0)
     numeric.setdefault("blade_wrap_deg", 110.0)
     numeric.setdefault("blade_lean_deg", 0.0)
+    numeric.setdefault("leading_edge_lean_deg", numeric["blade_lean_deg"])
+    numeric.setdefault("trailing_edge_lean_deg", numeric["blade_lean_deg"])
+    numeric.setdefault("leading_edge_sweep_mm", 0.0)
+    numeric.setdefault("trailing_edge_sweep_mm", 0.0)
     numeric.setdefault("inlet_blade_angle_deg", 21.0)
     numeric.setdefault("outlet_blade_angle_deg", 42.0)
     numeric.setdefault("mounting_bore_radius_mm", max(12.0, numeric["inlet_radius_mm"] * 0.22))
@@ -260,6 +271,10 @@ def _blade_surfaces(
         "suction_tip_boundary": [row[-1] for row in suction],
         "hub_boundary": [row[0] for row in mean],
         "tip_boundary": [row[-1] for row in mean],
+        "blade_root_boundary": [row[0] for row in mean],
+        "blade_tip_boundary": [row[-1] for row in mean],
+        "leading_edge_boundary": mean[0],
+        "trailing_edge_boundary": mean[-1],
         "loft_wires": [
             [pressure[u_index][0], suction[u_index][0], suction[u_index][-1], pressure[u_index][-1], pressure[u_index][0]]
             for u_index in range(BLADE_U_COUNT)
@@ -277,14 +292,25 @@ def _blade_point(
     facets: dict[str, str],
     side: float,
 ) -> list[float]:
-    hub = _profile_point(hub_profile, u)
-    tip = _profile_point(tip_profile, u)
+    support_u = _support_u(u, v, params)
+    hub = _profile_point(hub_profile, support_u)
+    tip = _profile_point(tip_profile, support_u)
     r = (1.0 - v) * hub[0] + v * tip[0]
     z = (1.0 - v) * hub[1] + v * tip[1]
     theta = _theta_field(u, v, base_angle, params, facets)
     if side:
         theta += side * _half_thickness_theta(params, u, r)
     return _polar_point(r, theta, z)
+
+
+def _support_u(u: float, v: float, params: dict[str, float]) -> float:
+    radial_span = max(params["exit_radius_mm"] - params["inlet_radius_mm"], 1.0)
+    edge_sweep = (1.0 - u) * params["leading_edge_sweep_mm"] + u * params["trailing_edge_sweep_mm"]
+    return _clamp01(u + (edge_sweep / radial_span) * (v - 0.5))
+
+
+def _clamp01(value: float) -> float:
+    return min(1.0, max(0.0, value))
 
 
 def _edge_closure_grid(
@@ -325,7 +351,10 @@ def _theta_field(
         exit_sign = 0.35
     wrap = math.radians(params["blade_wrap_deg"]) * exit_sign
     lean = math.radians(params["blade_lean_deg"])
-    return base_angle + wrap * _smoothstep(u) + lean * (v - 0.5) * math.sin(math.pi * u)
+    leading_lean = math.radians(params["leading_edge_lean_deg"])
+    trailing_lean = math.radians(params["trailing_edge_lean_deg"])
+    edge_lean = (1.0 - u) * leading_lean + u * trailing_lean
+    return base_angle + wrap * _smoothstep(u) + (lean * math.sin(math.pi * u) + edge_lean) * (v - 0.5)
 
 
 def _half_thickness_theta(params: dict[str, float], u: float, radius: float) -> float:
@@ -345,6 +374,8 @@ def _surface_graph(
             "id": "hub_revolve_surface",
             "kind": "nurbs_revolve_surface",
             "role": "hub",
+            "ontology_id": "hub_support_surface",
+            "material": True,
             "profile": hub_profile,
             "uv_grid": _revolve_grid(hub_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
             "profile_samples_rz": _profile_samples_rz(hub_profile, SURFACE_U_COUNT),
@@ -359,6 +390,9 @@ def _surface_graph(
             "id": tip_surface_id,
             "kind": "nurbs_revolve_surface",
             "role": "shroud" if facets["shroud_topology"] == "closed" else "open_tip_reference",
+            "ontology_id": "blade_tip_support_surface",
+            "material": facets["shroud_topology"] == "closed",
+            "support_role": "front_shroud_inner_surface" if facets["shroud_topology"] == "closed" else "reference_only",
             "profile": tip_profile,
             "uv_grid": _revolve_grid(tip_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
             "profile_samples_rz": _profile_samples_rz(tip_profile, SURFACE_U_COUNT),
@@ -388,6 +422,7 @@ def _surface_graph(
         },
     ]
     boundary_curves: dict[str, Any] = {}
+    named_boundary_curves: list[dict[str, Any]] = []
     for blade in sampled_blades:
         prefix = f"blade_{blade['index']}"
         boundary_curves[f"{prefix}_pressure_hub_boundary"] = blade["pressure_hub_boundary"]
@@ -398,6 +433,42 @@ def _surface_graph(
         boundary_curves[f"{prefix}_trailing_edge"] = blade["trailing_edge_surface"]
         boundary_curves[f"{prefix}_root_closure"] = blade["root_closure_surface"]
         boundary_curves[f"{prefix}_tip_closure"] = blade["tip_closure_surface"]
+        named_boundary_curves.extend(
+            [
+                {
+                    "id": f"{prefix}_blade_root_boundary",
+                    "role": "blade_root_boundary",
+                    "blade_index": blade["index"],
+                    "support_surface": "hub_revolve_surface",
+                    "support_surface_ontology_id": "hub_support_surface",
+                    "parameter": "v=0",
+                    "points": blade["blade_root_boundary"],
+                },
+                {
+                    "id": f"{prefix}_blade_tip_boundary",
+                    "role": "blade_tip_boundary",
+                    "blade_index": blade["index"],
+                    "support_surface": tip_surface_id,
+                    "support_surface_ontology_id": "blade_tip_support_surface",
+                    "parameter": "v=1",
+                    "points": blade["blade_tip_boundary"],
+                },
+                {
+                    "id": f"{prefix}_leading_edge_boundary",
+                    "role": "leading_edge_boundary",
+                    "blade_index": blade["index"],
+                    "parameter": "u=0",
+                    "points": blade["leading_edge_boundary"],
+                },
+                {
+                    "id": f"{prefix}_trailing_edge_boundary",
+                    "role": "trailing_edge_boundary",
+                    "blade_index": blade["index"],
+                    "parameter": "u=1",
+                    "points": blade["trailing_edge_boundary"],
+                },
+            ]
+        )
         surfaces.extend(
             [
                 {
@@ -552,7 +623,12 @@ def _surface_graph(
                     },
                 ]
             )
-    return {"surfaces": surfaces, "edges": edges, "boundary_curves": boundary_curves}
+    return {
+        "surfaces": surfaces,
+        "edges": edges,
+        "boundary_curves": boundary_curves,
+        "named_boundary_curves": named_boundary_curves,
+    }
 
 
 def _hub_solid_surfaces(params: dict[str, float], hub_profile: dict[str, Any]) -> list[dict[str, Any]]:
@@ -611,6 +687,7 @@ def _construction_lines(
         "hub": [],
         "blade_u": [],
         "blade_v": [],
+        "blade_boundaries": _blade_boundary_lines(sampled_blades),
         "blade_edges": _blade_edge_lines(sampled_blades),
         "shroud": [],
         "passage": [],
@@ -664,6 +741,29 @@ def _surface_uv_lines(surface_graph: dict[str, Any]) -> list[dict[str, Any]]:
                     "direction": "v",
                     "source": "axisymmetric_throughflow_nurbs.surface_graph",
                     "points": [row[v_index] for row in grid],
+                }
+            )
+    return lines
+
+
+def _blade_boundary_lines(sampled_blades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lines = []
+    for blade in sampled_blades:
+        blade_index = int(blade["index"])
+        for role, color in [
+            ("blade_root_boundary", "#22c55e"),
+            ("blade_tip_boundary", "#38bdf8"),
+            ("leading_edge_boundary", "#f59e0b"),
+            ("trailing_edge_boundary", "#ef4444"),
+        ]:
+            lines.append(
+                {
+                    "name": f"blade {blade_index} {role}",
+                    "role": role,
+                    "blade_index": blade_index,
+                    "source": "axisymmetric_throughflow_nurbs.named_boundary_curve",
+                    "color": color,
+                    "points": blade[role],
                 }
             )
     return lines
