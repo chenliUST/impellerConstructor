@@ -1,6 +1,6 @@
 {
   "loss_record_schema_version": "0.4",
-  "supersedes": "ontology/impeller/v0_2/loss_schema.json",
+  "supersedes": "../v0_2/loss_schema.json",
   "required_fields": [
     "loss_id",
     "source",

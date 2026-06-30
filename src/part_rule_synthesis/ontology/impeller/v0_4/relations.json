@@ -1,6 +1,6 @@
 {
   "ontology_version": "0.4",
-  "supersedes": "ontology/impeller/v0_2/relations.json",
+  "supersedes": "../v0_2/relations.json",
   "relations": [
     "revolves_about(profile_curve, rotation_axis)",
     "generates_surface(profile_curve, support_surface)",

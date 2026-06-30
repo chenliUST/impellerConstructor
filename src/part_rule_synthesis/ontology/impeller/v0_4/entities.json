@@ -1,6 +1,6 @@
 {
   "ontology_version": "0.4",
-  "supersedes": "ontology/impeller/v0_2/entities.json",
+  "supersedes": "../v0_2/entities.json",
   "coordinate_system": [
     "rotation_axis",
     "meridional_plane",

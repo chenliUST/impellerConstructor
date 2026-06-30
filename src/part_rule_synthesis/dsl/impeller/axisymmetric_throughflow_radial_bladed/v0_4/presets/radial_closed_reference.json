@@ -1,6 +1,6 @@
 {
   "preset_id": "radial_closed_reference_v0_4",
-  "supersedes": "../v0_3/presets/radial_closed_reference.json",
+  "supersedes": "../../v0_3/presets/radial_closed_reference.json",
   "display_name": "Radial closed reference v0.4",
   "summary": "Closed radial throughflow impeller with v0.3 numeric baseline plus v0.4 design-space, feature-graph, and full-360 CFD view contracts.",
   "constructor_id": "axisymmetric_throughflow_radial_bladed.closed.v0_4",

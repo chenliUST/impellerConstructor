@@ -1,6 +1,6 @@
 {
   "contract_version": "0.4",
-  "supersedes": "ontology/impeller/v0_2/validity_contracts.json",
+  "supersedes": "../v0_2/validity_contracts.json",
   "geometry_contracts": [
     "radius_positive",
     "hub_tip_profiles_do_not_cross",

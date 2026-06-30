@@ -1,6 +1,6 @@
 {
   "preset_id": "radial_open_reference_v0_4",
-  "supersedes": "../v0_3/presets/radial_open_reference.json",
+  "supersedes": "../../v0_3/presets/radial_open_reference.json",
   "display_name": "Radial open reference v0.4",
   "summary": "Open radial throughflow impeller with v0.3 numeric baseline plus v0.4 design-space, feature-graph, and full-360 CFD view contracts.",
   "constructor_id": "axisymmetric_throughflow_radial_bladed.open.v0_4",

@@ -24,6 +24,18 @@
     "inlet_patch",
     "outlet_patch"
   ],
+  "patch_group_sources": {
+    "blade_pressure_wall": ["pressure_surface"],
+    "blade_suction_wall": ["suction_surface"],
+    "leading_edge_wall": ["leading_edge_transition"],
+    "trailing_edge_wall": ["trailing_edge_transition"],
+    "root_fillet_wall": ["root_transition"],
+    "tip_fillet_wall": ["tip_transition"],
+    "hub_wall": ["hub_support_surface"],
+    "tip_or_shroud_wall": ["blade_tip_support_surface"],
+    "inlet_patch": ["leading_edge_boundary"],
+    "outlet_patch": ["trailing_edge_boundary"]
+  },
   "mesh_hints": {
     "global": {
       "target_surface_size_mm": 4.0,

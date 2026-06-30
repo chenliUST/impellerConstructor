@@ -96,3 +96,72 @@ def test_v04_constructors_define_feature_graph_and_boundary_guided_blades():
 
     assert open_constructor["support_surfaces"]["blade_tip_support_surface"]["material"] is False
     assert closed_constructor["support_surfaces"]["blade_tip_support_surface"]["material"] is True
+
+
+def test_v04_shape_control_targets_resolve_to_constructor_vocabulary():
+    shape_controls = read_json(DSL_ROOT / "shape_controls" / "default_shape_controls.json")
+    constructors = [
+        read_json(DSL_ROOT / "constructors" / "open_impeller.json"),
+        read_json(DSL_ROOT / "constructors" / "closed_impeller.json"),
+    ]
+    legacy_transition_targets = {
+        "leading_edge_closure_surface",
+        "trailing_edge_closure_surface",
+        "root_closure_or_fillet_surface",
+        "tip_closure_or_shroud_join_surface",
+    }
+    v04_transition_targets = {
+        "leading_edge_transition",
+        "trailing_edge_transition",
+        "root_transition",
+        "tip_transition",
+    }
+    target_entities = set(shape_controls["target_entities"])
+    carried_forward = set(shape_controls["carried_forward_from_v0_3"])
+
+    assert not (target_entities & legacy_transition_targets)
+    assert not (carried_forward & legacy_transition_targets)
+    assert v04_transition_targets <= target_entities
+    assert v04_transition_targets <= carried_forward
+
+    allowed_targets = set(shape_controls["material_domain_controls"])
+    for constructor in constructors:
+        allowed_targets.update(constructor["support_surfaces"])
+        allowed_targets.update(
+            surface["source_profile"]
+            for surface in constructor["support_surfaces"].values()
+            if "source_profile" in surface
+        )
+        allowed_targets.update(constructor["blade_surface_model"]["output_surfaces"])
+        allowed_targets.update(boundary["id"] for boundary in constructor["blade_boundaries"].values())
+        allowed_targets.add(constructor["blade_profile"]["thickness_field"])
+        allowed_targets.add("blade_mean_surface")
+        feature_graph = constructor["feature_graph"]
+        allowed_targets.update(feature_graph["blade_transition_features"])
+        allowed_targets.update(feature_graph["assembly_features"])
+        allowed_targets.update(feature_graph["tuning_features"])
+
+    assert target_entities - allowed_targets == set()
+    assert carried_forward - allowed_targets == set()
+
+
+def test_v04_cfd_patch_groups_define_source_roles():
+    cfd = read_json(DSL_ROOT / "simulation_views" / "cfd_full_360.json")
+
+    assert set(cfd["patch_group_sources"]) == set(cfd["required_patch_groups"])
+    for group_id in cfd["required_patch_groups"]:
+        sources = cfd["patch_group_sources"][group_id]
+        assert isinstance(sources, list), group_id
+        assert sources, group_id
+        assert all(isinstance(source, str) and source for source in sources), group_id
+
+
+def test_v04_supersedes_paths_resolve_from_declaring_file():
+    for root in [ONTOLOGY_ROOT, DSL_ROOT]:
+        for path in root.rglob("*.json"):
+            resource = read_json(path)
+            supersedes = resource.get("supersedes")
+            if supersedes is None:
+                continue
+            superseded_path = (path.parent / supersedes).resolve()
+            assert superseded_path.exists(), f"{path.relative_to(PROJECT_ROOT)} -> {supersedes}"
