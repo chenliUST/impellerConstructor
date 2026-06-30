@@ -311,6 +311,21 @@ def test_acceptance_v03_closed_impeller_displays_finite_hood_shell(tmp_path: Pat
     assert topology_checks["closed_hood_shell_surfaces_present"]["status"] == "PASS"
 
 
+def test_impeller_v04_manifest_includes_cfd_full_360_patch_groups(tmp_path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
+    parameters = {name: spec["default"] for name, spec in service.engines[engine.engine_id]["parameters"].items()}
+
+    run = service.instantiate(engine.engine_id, parameters)
+    cfd = run.manifest["simulation_manifests"]["cfd_full_360"]
+
+    assert cfd["domain_kind"] == "full_360_wetted_surface"
+    assert "blade_pressure_wall" in cfd["patch_groups"]
+    assert "blade_suction_wall" in cfd["patch_groups"]
+    assert cfd["feature_suppression"]["suppressed_features"]
+    assert cfd["validity"]["status"] in {"PASS", "FAIL"}
+
+
 def test_acceptance_impeller_rule_engine_records_facets_rules_and_construction_lines(tmp_path: Path):
     client = TestClient(create_app(tmp_path))
 

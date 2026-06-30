@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from part_rule_synthesis.impeller_cfd_manifest import build_cfd_full_360_manifest
 from part_rule_synthesis.impeller_design_space import build_campaign_signature
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
@@ -162,6 +163,33 @@ class RuleSynthesisService:
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
         )
+        geometry_metadata = _geometry_metadata(
+            dsl["part_family"],
+            bound,
+            dsl.get("facets", {}),
+            profile_overrides=normalized_profile_overrides,
+            curve_overrides=normalized_curve_overrides,
+            geometry_stage=normalized_geometry_stage,
+            dsl_context=dsl,
+        )
+        geometry_kernel = _geometry_kernel_metadata(
+            dsl["part_family"],
+            bound,
+            dsl.get("facets", {}),
+            profile_overrides=normalized_profile_overrides,
+            curve_overrides=normalized_curve_overrides,
+            geometry_stage=normalized_geometry_stage,
+            dsl_context=dsl,
+        )
+        simulation_manifests = {}
+        if dsl["part_family"] == "impeller" and _dsl_version(dsl) == "0.4":
+            surface_graph = geometry_metadata.get("surface_graph", {})
+            cfd_view = dsl.get("simulation_views", {}).get("cfd_full_360", {})
+            simulation_manifests["cfd_full_360"] = build_cfd_full_360_manifest(
+                surface_graph,
+                cfd_view,
+                blade_count=int(bound.get("blade_count", 0)),
+            )
         manifest = {
             "run_id": run_id,
             "engine_id": engine_id,
@@ -184,24 +212,9 @@ class RuleSynthesisService:
             "operation_graph": operation_graph,
             "operation_graph_hash": graph_hash,
             "manifest_hash": _stable_hash({"operation_graph_hash": graph_hash, "exports": exports}),
-            "geometry_kernel": _geometry_kernel_metadata(
-                dsl["part_family"],
-                bound,
-                dsl.get("facets", {}),
-                profile_overrides=normalized_profile_overrides,
-                curve_overrides=normalized_curve_overrides,
-                geometry_stage=normalized_geometry_stage,
-                dsl_context=dsl,
-            ),
-            "geometry": _geometry_metadata(
-                dsl["part_family"],
-                bound,
-                dsl.get("facets", {}),
-                profile_overrides=normalized_profile_overrides,
-                curve_overrides=normalized_curve_overrides,
-                geometry_stage=normalized_geometry_stage,
-                dsl_context=dsl,
-            ),
+            "geometry_kernel": geometry_kernel,
+            "geometry": geometry_metadata,
+            "simulation_manifests": simulation_manifests,
             "shape_control": _manifest_shape_control(dsl.get("shape_control", {})),
             "validity": _manifest_validity(dsl, geometry_validity),
             "loss_records": [],

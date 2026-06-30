@@ -7,6 +7,7 @@ from part_rule_synthesis.impeller_graph_contract import (
     surface_feature_records,
     wetted_surfaces,
 )
+from part_rule_synthesis.impeller_cfd_manifest import build_cfd_full_360_manifest
 from part_rule_synthesis.impeller_kernels.axisymmetric_throughflow_nurbs import (
     build_axisymmetric_throughflow_nurbs_geometry,
 )
@@ -175,3 +176,41 @@ def test_wetted_surfaces_from_closed_kernel_require_cfd_roles_and_exclude_non_we
     } <= wetted_ids
     assert all_surfaces["shroud_surface"]["cfd_role"] == "tip_or_shroud_wall"
     assert all_surfaces["shroud_surface"]["feature_id"] == "front_shroud"
+
+
+def test_cfd_manifest_groups_blade_instances_by_group_and_instance():
+    surface_graph = {
+        "surfaces": [
+            {"id": "hub_revolve_surface", "role": "hub", "cfd_role": "hub_wall", "uv_grid": [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]]},
+            {"id": "blade_00_pressure_surface", "role": "blade_pressure", "cfd_role": "blade_pressure", "feature_id": "blade_00", "uv_grid": [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]]},
+            {"id": "blade_01_pressure_surface", "role": "blade_pressure", "cfd_role": "blade_pressure", "feature_id": "blade_01", "uv_grid": [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]]},
+            {"id": "mounting_bore_cylinder", "role": "mounting_bore", "feature_id": "mounting_bore", "uv_grid": [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]]},
+        ]
+    }
+    view = {
+        "feature_suppression": {"suppressed_features": ["mounting_bore"]},
+        "required_patch_groups": ["hub_wall", "blade_pressure_wall"],
+    }
+
+    manifest = build_cfd_full_360_manifest(surface_graph, view, blade_count=2)
+
+    assert manifest["domain_kind"] == "full_360_wetted_surface"
+    assert manifest["patch_groups"]["blade_pressure_wall"]["instances"] == [
+        "blade_00_pressure_surface",
+        "blade_01_pressure_surface",
+    ]
+    assert "mounting_bore_cylinder" not in manifest["patch_instances"]
+    assert manifest["validity"]["status"] == "PASS"
+
+
+def test_cfd_manifest_fails_when_required_patch_group_is_empty():
+    surface_graph = {"surfaces": []}
+    view = {
+        "feature_suppression": {"suppressed_features": []},
+        "required_patch_groups": ["hub_wall"],
+    }
+
+    manifest = build_cfd_full_360_manifest(surface_graph, view, blade_count=0)
+
+    assert manifest["validity"]["status"] == "FAIL"
+    assert "missing_patch_group_instances:hub_wall" in manifest["validity"]["failures"]
