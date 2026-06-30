@@ -1,0 +1,12 @@
+{
+  "name": "impeller-visualizer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "python -m http.server 5199 -b 127.0.0.1",
+    "build": "node scripts/build-check.js",
+    "preview": "python -m http.server 4173 -b 127.0.0.1",
+    "test": "node --test src/*.test.js"
+  }
+}

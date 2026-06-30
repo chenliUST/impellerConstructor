@@ -1,0 +1,11 @@
+.worktrees/
+worktrees/
+frontend/node_modules/
+runs/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/

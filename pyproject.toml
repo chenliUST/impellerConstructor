@@ -1,0 +1,9 @@
+[project]
+name = "part-rule-synthesis"
+version = "0.1.0"
+description = "API-first research service for deterministic part-rule synthesis."
+requires-python = ">=3.12"
+dependencies = ["fastapi", "pydantic", "cadquery"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
