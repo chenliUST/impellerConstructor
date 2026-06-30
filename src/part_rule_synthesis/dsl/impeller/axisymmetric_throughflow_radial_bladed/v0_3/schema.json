@@ -1,0 +1,81 @@
+{
+  "dsl_version": "0.3",
+  "supersedes": "../v0_2/schema.json",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "required_sections": [
+    "classification",
+    "coordinate_system",
+    "main_dimensions",
+    "primary_flow_path",
+    "support_surfaces",
+    "shape_control",
+    "material_domain",
+    "blade_pattern",
+    "blade_boundaries",
+    "blade_surface_construction",
+    "blade_profile",
+    "blade_edges",
+    "solid_features",
+    "display_policy",
+    "surface_graph",
+    "validation"
+  ],
+  "new_parameters": {
+    "hub_wall_thickness_mm": {
+      "default": 18.0,
+      "min_exclusive": 0.0,
+      "description": "Minimum finite hub material thickness measured normal/offset from the functional hub support where the simplified kernel cannot solve exact shell thickness."
+    },
+    "hub_bottom_thickness_mm": {
+      "default": 24.0,
+      "min_exclusive": 0.0,
+      "description": "Finite bottom/backplate thickness required to close the hub solid."
+    },
+    "hub_top_cap_thickness_mm": {
+      "default": 8.0,
+      "min_exclusive": 0.0,
+      "description": "Finite top cap thickness near the inlet eye where the hub revolve surface is capped around the mounting bore."
+    },
+    "hub_chamfer_radius_mm": {
+      "default": 3.0,
+      "min": 0.0,
+      "description": "Default chamfer/fillet radius for hub cap, bore, and shell transitions."
+    },
+    "hood_wall_thickness_mm": {
+      "default": 12.0,
+      "min_exclusive": 0.0,
+      "description": "Finite wall thickness for closed impeller hood/shroud shell. Ignored for open impeller material domain."
+    },
+    "hood_chamfer_radius_mm": {
+      "default": 3.0,
+      "min": 0.0,
+      "description": "Default chamfer/fillet radius for hood/shroud inlet, outlet, and shell-edge transitions."
+    }
+  },
+  "variant_rules": {
+    "open": {
+      "blade_tip_support_surface.material": false,
+      "blade_tip_support_surface.role": "construction_support_only",
+      "blade_tip_support_surface.display": "hidden_by_default",
+      "front_shroud_material_solid": "forbidden",
+      "hood_wall_thickness_mm": "not_applicable"
+    },
+    "closed": {
+      "blade_tip_support_surface.material": true,
+      "blade_tip_support_surface.role": "front_shroud_inner_surface",
+      "blade_tip_support_surface.display": "visible",
+      "front_shroud_material_solid": "required",
+      "hood_wall_thickness_mm": "required_nonzero"
+    }
+  },
+  "validity_contracts": [
+    "hub_wall_thickness_positive",
+    "hub_bottom_thickness_positive",
+    "hub_cap_faces_close_revolved_hub_solid",
+    "mounting_bore_cylinder_removed_from_hub_solid",
+    "hub_chamfer_features_do_not_remove_functional_blade_root_boundary",
+    "closed_hood_wall_thickness_positive",
+    "open_tip_support_surface_hidden_from_display_graph",
+    "construction_support_surfaces_may_exist_without_material_or_display"
+  ]
+}
