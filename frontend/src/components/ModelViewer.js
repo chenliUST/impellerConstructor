@@ -3,6 +3,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
+import { defaultVisibleLayers, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
+
 const h = React.createElement;
 
 export function ModelViewer({
@@ -13,6 +15,7 @@ export function ModelViewer({
   setViewMode,
   autoRotate,
   setAutoRotate,
+  visibleLayers = defaultVisibleLayers(),
 }) {
   const containerRef = useRef(null);
   const sceneRef = useRef(null);
@@ -90,7 +93,7 @@ export function ModelViewer({
 
   useEffect(() => {
     updateVisibility();
-  }, [viewMode]);
+  }, [viewMode, visibleLayers]);
 
   useEffect(() => {
     renderConstructionLines(mergeConstructionLines(constructionLines, surfaceGraph));
@@ -176,10 +179,22 @@ export function ModelViewer({
     const shaded = modelRef.current.shaded;
     const constructionGroup = modelRef.current.constructionGroup;
     if (shaded) {
-      shaded.visible = viewMode !== "wireframe";
+      const showShaded = viewMode !== "wireframe" && visibleLayers.shaded_surfaces !== false;
+      shaded.visible = showShaded;
+      shaded.traverse((child) => {
+        if (child.isMesh && child.userData.layer) {
+          child.visible = showShaded && visibleLayers[child.userData.layer] !== false;
+        }
+      });
     }
     if (constructionGroup) {
-      constructionGroup.visible = viewMode !== "shaded";
+      const showConstruction = viewMode !== "shaded";
+      constructionGroup.visible = showConstruction;
+      constructionGroup.traverse((child) => {
+        if (child.isLineSegments && child.userData.layer) {
+          child.visible = showConstruction && visibleLayers[child.userData.layer] !== false;
+        }
+      });
     }
   }
 
@@ -310,7 +325,9 @@ function createSurfaceGraphGroup(surfaceGraph, center) {
       transparent: true,
       opacity: display.opacity ?? (surface.role === "open_tip_reference" || surface.role === "reference_only" ? 0.3 : isEdgeClosure ? 1.0 : 0.92),
     });
-    group.add(new THREE.Mesh(geometry, material));
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData.layer = layerForSurface(surface);
+    group.add(mesh);
   }
 
   return group;
@@ -400,7 +417,9 @@ function createConstructionGroup(linesByFeature, center) {
         transparent: true,
         opacity: feature === "blade_boundaries" || feature === "blade_edges" || feature === "named_boundary_curve" ? 1.0 : feature === "blade_u" || feature === "blade_v" || feature === "blade" || feature === "surface_uv" ? 0.82 : 0.72,
       });
-      group.add(new THREE.LineSegments(geometry, material));
+      const lineSegments = new THREE.LineSegments(geometry, material);
+      lineSegments.userData.layer = layerForConstructionFeature(feature);
+      group.add(lineSegments);
     }
   }
 

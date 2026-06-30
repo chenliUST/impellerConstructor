@@ -2,6 +2,8 @@ import React, { useMemo, useState } from "react";
 
 import { instantiateImpeller, modelExportUrl, synthesizeImpeller } from "./apiClient.js";
 import { apiDefault, presets, selectedPreset } from "./appModel.js";
+import { defaultVisibleLayers } from "./workspaceModel.js";
+import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js";
 import { ManifestPanel } from "./components/ManifestPanel.js";
 import { ModelViewer } from "./components/ModelViewer.js";
 import { ParameterPanel } from "./components/ParameterPanel.js";
@@ -20,6 +22,7 @@ export function App() {
   const [stlUrl, setStlUrl] = useState("");
   const [viewMode, setViewMode] = useState("combined");
   const [autoRotate, setAutoRotate] = useState(false);
+  const [visibleLayers, setVisibleLayers] = useState(defaultVisibleLayers);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -74,6 +77,10 @@ export function App() {
     setEngineId("");
   }
 
+  function updateLayer(layerId, visible) {
+    setVisibleLayers((current) => ({ ...current, [layerId]: visible }));
+  }
+
   return h(
     "main",
     { className: "app-shell" },
@@ -107,6 +114,11 @@ export function App() {
           setFacets({ ...activePreset.facets });
         },
         loading,
+      }),
+      h(GeometryLayerPanel, {
+        manifest,
+        visibleLayers,
+        onToggle: updateLayer,
       }),
     ),
     h(
@@ -143,6 +155,7 @@ export function App() {
         setViewMode,
         autoRotate,
         setAutoRotate,
+        visibleLayers,
       }),
     ),
     h(ManifestPanel, {

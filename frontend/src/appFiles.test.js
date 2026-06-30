@@ -22,8 +22,10 @@ describe("frontend application files", () => {
       "src/components/PresetList.js",
       "src/components/FacetPanel.js",
       "src/components/ParameterPanel.js",
+      "src/components/GeometryLayerPanel.js",
       "src/components/ModelViewer.js",
       "src/components/ManifestPanel.js",
+      "src/workspaceModel.js",
       "src/styles.css",
     ]) {
       assert.equal(existsSync(resolve(root, file)), true, `${file} should exist`);
@@ -72,5 +74,17 @@ describe("frontend application files", () => {
     assert.match(viewerSource, /blade_boundaries/);
     assert.match(viewerSource, /named_boundary_curve/);
     assert.match(viewerSource, /edge_closure_surface/);
+  });
+
+  test("application exposes geometry layer controls to the model viewer", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    const panelSource = readFileSync(resolve(root, "src/components/GeometryLayerPanel.js"), "utf-8");
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(appSource, /GeometryLayerPanel/);
+    assert.match(appSource, /visibleLayers/);
+    assert.match(panelSource, /layerSchema/);
+    assert.match(viewerSource, /layerForSurface/);
+    assert.match(viewerSource, /layerForConstructionFeature/);
   });
 });

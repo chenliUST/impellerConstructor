@@ -202,6 +202,18 @@ p {
   gap: 11px;
 }
 
+.parameter-group {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #eef2f0;
+  padding-top: 10px;
+}
+
+.parameter-group:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
 .facet-list {
   display: grid;
   gap: 8px;
@@ -345,6 +357,53 @@ input[type="range"] {
   color: #40514b;
   font-size: 12px;
   font-weight: 750;
+}
+
+.geometry-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.mini-stat {
+  border: 1px solid #e0e7e3;
+  border-radius: 6px;
+  background: #fbfcfb;
+  padding: 7px;
+}
+
+.mini-stat span {
+  display: block;
+  color: #71807a;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.mini-stat strong {
+  color: #17231f;
+  font-size: 13px;
+}
+
+.layer-list {
+  display: grid;
+  gap: 7px;
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #31423d;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.layer-row input {
+  width: 15px;
+  height: 15px;
+  accent-color: #1f6f66;
 }
 
 .viewer-canvas {
