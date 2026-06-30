@@ -6,6 +6,7 @@ import {
   buildSynthesizePayload,
   exportUrl,
   facetSchema,
+  parameterGroups,
   parameterSchema,
   presets,
 } from "./appModel.js";
@@ -71,15 +72,23 @@ describe("impeller frontend model", () => {
       "outlet_blade_height_mm",
       "hub_curve_height_mm",
       "mounting_bore_radius_mm",
+      "hub_base_radius_mm",
+      "hub_nose_radius_mm",
+      "hub_profile_convexity",
       "blade_wrap_deg",
       "blade_lean_deg",
+      "leading_edge_lean_deg",
+      "trailing_edge_lean_deg",
+      "leading_edge_sweep_mm",
+      "trailing_edge_sweep_mm",
       "blade_thickness_mm",
+      "root_fillet_radius_mm",
     ]);
   });
 
   test("presets include focused open and closed NURBS throughflow studies", () => {
-    const open = presets.find((preset) => preset.presetId === "axisymmetric_nurbs_open_throughflow_study");
-    const closed = presets.find((preset) => preset.presetId === "axisymmetric_nurbs_closed_throughflow_study");
+    const open = presets.find((preset) => preset.presetId === "radial_open_reference");
+    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference");
 
     assert.ok(open);
     assert.ok(closed);
@@ -89,6 +98,44 @@ describe("impeller frontend model", () => {
     assert.equal(closed.facets.passage_topology, "throughflow_bladed_channel");
     assert.ok(open.parameters.blade_wrap_deg > 0);
     assert.ok(closed.parameters.blade_wrap_deg > 0);
+  });
+
+  test("declares parameter groups in display order", () => {
+    assert.deepEqual(parameterGroups.map((group) => group.id), [
+      "main_dimensions",
+      "meridional_support",
+      "shape_control",
+      "blade_pattern",
+      "blade_boundaries",
+      "blade_surface",
+      "blade_profile",
+      "edge_treatment",
+    ]);
+  });
+
+  test("exposes leading trailing controls and semantic shape handles", () => {
+    assert.equal(parameterSchema.leading_edge_lean_deg.group, "blade_boundaries");
+    assert.equal(parameterSchema.trailing_edge_lean_deg.group, "blade_boundaries");
+    assert.equal(parameterSchema.leading_edge_sweep_mm.group, "blade_boundaries");
+    assert.equal(parameterSchema.trailing_edge_sweep_mm.group, "blade_boundaries");
+    assert.equal(parameterSchema.hub_base_radius_mm.group, "shape_control");
+    assert.equal(parameterSchema.hub_nose_radius_mm.group, "shape_control");
+    assert.equal(parameterSchema.hub_profile_convexity.group, "shape_control");
+    assert.equal(parameterSchema.hub_base_radius_mm.controlKind, "semantic_handle");
+  });
+
+  test("buildInstantiatePayload preserves explicit boundary parameters", () => {
+    const payload = buildInstantiatePayload({
+      leading_edge_lean_deg: 15,
+      trailing_edge_lean_deg: -10,
+      leading_edge_sweep_mm: 25,
+      trailing_edge_sweep_mm: -30,
+    });
+
+    assert.equal(payload.parameters.leading_edge_lean_deg, 15);
+    assert.equal(payload.parameters.trailing_edge_lean_deg, -10);
+    assert.equal(payload.parameters.leading_edge_sweep_mm, 25);
+    assert.equal(payload.parameters.trailing_edge_sweep_mm, -30);
   });
 
   test("exportUrl builds API export paths", () => {
