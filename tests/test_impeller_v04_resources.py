@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ONTOLOGY_ROOT = PROJECT_ROOT / "src" / "part_rule_synthesis" / "ontology" / "impeller" / "v0_4"
@@ -19,6 +21,12 @@ DSL_ROOT = (
 
 def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def patch_sources_for_topology(sources: list[str] | dict[str, list[str]], topology: str) -> list[str]:
+    if isinstance(sources, dict):
+        return sources[topology]
+    return sources
 
 
 def test_v04_resource_files_exist_and_are_valid_json():
@@ -150,10 +158,54 @@ def test_v04_cfd_patch_groups_define_source_roles():
 
     assert set(cfd["patch_group_sources"]) == set(cfd["required_patch_groups"])
     for group_id in cfd["required_patch_groups"]:
-        sources = cfd["patch_group_sources"][group_id]
-        assert isinstance(sources, list), group_id
-        assert sources, group_id
-        assert all(isinstance(source, str) and source for source in sources), group_id
+        source_spec = cfd["patch_group_sources"][group_id]
+        if isinstance(source_spec, dict):
+            assert set(source_spec) == {"open", "closed"}, group_id
+            mapped_sources = [source for sources in source_spec.values() for source in sources]
+        else:
+            assert isinstance(source_spec, list), group_id
+            mapped_sources = source_spec
+        assert mapped_sources, group_id
+        assert all(isinstance(source, str) and source for source in mapped_sources), group_id
+
+
+def test_v04_tip_or_shroud_wall_sources_are_topology_aware():
+    cfd = read_json(DSL_ROOT / "simulation_views" / "cfd_full_360.json")
+    open_constructor = read_json(DSL_ROOT / "constructors" / "open_impeller.json")
+    closed_constructor = read_json(DSL_ROOT / "constructors" / "closed_impeller.json")
+
+    source_spec = cfd["patch_group_sources"]["tip_or_shroud_wall"]
+    assert isinstance(source_spec, dict)
+
+    open_sources = patch_sources_for_topology(source_spec, open_constructor["classification"]["shroud_topology"])
+    closed_sources = patch_sources_for_topology(source_spec, closed_constructor["classification"]["shroud_topology"])
+    open_nonmaterial_support_surfaces = {
+        name
+        for name, surface in open_constructor["support_surfaces"].items()
+        if surface.get("material") is False
+    }
+
+    assert open_sources
+    assert set(open_sources) - open_nonmaterial_support_surfaces
+    assert "tip_transition" in open_sources
+    assert "blade_tip_support_surface" not in open_sources
+    assert "blade_tip_support_surface" in closed_sources
+
+
+def test_load_impeller_dsl_bundle_v04_succeeds_with_shape_control_policies():
+    bundle = load_impeller_dsl_bundle("v0_4")
+
+    assert bundle.schema["dsl_version"] == "0.4"
+    assert "axisymmetric_throughflow_radial_bladed.open.v0_4" in bundle.constructors
+    assert "axisymmetric_throughflow_radial_bladed.closed.v0_4" in bundle.constructors
+    assert "radial_open_reference_v0_4" in bundle.presets
+    assert "radial_closed_reference_v0_4" in bundle.presets
+    assert bundle.shape_controls["shape_control_version"] == "0.4"
+    assert "policies" in bundle.shape_controls
+    covered_targets = set(bundle.shape_controls["policies"]) | set(
+        bundle.shape_controls["material_domain_controls"]
+    )
+    assert set(bundle.shape_controls["target_entities"]) - covered_targets == set()
 
 
 def test_v04_supersedes_paths_resolve_from_declaring_file():

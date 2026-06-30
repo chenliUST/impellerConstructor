@@ -32,7 +32,10 @@
     "root_fillet_wall": ["root_transition"],
     "tip_fillet_wall": ["tip_transition"],
     "hub_wall": ["hub_support_surface"],
-    "tip_or_shroud_wall": ["blade_tip_support_surface"],
+    "tip_or_shroud_wall": {
+      "open": ["tip_transition"],
+      "closed": ["blade_tip_support_surface"]
+    },
     "inlet_patch": ["leading_edge_boundary"],
     "outlet_patch": ["trailing_edge_boundary"]
   },
