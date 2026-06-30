@@ -6,7 +6,7 @@ from part_rule_synthesis.impeller_dsl_resources import ImpellerDslBundle, load_i
 from part_rule_synthesis.impeller_shape_control import normalize_shape_control_space
 
 
-IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3")
+IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4")
 
 IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
     "blade_count": {"min": 2, "max": 64},
@@ -46,6 +46,7 @@ def compile_impeller_runtime_preset(
     facets = {**constructor["classification"], **(facet_overrides or {})}
     _validate_facets(bundle, facets)
     shape_control = normalize_shape_control_space(bundle.shape_control_schema, bundle.shape_controls)
+    shape_control["shape_control_version"] = bundle.shape_controls["shape_control_version"]
     dsl_version = str(bundle.schema["dsl_version"])
     return {
         "version": f"{dsl_version}.0",
@@ -66,6 +67,8 @@ def compile_impeller_runtime_preset(
         "display_policy": constructor.get("display_policy", {}),
         "material_domain": constructor.get("material_domain", {}),
         "solid_features": constructor.get("solid_features", {}),
+        "feature_graph": constructor.get("feature_graph", {}),
+        "simulation_views": bundle.simulation_views,
         "shape_control": shape_control,
         "validity_contracts": bundle.validity_contracts,
         "loss_schema": bundle.loss_schema,
@@ -169,6 +172,16 @@ def _constraints_for_constructor(constructor: dict[str, Any]) -> list[str]:
 
 
 def _selected_rules(bundle: Any, constructor: dict[str, Any]) -> list[str]:
+    if bundle.schema["dsl_version"] == "0.4":
+        return [
+            f"ontology_slice.{bundle.slice['slice_id']}",
+            f"constructor_family.{bundle.slice['constructor_family']}",
+            f"constructor.{constructor['constructor_id']}",
+            "design_space.campaign_freeze_rule",
+            "surface_graph_contract.named_surfaces_required",
+            "feature_graph_contract.features_are_first_class_nodes",
+            "simulation_views.cfd_full_360",
+        ]
     return [
         f"ontology_slice.{bundle.slice['slice_id']}",
         f"constructor_family.{bundle.slice['constructor_family']}",

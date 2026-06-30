@@ -25,6 +25,7 @@ class ImpellerDslBundle:
     shape_controls: dict[str, Any]
     presets: dict[str, dict[str, Any]]
     aliases: dict[str, str]
+    simulation_views: dict[str, dict[str, Any]]
 
 
 def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslBundle:
@@ -38,6 +39,11 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
     constructors = _load_json_directory_by_id(dsl_root / "constructors", "constructor_id")
     presets = _load_json_directory_by_id(dsl_root / "presets", "preset_id")
     aliases = _read_json(dsl_root / "aliases.json")["legacy_preset_aliases"]
+    simulation_views = (
+        _load_json_directory_by_id(dsl_root / "simulation_views", "view_id")
+        if (dsl_root / "simulation_views").exists()
+        else {}
+    )
     shape_controls = _read_json(dsl_root / "shape_controls" / "default_shape_controls.json")
     if "policies" not in shape_controls:
         carried_forward = _read_json(fallback_dsl_root / "shape_controls" / "default_shape_controls.json")
@@ -66,6 +72,7 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
         shape_controls=shape_controls,
         presets=presets,
         aliases=aliases,
+        simulation_views=simulation_views,
     )
     _validate_bundle(bundle)
     return bundle
@@ -93,11 +100,14 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
         raise ValueError("impeller ontology slice constructor family mismatch")
     if bundle.schema["constructor_family"] != family:
         raise ValueError("impeller DSL schema constructor family mismatch")
-    if bundle.shape_control_schema["default_stage"] != 1:
-        raise ValueError("impeller v0.2 shape control must default to stage 1")
+    if bundle.schema["dsl_version"] in {"0.2", "0.3"} and bundle.shape_control_schema["default_stage"] != 1:
+        raise ValueError("impeller v0.2/v0.3 shape control must default to stage 1")
+    if bundle.schema["dsl_version"] == "0.4" and "design_space" not in bundle.shape_controls:
+        raise ValueError("impeller v0.4 shape controls must include design_space")
     if "hub_meridional_profile" not in bundle.shape_controls["target_entities"]:
         raise ValueError("default shape controls must include hub_meridional_profile")
-    _validate_shape_control_policies(bundle)
+    if "policies" in bundle.shape_controls:
+        _validate_shape_control_policies(bundle)
     for constructor_id, constructor in bundle.constructors.items():
         if constructor["constructor_id"] != constructor_id:
             raise ValueError(f"constructor id mismatch: {constructor_id}")

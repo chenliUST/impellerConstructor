@@ -33,6 +33,18 @@ def test_load_impeller_dsl_bundle_v03_coexists_with_v02_resources():
     assert "hub_meridional_profile" in bundle.shape_controls["policies"]
 
 
+def test_load_impeller_dsl_bundle_v04_exposes_design_space_and_simulation_views():
+    bundle = load_impeller_dsl_bundle("v0_4")
+
+    assert bundle.slice["ontology_version"] == "0.4"
+    assert bundle.schema["dsl_version"] == "0.4"
+    assert "axisymmetric_throughflow_radial_bladed.open.v0_4" in bundle.constructors
+    assert "radial_open_reference_v0_4" in bundle.presets
+    assert bundle.shape_controls["shape_control_version"] == "0.4"
+    assert "design_space" in bundle.shape_controls
+    assert "simulation_views" in bundle.schema["required_sections"]
+
+
 def test_compile_impeller_runtime_preset_resolves_legacy_alias_and_preserves_api_fields():
     runtime = compile_impeller_runtime_preset("axisymmetric_nurbs_open_throughflow_study")
 
@@ -68,6 +80,18 @@ def test_compile_impeller_runtime_preset_v03_exposes_material_domain_controls():
     assert "hub_wall_thickness_mm" in {
         variable["id"] for variable in runtime["shape_control"]["editable_variables"]
     }
+
+
+def test_compile_impeller_runtime_preset_v04_exposes_graph_contracts():
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_4")
+
+    assert runtime["version"] == "0.4.0"
+    assert runtime["preset_id"] == "radial_open_reference_v0_4"
+    assert runtime["constructor_id"] == "axisymmetric_throughflow_radial_bladed.open.v0_4"
+    assert runtime["dsl_sections"]["dsl_version"] == "0.4"
+    assert runtime["shape_control"]["shape_control_version"] == "0.4"
+    assert runtime["simulation_views"]["cfd_full_360"]["domain_kind"] == "full_360_wetted_surface"
+    assert runtime["feature_graph"]["assembly_features"]["mounting_bore"]["kind"] == "axisymmetric_subtractive_cylinder"
 
 
 def test_compile_impeller_runtime_preset_rejects_unknown_preset():
