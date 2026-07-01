@@ -50,8 +50,19 @@ export function ManifestPanel({ manifest, exportLinks, before = null }) {
           h(
             "div",
             { className: "export-row" },
-            h("a", { href: exportLinks.stl, target: "_blank", rel: "noreferrer" }, "STL"),
-            h("a", { href: exportLinks.step, target: "_blank", rel: "noreferrer" }, "STEP"),
+            exportLinks.map((option) =>
+              h(
+                "a",
+                {
+                  key: option.id,
+                  href: option.href,
+                  download: option.download,
+                  target: "_blank",
+                  rel: "noreferrer",
+                },
+                option.label,
+              ),
+            ),
           ),
           h(Section, {
             title: "Source refs",

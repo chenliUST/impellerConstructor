@@ -4,6 +4,8 @@ import { describe, test } from "node:test";
 import {
   buildInstantiatePayload,
   buildSynthesizePayload,
+  exportFilename,
+  exportFileOptions,
   exportUrl,
   facetSchema,
   overridesAfterParameterChange,
@@ -225,5 +227,17 @@ describe("impeller frontend model", () => {
       exportUrl("http://127.0.0.1:8000", "run-abc", "stl"),
       "http://127.0.0.1:8000/api/model-runs/run-abc/exports/stl",
     );
+  });
+
+  test("exportFileOptions exposes brep mesh and manifest downloads", () => {
+    assert.deepEqual(exportFileOptions.map((option) => option.id), ["step", "stl", "mesh_step", "manifest"]);
+    assert.equal(exportFileOptions.find((option) => option.id === "step").label, "STEP B-Rep");
+    assert.equal(exportFileOptions.find((option) => option.id === "mesh_step").extension, ".mesh.step");
+  });
+
+  test("exportFilename uses preset run id and correct extension", () => {
+    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "step"), "radial_open_reference_v0_6_run-abc.step");
+    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "mesh_step"), "radial_open_reference_v0_6_run-abc.mesh.step");
+    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "manifest"), "radial_open_reference_v0_6_run-abc.manifest.json");
   });
 });

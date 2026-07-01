@@ -48,6 +48,13 @@ export const facetSchema = {
   working_domain: { label: "Working domain", values: ["pump"] },
 };
 
+export const exportFileOptions = [
+  { id: "step", label: "STEP B-Rep", extension: ".step" },
+  { id: "stl", label: "STL Mesh", extension: ".stl" },
+  { id: "mesh_step", label: "STEP Mesh", extension: ".mesh.step" },
+  { id: "manifest", label: "Manifest", extension: ".manifest.json" },
+];
+
 export const presets = [
   {
     id: "axisymmetric-nurbs-open-throughflow",
@@ -172,6 +179,13 @@ export function overridesAfterParameterChange(name, profileOverrides, curveOverr
 export function exportUrl(apiBase, runId, format) {
   const normalizedBase = String(apiBase || apiDefault).replace(/\/+$/, "");
   return `${normalizedBase}/api/model-runs/${encodeURIComponent(runId)}/exports/${encodeURIComponent(format)}`;
+}
+
+export function exportFilename(presetId, runId, exportKind) {
+  const option = exportFileOptions.find((item) => item.id === exportKind) || exportFileOptions[0];
+  const safePreset = String(presetId || "impeller").replace(/[^A-Za-z0-9_-]/g, "_");
+  const safeRun = String(runId || "run").replace(/[^A-Za-z0-9_-]/g, "_");
+  return `${safePreset}_${safeRun}${option.extension}`;
 }
 
 export function selectedPreset(id) {
