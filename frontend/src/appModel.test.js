@@ -86,6 +86,9 @@ describe("impeller frontend model", () => {
       "trailing_edge_sweep_mm",
       "blade_thickness_mm",
       "root_fillet_radius_mm",
+      "leading_edge_radius_mm",
+      "trailing_edge_radius_mm",
+      "tip_edge_radius_mm",
       "hub_wall_thickness_mm",
       "hub_bottom_thickness_mm",
       "hub_top_cap_thickness_mm",
@@ -95,9 +98,9 @@ describe("impeller frontend model", () => {
     ]);
   });
 
-  test("presets include focused open and closed NURBS throughflow studies", () => {
-    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_5");
-    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_5");
+  test("presets include focused open and closed B-Rep throughflow studies", () => {
+    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_6");
+    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_6");
 
     assert.ok(open);
     assert.ok(closed);
@@ -117,6 +120,14 @@ describe("impeller frontend model", () => {
     assert.equal(closed.parameters.trailing_edge_sweep_mm, 0);
     assert.ok(open.parameters.blade_wrap_deg > 0);
     assert.ok(closed.parameters.blade_wrap_deg > 0);
+    assert.equal(open.parameters.root_fillet_radius_mm, 8);
+    assert.equal(open.parameters.leading_edge_radius_mm, 3);
+    assert.equal(open.parameters.trailing_edge_radius_mm, 2);
+    assert.equal(open.parameters.tip_edge_radius_mm, 2);
+    assert.equal(closed.parameters.root_fillet_radius_mm, 8);
+    assert.equal(closed.parameters.leading_edge_radius_mm, 3);
+    assert.equal(closed.parameters.trailing_edge_radius_mm, 2);
+    assert.equal(closed.parameters.tip_edge_radius_mm, 2);
     assert.ok(open.parameters.hub_wall_thickness_mm > 0);
     assert.ok(closed.parameters.hood_wall_thickness_mm > 0);
   });
@@ -144,6 +155,25 @@ describe("impeller frontend model", () => {
     assert.equal(parameterSchema.hub_nose_radius_mm.group, "shape_control");
     assert.equal(parameterSchema.hub_profile_convexity.group, "shape_control");
     assert.equal(parameterSchema.hub_base_radius_mm.controlKind, "semantic_handle");
+  });
+
+  test("v0.6 exposes interactive fillet and edge radius controls", () => {
+    assert.equal(parameterSchema.root_fillet_radius_mm.group, "edge_treatment");
+    assert.equal(parameterSchema.leading_edge_radius_mm.group, "edge_treatment");
+    assert.equal(parameterSchema.trailing_edge_radius_mm.group, "edge_treatment");
+    assert.equal(parameterSchema.tip_edge_radius_mm.group, "edge_treatment");
+
+    const payload = buildInstantiatePayload({
+      root_fillet_radius_mm: 10,
+      leading_edge_radius_mm: 4,
+      trailing_edge_radius_mm: 2.5,
+      tip_edge_radius_mm: 2,
+    });
+
+    assert.equal(payload.parameters.root_fillet_radius_mm, 10);
+    assert.equal(payload.parameters.leading_edge_radius_mm, 4);
+    assert.equal(payload.parameters.trailing_edge_radius_mm, 2.5);
+    assert.equal(payload.parameters.tip_edge_radius_mm, 2);
   });
 
   test("buildInstantiatePayload preserves explicit boundary parameters", () => {
