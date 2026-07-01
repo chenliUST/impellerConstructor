@@ -29,10 +29,17 @@ Current focus:
 - radial open impeller preset `radial_open_reference_v0_4`
 - radial closed impeller preset `radial_closed_reference_v0_4`
 - sampled surface graph generation
+- CadQuery-generated STEP/STL exports for external CAD review, with known mismatch risk against frontend `surface_graph`
 - surface/feature graph identity
 - full-360 CFD patch-group manifest
 - schema-only FEA solid view
 - frontend CAD review, CFD full-360, and feature-debug views
+
+Next planned frontier:
+
+- v0.5 surface-graph-faithful export contract
+- STL generated from the same `surface_graph` surfaces rendered in the frontend
+- export-region provenance from third-party file inspection back to `surface_graph_id`, feature, and role
 
 ## Claims The Repository Can Make
 
@@ -42,16 +49,19 @@ The current code can claim:
 - deterministic sampled impeller surface graph for the v0.4 open and closed presets
 - stable surface ids, feature ids, named boundary curves, and CFD patch group names for the tested presets
 - campaign signatures that freeze topology-level optimization shape
-- generated preview STL from sampled surface graph triangles
-- generated placeholder STEP text that explicitly marks exact CAD export as deferred
+- generated STEP files containing CadQuery/OCCT topology entities for third-party CAD inspection
+- generated binary STL files with non-empty triangle meshes for third-party geometry inspection
+- documented evidence that current v0.4 CadQuery exports can differ from the frontend surface graph, with a v0.5 plan to correct that
 
 ## Claims The Repository Cannot Make Yet
 
 The current code cannot yet claim:
 
+- STEP/STL exports are faithful projections of `manifest.geometry.surface_graph`
 - exact industrial B-Rep geometry
 - watertight OCCT sewing or healing
 - exact variable-radius CAD fillets or chamfers
+- certified CAD repair quality across the full parameter space
 - mesher-ready CFD volume domain
 - solver-ready CFD case generation
 - periodic single-passage CFD sector generation
@@ -80,8 +90,10 @@ Minimum next gates:
 Use these labels consistently in docs and manifests:
 
 - `research_grade_sampled_surface`: sampled surface graph, not exact CAD
-- `preview_mesh`: STL triangles generated from sampled surfaces
-- `cad_export_deferred`: exact STEP/B-Rep is not generated
+- `analysis_review_cad_export`: CadQuery-generated STEP/STL intended for external inspection, not certified manufacturing geometry
+- `cadquery_sync`: synchronous CadQuery export path used by the API
+- `surface_graph_faithful_export`: planned v0.5 export mode where files are derived from selected `surface_graph` surfaces
+- `surface_graph_sampled_mesh`: planned v0.5 STL exactness label for sampled graph triangulation
 - `patch_contract_ready`: semantic CFD patch groups and instances are generated
 - `solver_adapter_missing`: no mesher or solver has been invoked
 - `schema_only`: resource shape exists but executable workflow does not

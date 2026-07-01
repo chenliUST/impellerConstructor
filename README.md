@@ -11,8 +11,11 @@ This repository is a research-grade CAD/CAE integration prototype, not a product
 - Canonical workspace repository: `impellerConstructor`
 - Latest slice: `impeller.axisymmetric_throughflow_radial_bladed`
 - Latest DSL version: `v0_4`
+- Next planned DSL version: `v0_5` surface-graph-faithful export contract
 - Latest frontend workflow: v0.4 open/closed throughflow presets with CAD review, CFD full-360, and feature-debug views
-- Geometry exactness: sampled research surfaces with explicit metadata; exact industrial B-Rep fillets, meshing adapters, and solver adapters are future work
+- Current export status: v0.4 impeller STEP/STL downloads are generated through a CadQuery analysis-review path, but they are not yet guaranteed to be faithful projections of the frontend `surface_graph`
+- v0.5 export direction: make exported inspection artifacts derive from `surface_graph` and record export-region provenance
+- Geometry exactness: sampled research surfaces plus analysis-review exports; exact industrial B-Rep fillets, meshing adapters, and solver adapters are future work
 
 The older sibling directory `part-rule-synthesis` is an archived baseline snapshot. Current work should happen in this repository.
 
@@ -27,8 +30,15 @@ Earlier versions are preserved in both Git history and versioned DSL folders.
 | `v0_2` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_2` | `radial_open_reference`, `radial_closed_reference` | First focused axisymmetric throughflow DSL slice and runtime contract. |
 | `v0_3` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_3` | `radial_open_reference_v0_3`, `radial_closed_reference_v0_3` | Solid hub/hood modeling, staged generation, and curve editor workflow. |
 | `v0_4` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_4` | `radial_open_reference_v0_4`, `radial_closed_reference_v0_4` | Optimization-ready design space, surface/feature graph, and CFD full-360 manifest. |
+| planned `v0_5` | pending implementation | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful STL/STEP export contract with region provenance. |
 
 See [docs/version-history.md](docs/version-history.md) and [src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/VERSION_INDEX.md](src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/VERSION_INDEX.md).
+
+The v0.5 design package is recorded in:
+
+- [v0.5 design spec](docs/superpowers/specs/2026-07-01-impeller-v0-5-surface-graph-faithful-export-design.md)
+- [v0.5 implementation plan](docs/superpowers/plans/2026-07-01-impeller-v0-5-surface-graph-faithful-export.md)
+- [v0.5 mismatch evidence](docs/evidence/2026-07-01-impeller-v0-5-surface-graph-faithful-export/README.md)
 
 ## Repository Map
 
@@ -82,7 +92,7 @@ Use the repository-level verification helper from the repository root:
 
 Expected current results:
 
-- Backend tests: `107 passed`
+- Backend tests: `109 passed`
 - Frontend tests: `43 passed`
 - Frontend build check: passed
 
@@ -92,5 +102,5 @@ Expected current results:
 - Add a new version folder instead of overwriting old DSL semantics.
 - Keep historical tags available locally with `git fetch --unshallow --tags origin` when cloning shallow.
 - Preserve evidence screenshots, reports, and update plans that explain why a DSL version changed.
-- Do not treat sampled fillet/blend surfaces as exact CAD operations; use `cad_exactness` metadata to distinguish research geometry from future B-Rep output.
+- Do not treat sampled fillet/blend surfaces or analysis-review exports as exact industrial CAD operations; use `cad_exactness` and export fidelity metadata to distinguish research geometry from future B-Rep output.
 - Follow [docs/evidence-policy.md](docs/evidence-policy.md) before adding generated video, sweep data, or large visual artifacts.
