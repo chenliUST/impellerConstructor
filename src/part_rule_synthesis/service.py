@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from part_rule_synthesis.impeller_cfd_manifest import build_cfd_full_360_manifest
+from part_rule_synthesis.impeller_brep_export import write_trimmed_brep_step
 from part_rule_synthesis.impeller_design_space import build_campaign_signature
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
 from part_rule_synthesis.impeller_surface_graph_export import write_surface_graph_exports
@@ -235,10 +236,11 @@ class RuleSynthesisService:
                 normalized_profile_overrides,
                 dsl.get("feature_states"),
             )
-        (run_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        manifest_json = json.dumps(manifest, indent=2, sort_keys=True)
+        (run_dir / "manifest.json").write_text(manifest_json, encoding="utf-8")
+        manifest_copy = exports.get("manifest")
+        if manifest_copy:
+            Path(manifest_copy).write_text(manifest_json, encoding="utf-8")
         run = ModelRun(run_id=run_id, engine_id=engine_id, manifest=manifest)
         self.runs[run_id] = run
         return run
@@ -836,6 +838,34 @@ def _write_exports(
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
     export_contract = (dsl_context or {}).get("export_contract", {})
+    if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
+        surface_graph = (geometry_metadata or {}).get("surface_graph")
+        if not surface_graph:
+            raise RuntimeError("surface_graph_brep export requires geometry.surface_graph")
+        output_dir = _model_output_dir_for_run(run_dir)
+        stem = _safe_export_stem((dsl_context or {}).get("preset_id"), run_dir.name)
+        step = output_dir / f"{stem}.step"
+        stl = output_dir / f"{stem}.stl"
+        mesh_step = output_dir / f"{stem}.mesh.step"
+        manifest_copy = output_dir / f"{stem}.manifest.json"
+        view_id = export_contract.get("default_view", "cad_review_360")
+        brep_manifest = write_trimmed_brep_step(
+            step,
+            part_family,
+            surface_graph,
+            view_id=view_id,
+        )
+        mesh_manifests = write_surface_graph_exports(
+            mesh_step,
+            stl,
+            part_family,
+            surface_graph,
+            view_id=view_id,
+        )
+        return (
+            {"step": str(step), "stl": str(stl), "mesh_step": str(mesh_step), "manifest": str(manifest_copy)},
+            {"step": brep_manifest, "stl": mesh_manifests["stl"], "mesh_step": mesh_manifests["step"]},
+        )
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_faithful":
         surface_graph = (geometry_metadata or {}).get("surface_graph")
         if not surface_graph:
@@ -942,8 +972,34 @@ def _write_exports(
     return {"step": str(step), "stl": str(stl)}, {}
 
 
+def _safe_export_stem(preset_id: str | None, run_id: str) -> str:
+    def sanitize(value: str) -> str:
+        sanitized = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
+        return sanitized.strip("._-")
+
+    safe_run_id = sanitize(run_id) or "run"
+    safe_preset_id = sanitize(preset_id or "")
+    if safe_preset_id:
+        return f"{safe_preset_id}-{safe_run_id}"
+    return safe_run_id
+
+
+def _model_output_dir_for_run(run_dir: Path) -> Path:
+    output_dir = run_dir.parent.parent / "Model Output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
 def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None) -> dict[str, str]:
     export_contract = (dsl_context or {}).get("export_contract", {})
+    if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
+        return {
+            "mode": "surface_graph_brep",
+            "cad_exports": "completed",
+            "source": "geometry.surface_graph",
+            "view": export_contract.get("default_view", "cad_review_360"),
+            "reason": "STEP is generated from CAD surface payloads while STL/mesh STEP are graph sampled mesh",
+        }
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_faithful":
         return {
             "mode": "surface_graph_faithful",

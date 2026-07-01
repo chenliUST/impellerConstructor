@@ -110,7 +110,7 @@ def create_app(root: Path | None = None) -> FastAPI:
         path = run.manifest["exports"].get(export_format)
         if not path:
             raise HTTPException(status_code=404, detail="unknown export")
-        return FileResponse(path)
+        return FileResponse(path, filename=Path(path).name)
 
     @app.post("/api/model-runs/{run_id}/feedback")
     def feedback(run_id: str, request: FeedbackRequest):

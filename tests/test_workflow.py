@@ -115,6 +115,29 @@ def test_api_first_service_exposes_synthesis_instantiation_and_feedback(tmp_path
     assert approve_response.json()["approval_status"] == "approved"
 
 
+def test_api_v06_export_route_serves_model_output_files_with_filenames(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    engine_response = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_6"},
+    )
+    assert engine_response.status_code == 200
+
+    run_response = client.post(
+        f"/api/rule-engines/{engine_response.json()['engine_id']}/instantiate",
+        json={"parameters": {}},
+    )
+    assert run_response.status_code == 200
+    manifest = run_response.json()["manifest"]
+
+    for export_format in ["step", "stl", "mesh_step", "manifest"]:
+        export_response = client.get(f"/api/model-runs/{manifest['run_id']}/exports/{export_format}")
+
+        assert export_response.status_code == 200
+        assert Path(manifest["exports"][export_format]).name in export_response.headers["content-disposition"]
+
+
 def test_impeller_interactive_instantiation_writes_real_cad_exports(tmp_path: Path):
     service = RuleSynthesisService(tmp_path)
     engine = service.synthesize("impeller", "axisymmetric_nurbs_open_throughflow_study")
@@ -206,6 +229,39 @@ def test_impeller_v05_exports_are_surface_graph_faithful_with_region_provenance(
         assert step_manifest["face_regions"] == stl_manifest["triangle_regions"]
         assert Path(manifest["exports"]["stl"]).stat().st_size > 4096
         assert Path(manifest["exports"]["step"]).stat().st_size > 4096
+
+
+def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", "radial_open_reference_v0_6")
+
+    run = service.instantiate(engine.engine_id, {})
+    manifest = run.manifest
+
+    assert manifest["dsl_version"] == "0.6"
+    assert manifest["export_strategy"]["mode"] == "surface_graph_brep"
+    assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_trimmed_nurbs_step"
+    assert manifest["export_manifests"]["mesh_step"]["export_exactness"] == "surface_graph_mesh_step"
+    assert manifest["export_manifests"]["stl"]["export_exactness"] == "surface_graph_sampled_mesh"
+
+    step_path = Path(manifest["exports"]["step"])
+    stl_path = Path(manifest["exports"]["stl"])
+    mesh_step_path = Path(manifest["exports"]["mesh_step"])
+    manifest_copy = Path(manifest["exports"]["manifest"])
+
+    assert step_path.parent.name == "Model Output"
+    assert step_path.suffix == ".step"
+    assert stl_path.suffix == ".stl"
+    assert mesh_step_path.name.endswith(".mesh.step")
+    assert manifest_copy.name.endswith(".manifest.json")
+    assert step_path.exists()
+    assert stl_path.exists()
+    assert mesh_step_path.exists()
+    assert manifest_copy.exists()
+
+    step_text = step_path.read_text(encoding="utf-8", errors="ignore")
+    assert "ADVANCED_FACE" in step_text
+    assert "TRIANGULATED_FACE_SET" not in step_text
 
 
 def _binary_stl_bounds(path: Path) -> dict[str, float]:
