@@ -221,6 +221,7 @@
   "feature_graph_contract": {
     "requires_feature_nodes": [
       "blade_transition_features",
+      "blend_features",
       "assembly_features",
       "tuning_features"
     ],
@@ -228,6 +229,28 @@
     "requires_simulation_visibility": true
   },
   "feature_graph": {
+    "blend_features": {
+      "root_fillet": {
+        "kind": "variable_radius_blend_surface",
+        "parameters": ["root_fillet_radius_mm"],
+        "cfd_patch_group": "root_fillet_wall"
+      },
+      "leading_edge_round": {
+        "kind": "rounded_edge_blend_surface",
+        "parameters": ["leading_edge_radius_mm"],
+        "cfd_patch_group": "leading_edge_wall"
+      },
+      "trailing_edge_round": {
+        "kind": "rounded_edge_blend_surface",
+        "parameters": ["trailing_edge_radius_mm"],
+        "cfd_patch_group": "trailing_edge_wall"
+      },
+      "tip_edge_round": {
+        "kind": "rounded_edge_blend_surface",
+        "parameters": ["tip_edge_radius_mm"],
+        "cfd_patch_group": "tip_fillet_wall"
+      }
+    },
     "blade_transition_features": {
       "leading_edge_round": {
         "kind": "rounded_edge_transition",

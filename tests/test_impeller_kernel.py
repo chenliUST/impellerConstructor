@@ -451,6 +451,39 @@ def test_v06_surface_graph_emits_cad_surface_payloads():
     assert bottom["cad_surface"]["surface_type"] == "plane"
 
 
+def test_v06_root_and_edge_fillets_are_explicit_design_surfaces():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_6")
+        run = service.instantiate(engine.engine_id, {"root_fillet_radius_mm": 10.0})
+
+    surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    root = surfaces["blade_0_root_fillet_surface"]
+    leading = surfaces["blade_0_leading_edge_fillet_surface"]
+    trailing = surfaces["blade_0_trailing_edge_fillet_surface"]
+    validity_check_names = {
+        check["name"]
+        for check in run.manifest["geometry"]["validity"]["geometry_checks"]
+    }
+    manifest_validity_check_names = {
+        check["name"]
+        for check in run.manifest["geometry_validity"]["geometry_checks"]
+    }
+
+    assert root["role"] == "blade_root_fillet"
+    assert root["radius_mm"] == 10.0
+    assert root["cad_surface"]["surface_type"] == "bspline_surface"
+    assert leading["role"] == "blade_leading_edge_fillet"
+    assert trailing["role"] == "blade_trailing_edge_fillet"
+    assert "fillet_radius_within_local_thickness_bounds" in validity_check_names
+    assert "fillet_radius_within_local_thickness_bounds" in manifest_validity_check_names
+
+
 def test_axisymmetric_nurbs_blade_edges_are_visible_construction_lines_from_closure_surfaces():
     parameters = {
         "blade_count": 7,
