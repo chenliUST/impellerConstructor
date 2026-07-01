@@ -40,9 +40,12 @@ def write_minimal_bspline_step(path: Path) -> dict[str, str]:
 
     writer = STEPControl_Writer()
     schema_key = "write.step.schema"
+    schema_value = "AP214IS"
     previous_schema = Interface_Static.CVal_s(schema_key)
     try:
-        Interface_Static.SetCVal_s(schema_key, "AP214")
+        if not Interface_Static.SetCVal_s(schema_key, schema_value):
+            raise RuntimeError(f"OCCT STEP schema setup failed for {schema_value}")
+
         transfer_status = writer.Transfer(face, STEPControl_AsIs)
         if transfer_status != IFSelect_RetDone:
             raise RuntimeError(f"OCCT STEP transfer failed with status {transfer_status}")
