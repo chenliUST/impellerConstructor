@@ -74,7 +74,7 @@ def write_trimmed_brep_step(
         "step_writer": "occt_stepcontrol_writer",
         "brep_face_count": len(faces),
         "shell_count": 0,
-        "sewing_status": "unsewn",
+        "sewing_status": "not_attempted",
         "face_regions": face_regions,
         "limitations": ["initial_faces_are_unsewn"],
     }

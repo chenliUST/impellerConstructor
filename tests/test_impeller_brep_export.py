@@ -15,6 +15,7 @@ def test_write_trimmed_brep_step_exports_bspline_face(tmp_path: Path):
     assert manifest["export_exactness"] == "surface_graph_trimmed_nurbs_step"
     assert manifest["step_writer"] == "occt_stepcontrol_writer"
     assert manifest["brep_face_count"] == 1
+    assert manifest["sewing_status"] == "not_attempted"
     assert manifest["face_regions"] == [
         {
             "brep_face_id": "face_0000",
