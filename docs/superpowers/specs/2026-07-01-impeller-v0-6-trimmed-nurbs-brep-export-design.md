@@ -233,10 +233,16 @@ constructs faces from 3D wires only, it must record that p-curve exactness is de
 
 ## 7. STEP Export Contract
 
-V0.6 should add a new export exactness label:
+V0.6 should add a target exactness label:
 
 ```text
 surface_graph_trimmed_nurbs_step
+```
+
+Current branch evidence uses the support-face subset label:
+
+```text
+surface_graph_support_face_brep_step
 ```
 
 The STEP manifest should include:
@@ -252,7 +258,8 @@ The STEP manifest should include:
   "export_manifests": {
     "step": {
       "source": "surface_graph",
-      "export_exactness": "surface_graph_trimmed_nurbs_step",
+      "export_exactness": "surface_graph_support_face_brep_step",
+      "target_exactness": "surface_graph_trimmed_nurbs_step",
       "brep_face_count": 0,
       "shell_count": 0,
       "sewing_status": "not_attempted|pass|partial|fail",
@@ -265,7 +272,11 @@ The STEP manifest should include:
           "cad_surface_type": "bspline_surface"
         }
       ],
-      "limitations": []
+      "limitations": [
+        "initial_faces_are_unsewn",
+        "trim_loops_not_consumed",
+        "cad_edge_wires_not_consumed"
+      ]
     },
     "stl": {
       "source": "surface_graph",
@@ -280,8 +291,10 @@ The STEP manifest should include:
 ```
 
 No V0.6 STEP exporter may silently fall back to mesh STEP while preserving the
-`surface_graph_trimmed_nurbs_step` label. If B-Rep export fails, return a clear error
-and keep mesh exports separately labeled.
+`surface_graph_support_face_brep_step` label. If B-Rep export fails, return a clear
+error and keep mesh exports separately labeled. The
+`surface_graph_trimmed_nurbs_step` label is target exactness until trim loops and
+`cad_edge` wires are consumed.
 
 ## 8. File Output UX Contract
 

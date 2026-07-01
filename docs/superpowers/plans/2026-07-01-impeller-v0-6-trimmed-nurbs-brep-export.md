@@ -286,7 +286,8 @@ def test_v06_bundle_loads_brep_export_contract():
     assert "surface_graph_trimmed_brep" in bundle.export_contracts
     contract = bundle.export_contracts["surface_graph_trimmed_brep"]
     assert contract["mode"] == "surface_graph_brep"
-    assert contract["step_exactness"] == "surface_graph_trimmed_nurbs_step"
+    assert contract["step_exactness"] == "surface_graph_support_face_brep_step"
+    assert contract["target_exactness"] == "surface_graph_trimmed_nurbs_step"
     assert contract["mesh_step_exactness"] == "surface_graph_mesh_step"
 
 
@@ -406,7 +407,8 @@ Create `v0_6/export_contracts/surface_graph_trimmed_brep.json`:
   "mode": "surface_graph_brep",
   "default_view": "cad_review_360",
   "source": "geometry.surface_graph",
-  "step_exactness": "surface_graph_trimmed_nurbs_step",
+  "step_exactness": "surface_graph_support_face_brep_step",
+  "target_exactness": "surface_graph_trimmed_nurbs_step",
   "stl_exactness": "surface_graph_sampled_mesh",
   "mesh_step_exactness": "surface_graph_mesh_step",
   "step_writer": "occt_stepcontrol_writer",
@@ -685,7 +687,8 @@ def test_write_trimmed_brep_step_exports_bspline_face(tmp_path: Path):
     text = step_path.read_text(encoding="utf-8", errors="ignore")
 
     assert manifest["source"] == "surface_graph"
-    assert manifest["export_exactness"] == "surface_graph_trimmed_nurbs_step"
+    assert manifest["export_exactness"] == "surface_graph_support_face_brep_step"
+    assert manifest["target_exactness"] == "surface_graph_trimmed_nurbs_step"
     assert manifest["step_writer"] == "occt_stepcontrol_writer"
     assert manifest["brep_face_count"] == 1
     assert manifest["face_regions"] == [
@@ -840,13 +843,18 @@ def write_trimmed_brep_step(
         "source": "surface_graph",
         "view": view_id,
         "solid_name": solid_name,
-        "export_exactness": "surface_graph_trimmed_nurbs_step",
+        "export_exactness": "surface_graph_support_face_brep_step",
+        "target_exactness": "surface_graph_trimmed_nurbs_step",
         "step_writer": "occt_stepcontrol_writer",
         "brep_face_count": len(face_regions),
         "shell_count": 0,
         "sewing_status": "not_attempted",
         "face_regions": face_regions,
-        "limitations": ["initial_faces_are_unsewn"],
+        "limitations": [
+            "initial_faces_are_unsewn",
+            "trim_loops_not_consumed",
+            "cad_edge_wires_not_consumed",
+        ],
     }
 
 
@@ -1192,7 +1200,8 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
 
     assert manifest["dsl_version"] == "0.6"
     assert manifest["export_strategy"]["mode"] == "surface_graph_brep"
-    assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_trimmed_nurbs_step"
+    assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_support_face_brep_step"
+    assert manifest["export_manifests"]["step"]["target_exactness"] == "surface_graph_trimmed_nurbs_step"
     assert manifest["export_manifests"]["mesh_step"]["export_exactness"] == "surface_graph_mesh_step"
     assert manifest["export_manifests"]["stl"]["export_exactness"] == "surface_graph_sampled_mesh"
 
@@ -1964,7 +1973,8 @@ def test_impeller_v06_open_and_closed_workflows_include_brep_mesh_and_fillets(tm
 
         assert manifest["dsl_version"] == "0.6"
         assert manifest["parameters"]["blade_count"] == 12
-        assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_trimmed_nurbs_step"
+        assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_support_face_brep_step"
+        assert manifest["export_manifests"]["step"]["target_exactness"] == "surface_graph_trimmed_nurbs_step"
         assert manifest["export_manifests"]["mesh_step"]["export_exactness"] == "surface_graph_mesh_step"
         assert manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
         assert "blade_0_root_fillet_surface" in surfaces
@@ -2073,8 +2083,9 @@ Supersedes: `v0_5`
 ## Changes
 
 1. Added `surface_graph_trimmed_brep` export contract.
-2. Added `surface_graph_trimmed_nurbs_step` STEP exactness label for the intended
-   trimmed-face contract target.
+2. Added `surface_graph_support_face_brep_step` current STEP exactness label and
+   `surface_graph_trimmed_nurbs_step` target exactness label for the intended
+   trimmed-face contract.
 3. Preserved STL and mesh STEP exports as separately labeled artifacts.
 4. Added CAD payloads for exportable graph surfaces.
 5. Added explicit blade root and edge fillet/blend feature controls.
@@ -2285,7 +2296,8 @@ Completion marker scan:
 Type consistency:
 
 - Backend B-Rep exporter function: `write_trimmed_brep_step`.
-- B-Rep exactness label: `surface_graph_trimmed_nurbs_step`.
+- Current B-Rep exactness label: `surface_graph_support_face_brep_step`.
+- Target B-Rep exactness label: `surface_graph_trimmed_nurbs_step`.
 - Mesh STEP exactness label: `surface_graph_mesh_step`.
 - STL exactness label: `surface_graph_sampled_mesh`.
 - Mesh manifest key: `simulation_manifests.cfd_surface_mesh`.

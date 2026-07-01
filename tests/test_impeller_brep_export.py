@@ -12,10 +12,16 @@ def test_write_trimmed_brep_step_exports_bspline_face(tmp_path: Path):
     text = step_path.read_text(encoding="utf-8", errors="ignore")
 
     assert manifest["source"] == "surface_graph"
-    assert manifest["export_exactness"] == "surface_graph_trimmed_nurbs_step"
+    assert manifest["export_exactness"] == "surface_graph_support_face_brep_step"
+    assert manifest["target_exactness"] == "surface_graph_trimmed_nurbs_step"
     assert manifest["step_writer"] == "occt_stepcontrol_writer"
     assert manifest["brep_face_count"] == 1
     assert manifest["sewing_status"] == "not_attempted"
+    assert manifest["limitations"] == [
+        "initial_faces_are_unsewn",
+        "trim_loops_not_consumed",
+        "cad_edge_wires_not_consumed",
+    ]
     assert manifest["face_regions"] == [
         {
             "brep_face_id": "face_0000",

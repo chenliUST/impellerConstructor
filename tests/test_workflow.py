@@ -263,7 +263,14 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
 
     assert manifest["dsl_version"] == "0.6"
     assert manifest["export_strategy"]["mode"] == "surface_graph_brep"
-    assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_trimmed_nurbs_step"
+    step_manifest = manifest["export_manifests"]["step"]
+    assert step_manifest["export_exactness"] == "surface_graph_support_face_brep_step"
+    assert step_manifest["target_exactness"] == "surface_graph_trimmed_nurbs_step"
+    assert step_manifest["limitations"] == [
+        "initial_faces_are_unsewn",
+        "trim_loops_not_consumed",
+        "cad_edge_wires_not_consumed",
+    ]
     assert manifest["export_manifests"]["mesh_step"]["export_exactness"] == "surface_graph_mesh_step"
     assert manifest["export_manifests"]["stl"]["export_exactness"] == "surface_graph_sampled_mesh"
     assert manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
@@ -299,7 +306,14 @@ def test_impeller_v06_open_and_closed_workflows_include_brep_mesh_and_fillets(tm
 
         assert manifest["dsl_version"] == "0.6"
         assert manifest["parameters"]["blade_count"] == 12
-        assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_trimmed_nurbs_step"
+        step_manifest = manifest["export_manifests"]["step"]
+        assert step_manifest["export_exactness"] == "surface_graph_support_face_brep_step"
+        assert step_manifest["target_exactness"] == "surface_graph_trimmed_nurbs_step"
+        assert {
+            "initial_faces_are_unsewn",
+            "trim_loops_not_consumed",
+            "cad_edge_wires_not_consumed",
+        } <= set(step_manifest["limitations"])
         assert manifest["export_manifests"]["mesh_step"]["export_exactness"] == "surface_graph_mesh_step"
         assert manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
         assert "blade_0_root_fillet_surface" in surfaces

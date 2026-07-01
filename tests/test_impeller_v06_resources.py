@@ -9,8 +9,14 @@ def test_v06_bundle_loads_brep_export_contract():
     assert "surface_graph_trimmed_brep" in bundle.export_contracts
     contract = bundle.export_contracts["surface_graph_trimmed_brep"]
     assert contract["mode"] == "surface_graph_brep"
-    assert contract["step_exactness"] == "surface_graph_trimmed_nurbs_step"
+    assert contract["step_exactness"] == "surface_graph_support_face_brep_step"
+    assert contract["target_exactness"] == "surface_graph_trimmed_nurbs_step"
     assert contract["mesh_step_exactness"] == "surface_graph_mesh_step"
+    assert contract["current_limitations"] == [
+        "initial_faces_are_unsewn",
+        "trim_loops_not_consumed",
+        "cad_edge_wires_not_consumed",
+    ]
 
 
 def test_v06_open_and_closed_runtime_presets_compile():

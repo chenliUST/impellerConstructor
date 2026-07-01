@@ -97,7 +97,8 @@ Use these labels consistently in docs and manifests:
 - `surface_graph_faithful_export`: v0.5 export mode where files are derived from selected `surface_graph` surfaces
 - `surface_graph_sampled_mesh`: v0.5 STL exactness label for sampled graph triangulation
 - `surface_graph_mesh_step`: v0.5 STEP exactness label for graph-derived tessellated mesh STEP
-- `surface_graph_trimmed_nurbs_step`: v0.6 contract/exactness label; the current writer emits graph-derived unsewn NURBS/analytic B-Rep support faces and does not yet consume trim loops or `cad_edge` wires
+- `surface_graph_support_face_brep_step`: v0.6 current exactness label for graph-derived unsewn NURBS/analytic B-Rep support faces
+- `surface_graph_trimmed_nurbs_step`: v0.6 target exactness label; the current writer does not yet consume trim loops or `cad_edge` wires
 - `patch_contract_ready`: semantic CFD patch groups and instances are generated
 - `solver_adapter_missing`: no mesher or solver has been invoked
 - `schema_only`: resource shape exists but executable workflow does not

@@ -7,8 +7,9 @@ Supersedes: `v0_5`
 ## Changes
 
 1. Added `surface_graph_trimmed_brep` export contract.
-2. Added `surface_graph_trimmed_nurbs_step` STEP exactness label for the V0.6
-   trimmed-face contract target.
+2. Added `surface_graph_support_face_brep_step` current STEP exactness label and
+   `surface_graph_trimmed_nurbs_step` target exactness label for the V0.6 trimmed-face
+   contract target.
 3. Preserved STL and mesh STEP exports as separately labeled artifacts.
 4. Added CAD payloads for exportable graph surfaces.
 5. Added explicit blade root and edge fillet/blend feature controls.

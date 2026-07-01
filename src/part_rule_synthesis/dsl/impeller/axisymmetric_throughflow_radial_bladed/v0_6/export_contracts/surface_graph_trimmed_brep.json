@@ -3,11 +3,17 @@
   "mode": "surface_graph_brep",
   "default_view": "cad_review_360",
   "source": "geometry.surface_graph",
-  "step_exactness": "surface_graph_trimmed_nurbs_step",
+  "step_exactness": "surface_graph_support_face_brep_step",
+  "target_exactness": "surface_graph_trimmed_nurbs_step",
   "stl_exactness": "surface_graph_sampled_mesh",
   "mesh_step_exactness": "surface_graph_mesh_step",
   "step_writer": "occt_stepcontrol_writer",
   "default_output_directory": "Model Output",
+  "current_limitations": [
+    "initial_faces_are_unsewn",
+    "trim_loops_not_consumed",
+    "cad_edge_wires_not_consumed"
+  ],
   "required_face_region_fields": [
     "brep_face_id",
     "surface_graph_id",

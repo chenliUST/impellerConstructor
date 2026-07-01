@@ -32,14 +32,15 @@ trimmed-face contract name, but the current writer does not yet consume trim loo
 ## Exactness Labels
 
 ```text
+surface_graph_support_face_brep_step
 surface_graph_trimmed_nurbs_step
 surface_graph_sampled_mesh
 surface_graph_mesh_step
 ```
 
-`surface_graph_trimmed_nurbs_step` is the V0.6 contract/exactness label. Current
-implementation evidence is support-face B-Rep geometry only; true trim-loop/wire
-export remains unwired.
+`surface_graph_support_face_brep_step` is the current V0.6 STEP exactness label.
+`surface_graph_trimmed_nurbs_step` is retained as the target exactness label; true
+trim-loop/wire export remains unwired.
 
 ## Local Evidence
 

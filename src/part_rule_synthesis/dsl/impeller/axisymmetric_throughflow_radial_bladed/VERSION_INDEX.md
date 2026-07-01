@@ -111,8 +111,9 @@ src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_6
 ```
 
 V0.6 generated STEP files are graph-derived unsewn NURBS/analytic B-Rep support faces
-for the reference presets. The `surface_graph_trimmed_nurbs_step` label records the
-contract target, but the current writer does not yet consume `trim_loops` or `cad_edge`
-wires for true trimmed-face export. The files are research B-Rep evidence, not
-certified manufacturing geometry, not solver-ready CFD volume meshes, and not
+for the reference presets. Current STEP `export_exactness` is
+`surface_graph_support_face_brep_step`; `surface_graph_trimmed_nurbs_step` is retained
+only as the target exactness. The current writer does not yet consume `trim_loops` or
+`cad_edge` wires for true trimmed-face export. The files are research B-Rep evidence,
+not certified manufacturing geometry, not solver-ready CFD volume meshes, and not
 universal CAD healing across all parameters.

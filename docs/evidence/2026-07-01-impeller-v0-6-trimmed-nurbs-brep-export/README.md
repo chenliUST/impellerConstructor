@@ -117,8 +117,9 @@ Implemented pieces recorded by the branch:
 2. OCP/OCCT STEP writer for graph-derived unsewn B-Rep support faces.
 3. `cad_surface` payloads on exportable graph surfaces.
 4. Analytic plane and cylinder support alongside NURBS surface payloads.
-5. STEP exactness label `surface_graph_trimmed_nurbs_step`, with current implementation
-   limited to support-face B-Rep geometry without consumed trim loops or wires.
+5. STEP exactness label `surface_graph_support_face_brep_step`, with
+   `surface_graph_trimmed_nurbs_step` retained as the target exactness for future
+   true trim-loop/wire export.
 6. STL and mesh STEP retained as separately labeled sampled/mesh artifacts.
 7. Default output copies under the project `Model Output/` folder.
 8. CFD surface mesh manifest with triangle-count evidence for mesh inspection.

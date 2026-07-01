@@ -8,6 +8,15 @@ from part_rule_synthesis.impeller_cad_payload import knot_values_and_multiplicit
 from part_rule_synthesis.occt_compat import int_array, real_array
 
 
+SUPPORT_FACE_STEP_EXACTNESS = "surface_graph_support_face_brep_step"
+TARGET_TRIMMED_STEP_EXACTNESS = "surface_graph_trimmed_nurbs_step"
+SUPPORT_FACE_LIMITATIONS = [
+    "initial_faces_are_unsewn",
+    "trim_loops_not_consumed",
+    "cad_edge_wires_not_consumed",
+]
+
+
 def write_trimmed_brep_step(
     step_path: Path,
     solid_name: str,
@@ -71,13 +80,14 @@ def write_trimmed_brep_step(
         "source": "surface_graph",
         "view": view_id,
         "solid_name": solid_name,
-        "export_exactness": "surface_graph_trimmed_nurbs_step",
+        "export_exactness": SUPPORT_FACE_STEP_EXACTNESS,
+        "target_exactness": TARGET_TRIMMED_STEP_EXACTNESS,
         "step_writer": "occt_stepcontrol_writer",
         "brep_face_count": len(faces),
         "shell_count": 0,
         "sewing_status": "not_attempted",
         "face_regions": face_regions,
-        "limitations": ["initial_faces_are_unsewn"],
+        "limitations": SUPPORT_FACE_LIMITATIONS,
     }
 
 
