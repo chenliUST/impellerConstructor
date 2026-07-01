@@ -39,11 +39,19 @@ def write_minimal_bspline_step(path: Path) -> dict[str, str]:
     face = BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
 
     writer = STEPControl_Writer()
-    Interface_Static.SetCVal_s("write.step.schema", "AP214")
-    writer.Transfer(face, STEPControl_AsIs)
-    status = writer.Write(str(path))
-    if status != IFSelect_RetDone:
-        raise RuntimeError(f"OCCT STEP write failed with status {status}")
+    schema_key = "write.step.schema"
+    previous_schema = Interface_Static.CVal_s(schema_key)
+    try:
+        Interface_Static.SetCVal_s(schema_key, "AP214")
+        transfer_status = writer.Transfer(face, STEPControl_AsIs)
+        if transfer_status != IFSelect_RetDone:
+            raise RuntimeError(f"OCCT STEP transfer failed with status {transfer_status}")
+
+        write_status = writer.Write(str(path))
+        if write_status != IFSelect_RetDone:
+            raise RuntimeError(f"OCCT STEP write failed with status {write_status}")
+    finally:
+        Interface_Static.SetCVal_s(schema_key, previous_schema)
     return {"writer": "occt_stepcontrol_writer", "shape": "single_bspline_face", "status": "PASS"}
 
 
