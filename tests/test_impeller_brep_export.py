@@ -40,6 +40,57 @@ def test_write_trimmed_brep_step_rejects_missing_cad_surface(tmp_path: Path):
     assert not step_path.exists()
 
 
+def test_brep_step_rejects_mesh_step_label(tmp_path: Path):
+    step_path = tmp_path / "bad.step"
+    graph = _single_bspline_surface_graph()
+    graph["surfaces"][0]["cad_surface"]["surface_type"] = "triangulated_mesh"
+
+    with pytest.raises(ValueError, match="unsupported cad_surface type: triangulated_mesh"):
+        write_trimmed_brep_step(step_path, "impeller", graph)
+
+
+def test_brep_step_exports_plane_and_cylinder_faces(tmp_path: Path):
+    step_path = tmp_path / "analytic.step"
+    graph = {
+        "surfaces": [
+            {
+                "id": "bottom_face",
+                "feature_id": "hub",
+                "role": "inner_hub_bottom",
+                "cad_surface": {
+                    "surface_type": "plane",
+                    "origin": [0, 0, 0],
+                    "normal": [0, 0, 1],
+                    "u_dir": [1, 0, 0],
+                    "v_dir": [0, 1, 0],
+                    "trim_loops": [{"orientation": "outer", "edges": []}],
+                },
+            },
+            {
+                "id": "bore",
+                "feature_id": "hub.bore",
+                "role": "mounting_bore",
+                "cad_surface": {
+                    "surface_type": "cylinder",
+                    "radius_mm": 40,
+                    "z_min_mm": 0,
+                    "z_max_mm": 120,
+                    "axis": "z",
+                    "trim_loops": [{"orientation": "outer", "edges": []}],
+                },
+            },
+        ],
+        "edges": [],
+    }
+
+    manifest = write_trimmed_brep_step(step_path, "impeller", graph)
+    text = step_path.read_text(encoding="utf-8", errors="ignore")
+
+    assert manifest["brep_face_count"] == 2
+    assert "PLANE" in text
+    assert "CYLINDRICAL_SURFACE" in text
+
+
 def _single_bspline_surface_graph():
     control_points = [
         [[0, 0, 0], [0, 1, 0], [0, 2, 0], [0, 3, 0]],

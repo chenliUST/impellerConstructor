@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ def write_trimmed_brep_step(
         if cad_surface is None:
             raise ValueError(f"{surface_id} missing cad_surface")
 
-        face = _make_bspline_face(cad_surface)
+        face = _face_from_cad_surface(cad_surface)
         faces.append((face, surface))
         face_regions.append(
             {
@@ -80,15 +81,37 @@ def write_trimmed_brep_step(
     }
 
 
-def _make_bspline_face(cad_surface: dict[str, Any]):
+def _face_from_cad_surface(cad_surface: dict[str, Any]):
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.Geom import Geom_CylindricalSurface, Geom_Plane
+    from OCP.gp import gp_Ax3, gp_Dir, gp_Pnt
 
     surface_type = cad_surface.get("surface_type")
-    if surface_type != "bspline_surface":
-        raise ValueError(f"unsupported cad_surface surface_type {surface_type!r}")
+    if surface_type == "bspline_surface":
+        surface = _make_bspline_surface(cad_surface)
+        return BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
 
-    surface = _make_bspline_surface(cad_surface)
-    return BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
+    if surface_type == "plane":
+        origin = cad_surface["origin"]
+        normal = cad_surface["normal"]
+        u_dir = cad_surface.get("u_dir", [1.0, 0.0, 0.0])
+        axis = gp_Ax3(
+            gp_Pnt(float(origin[0]), float(origin[1]), float(origin[2])),
+            gp_Dir(float(normal[0]), float(normal[1]), float(normal[2])),
+            gp_Dir(float(u_dir[0]), float(u_dir[1]), float(u_dir[2])),
+        )
+        plane = Geom_Plane(axis)
+        return BRepBuilderAPI_MakeFace(plane, -10000.0, 10000.0, -10000.0, 10000.0, 1.0e-6).Face()
+
+    if surface_type == "cylinder":
+        radius = float(cad_surface["radius_mm"])
+        z_min = float(cad_surface["z_min_mm"])
+        z_max = float(cad_surface["z_max_mm"])
+        axis = gp_Ax3(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0), gp_Dir(1.0, 0.0, 0.0))
+        cylinder = Geom_CylindricalSurface(axis, radius)
+        return BRepBuilderAPI_MakeFace(cylinder, 0.0, 2.0 * math.pi, z_min, z_max, 1.0e-6).Face()
+
+    raise ValueError(f"unsupported cad_surface type: {surface_type}")
 
 
 def _make_bspline_surface(cad_surface: dict[str, Any]):
