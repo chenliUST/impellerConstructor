@@ -105,7 +105,7 @@ Use the repository-level verification helper from the repository root:
 
 Expected current results:
 
-- Backend tests: `139 passed`
+- Backend tests: `140 passed`
 - Frontend tests: `50 passed`
 - Frontend build check: passed
 
