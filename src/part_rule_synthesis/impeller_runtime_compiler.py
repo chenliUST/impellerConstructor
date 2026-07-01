@@ -6,7 +6,7 @@ from part_rule_synthesis.impeller_dsl_resources import ImpellerDslBundle, load_i
 from part_rule_synthesis.impeller_shape_control import normalize_shape_control_space
 
 
-IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4", "v0_5")
+IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4", "v0_5", "v0_6")
 
 IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
     "blade_count": {"min": 2, "max": 64},
@@ -26,6 +26,9 @@ IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
     "outlet_blade_angle_deg": {"min": -89.0, "max": 89.0},
     "blade_thickness_mm": {"min": 0.01, "max": 1000.0},
     "root_fillet_radius_mm": {"min": 0.0, "max": 1000.0},
+    "leading_edge_radius_mm": {"min": 0.0, "max": 200.0},
+    "trailing_edge_radius_mm": {"min": 0.0, "max": 200.0},
+    "tip_edge_radius_mm": {"min": 0.0, "max": 200.0},
     "hub_wall_thickness_mm": {"min": 0.001, "max": 120.0},
     "hub_bottom_thickness_mm": {"min": 0.001, "max": 160.0},
     "hub_top_cap_thickness_mm": {"min": 0.001, "max": 80.0},
@@ -210,7 +213,7 @@ def _selected_rules(
     constructor: dict[str, Any],
     simulation_views: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
-    if bundle.schema["dsl_version"] in {"0.4", "0.5"}:
+    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6"}:
         view_ids = simulation_views or constructor.get("simulation_views", {})
         export_contract_ids = constructor.get("export_contracts", {})
         return [

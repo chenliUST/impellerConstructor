@@ -16,6 +16,7 @@ The versions are not replacements for one another. They are research checkpoints
 | `v0_3` | `radial_open_reference_v0_3`, `radial_closed_reference_v0_3` | Solid hub/hood thickness, chamfers, curve overrides, staged geometry workflow. |
 | `v0_4` | `radial_open_reference_v0_4`, `radial_closed_reference_v0_4` | Design-space campaign signature, variable NURBS topology, surface/feature graph, CFD full-360 manifest. |
 | `v0_5` | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful export contract, STL/STEP region provenance, AP242 tessellated STEP, 12-blade default baseline, and honest STEP fidelity labels. |
+| `v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | Additive trimmed NURBS B-Rep STEP direction, mesh inspection contract, explicit fillet/blend controls, and 12-blade default baseline. |
 
 ## Folder Contract
 
@@ -35,7 +36,7 @@ Additional subfolders may be added when a version needs them. v0.4 adds:
 simulation_views/
 ```
 
-The v0.5 export contract adds:
+The v0.5 and v0.6 export contracts add:
 
 ```text
 export_contracts/
@@ -62,7 +63,7 @@ Legacy v0.4 studies remain loadable:
 engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
 ```
 
-v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived export writer, and lineage tests.
+v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived export writer, and lineage tests. v0.6 is an additive resource line for trimmed NURBS B-Rep STEP export direction with mesh inspection and explicit fillet/blend controls.
 
 ## Historical Git Tags
 
@@ -85,6 +86,8 @@ The script creates temporary detached git worktrees under `.worktrees/version-li
 ## Compatibility Rule
 
 Keep old version folders reproducible. When new engineer feedback changes the meaning of a feature, add a new version or explicit patch resource instead of silently changing old semantics.
+
+V0.2-V0.5 remain historical baselines and must stay loadable with their original semantics.
 
 ## v0.5 Evidence
 

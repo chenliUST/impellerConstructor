@@ -41,7 +41,7 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
 
     constructors = _load_json_directory_by_id(dsl_root / "constructors", "constructor_id")
     presets = _load_json_directory_by_id(dsl_root / "presets", "preset_id")
-    aliases = _read_json(dsl_root / "aliases.json")["legacy_preset_aliases"]
+    aliases = _load_aliases(dsl_root / "aliases.json")
     simulation_views, simulation_view_refs = (
         _load_simulation_views(dsl_root / "simulation_views")
         if (dsl_root / "simulation_views").exists()
@@ -101,6 +101,11 @@ def _read_json_with_fallback(path: Path, fallback_path: Path) -> dict[str, Any]:
     return _read_json(ONTOLOGY_BASE / DEFAULT_DSL_VERSION / path.name)
 
 
+def _load_aliases(path: Path) -> dict[str, str]:
+    aliases = _read_json(path)
+    return aliases.get("legacy_preset_aliases", aliases)
+
+
 def _fallback_version_root(base: Path, version: str) -> Path:
     available = sorted((path for path in base.glob("v*") if path.is_dir()), key=lambda path: _version_key(path.name))
     previous = [
@@ -154,7 +159,7 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
         raise ValueError("impeller DSL schema constructor family mismatch")
     if bundle.schema["dsl_version"] in {"0.2", "0.3"} and bundle.shape_control_schema["default_stage"] != 1:
         raise ValueError("impeller v0.2/v0.3 shape control must default to stage 1")
-    if bundle.schema["dsl_version"] in {"0.4", "0.5"} and "design_space" not in bundle.shape_controls:
+    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6"} and "design_space" not in bundle.shape_controls:
         raise ValueError("impeller v0.4+ shape controls must include design_space")
     if "hub_meridional_profile" not in bundle.shape_controls["target_entities"]:
         raise ValueError("default shape controls must include hub_meridional_profile")
