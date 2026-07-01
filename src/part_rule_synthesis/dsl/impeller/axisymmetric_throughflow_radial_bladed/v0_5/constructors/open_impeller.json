@@ -44,6 +44,24 @@
     "inlet_flow_path_boundary": "leading_edge_boundary",
     "outlet_flow_path_boundary": "trailing_edge_boundary"
   },
+  "profile_defaults": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [[150, 400], [170, 250], [220, 150], [330, 50], [480, 10], [580, 0]],
+      "weights": [1, 1, 1, 1, 1, 1],
+      "knots": [0, 0, 0, 0, 0.3333333333333333, 0.6666666666666666, 1, 1, 1, 1]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [[230, 401], [250, 270], [310, 170], [400, 90], [490, 50], [581, 30]],
+      "weights": [1, 1, 1, 1, 1, 1],
+      "knots": [0, 0, 0, 0, 0.3333333333333333, 0.6666666666666666, 1, 1, 1, 1]
+    }
+  },
   "support_surfaces": {
     "hub_support_surface": {
       "kind": "revolved_nurbs_surface",

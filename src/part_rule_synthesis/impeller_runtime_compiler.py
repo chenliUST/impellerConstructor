@@ -69,6 +69,7 @@ def compile_impeller_runtime_preset(
         "display_policy": constructor.get("display_policy", {}),
         "material_domain": constructor.get("material_domain", {}),
         "solid_features": constructor.get("solid_features", {}),
+        "profile_defaults": constructor.get("profile_defaults", {}),
         "feature_graph": constructor.get("feature_graph", {}),
         "simulation_views": simulation_views,
         "export_contract": export_contract,

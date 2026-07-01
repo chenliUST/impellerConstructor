@@ -163,7 +163,7 @@ The implemented v0.5 path adds:
 - `radial_open_reference_v0_5` and `radial_closed_reference_v0_5` presets;
 - `export_contracts/surface_graph_faithful.json`;
 - binary STL generated from selected `surface_graph` `uv_grid` samples;
-- STEP generated as a graph-derived faceted surface shell;
+- STEP generated as a graph-derived AP242 tessellated triangular face set;
 - `export_manifests.stl` and `export_manifests.step` metadata with exactness,
   counts, included surface ids, skipped triangle counts, and region provenance.
 
@@ -175,3 +175,43 @@ Verification on 2026-07-01:
 - `verify_repository.ps1 -Mode fast`: backend focused tests `42 passed`, frontend tests `44 passed`, frontend build passed.
 - `verify_repository.ps1 -Mode full`: backend tests `115 passed`, frontend tests `44 passed`, frontend build passed.
 - `verify_version_lineage.ps1`: current v0.2-v0.5 resource folders passed; historical v0.2-v0.4 tags passed.
+
+## 9. V0.5 Patch: STEP Size and Default Geometry
+
+Follow-up review found that the first v0.5 STEP was still too large for routine
+third-party inspection. The cause was not `surface_graph` size alone: the writer
+duplicated three `CARTESIAN_POINT` and three `VERTEX_POINT` entities for every
+triangle and wrapped them in a hand-authored open-shell representation.
+
+The patch changes STEP export to:
+
+- deduplicate sampled vertices at 1e-6 mm precision;
+- write `CARTESIAN_POINT_LIST_3D` plus `TRIANGULATED_FACE_SET`;
+- record `step_representation = ap242_triangulated_face_set`;
+- record `vertex_count` in `export_manifests.step`.
+
+Temporary local evidence after the patch:
+
+```json
+{
+  "open_step_size_bytes": 1659904,
+  "closed_step_size_bytes": 1870296,
+  "open_triangle_count": 45184,
+  "closed_triangle_count": 50560,
+  "open_vertex_count": 21396,
+  "closed_vertex_count": 24108,
+  "local_cadquery_occt_open_step_import": "PASS"
+}
+```
+
+The same patch also updates V0.5 defaults:
+
+- `blade_count = 12` for open and closed V0.5 presets;
+- leading/trailing edge lean defaults to `0`;
+- leading/trailing edge sweep defaults to `0`;
+- default Hub profile control points: `[[150, 400], [170, 250], [220, 150], [330, 50], [480, 10], [580, 0]]`;
+- default Tip/Shroud profile control points: `[[230, 401], [250, 270], [310, 170], [400, 90], [490, 50], [581, 30]]`.
+
+Ontology note: these are still sampled surface-graph exports. The STEP is now
+smaller and locally OCCT-readable, but it remains a tessellated STEP artifact rather
+than an exact analytic B-Rep with CAD-native chamfer operations.

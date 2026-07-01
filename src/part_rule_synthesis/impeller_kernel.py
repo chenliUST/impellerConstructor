@@ -22,6 +22,7 @@ def build_impeller_geometry(
     display_policy: dict[str, Any] | None = None,
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
+    profile_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build deterministic impeller geometry metadata from one sampled meridional kernel."""
     if "blade_wrap_deg" in parameters:
@@ -34,6 +35,7 @@ def build_impeller_geometry(
             display_policy=display_policy,
             material_domain=material_domain,
             solid_features=solid_features,
+            profile_defaults=profile_defaults,
         )
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
@@ -118,6 +120,7 @@ def blade_loft_wires(
     display_policy: dict[str, Any] | None = None,
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
+    profile_defaults: dict[str, Any] | None = None,
 ) -> list[list[list[float]]]:
     geometry = build_impeller_geometry(
         parameters,
@@ -128,6 +131,7 @@ def blade_loft_wires(
         display_policy=display_policy,
         material_domain=material_domain,
         solid_features=solid_features,
+        profile_defaults=profile_defaults,
     )
     blades = [
         blade
@@ -147,6 +151,7 @@ def hub_loft_sections(
     display_policy: dict[str, Any] | None = None,
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
+    profile_defaults: dict[str, Any] | None = None,
 ) -> list[tuple[float, float]]:
     geometry = build_impeller_geometry(
         parameters,
@@ -157,6 +162,7 @@ def hub_loft_sections(
         display_policy=display_policy,
         material_domain=material_domain,
         solid_features=solid_features,
+        profile_defaults=profile_defaults,
     )
     hub = geometry["kernel"]["meridional_curves"]["hub"]
     sections = [(point["z_mm"], point["r_mm"]) for point in hub]
@@ -174,6 +180,7 @@ def shroud_z_levels(
     display_policy: dict[str, Any] | None = None,
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
+    profile_defaults: dict[str, Any] | None = None,
 ) -> tuple[float, float]:
     geometry = build_impeller_geometry(
         parameters,
@@ -184,6 +191,7 @@ def shroud_z_levels(
         display_policy=display_policy,
         material_domain=material_domain,
         solid_features=solid_features,
+        profile_defaults=profile_defaults,
     )
     blades = geometry["sampled_blades"]
     z_values = [

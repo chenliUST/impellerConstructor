@@ -103,6 +103,16 @@ describe("impeller frontend model", () => {
     assert.equal(closed.facets.shroud_topology, "closed");
     assert.equal(open.facets.passage_topology, "throughflow_bladed_channel");
     assert.equal(closed.facets.passage_topology, "throughflow_bladed_channel");
+    assert.equal(open.parameters.blade_count, 12);
+    assert.equal(closed.parameters.blade_count, 12);
+    assert.equal(open.parameters.leading_edge_lean_deg, 0);
+    assert.equal(open.parameters.trailing_edge_lean_deg, 0);
+    assert.equal(open.parameters.leading_edge_sweep_mm, 0);
+    assert.equal(open.parameters.trailing_edge_sweep_mm, 0);
+    assert.equal(closed.parameters.leading_edge_lean_deg, 0);
+    assert.equal(closed.parameters.trailing_edge_lean_deg, 0);
+    assert.equal(closed.parameters.leading_edge_sweep_mm, 0);
+    assert.equal(closed.parameters.trailing_edge_sweep_mm, 0);
     assert.ok(open.parameters.blade_wrap_deg > 0);
     assert.ok(closed.parameters.blade_wrap_deg > 0);
     assert.ok(open.parameters.hub_wall_thickness_mm > 0);

@@ -21,6 +21,7 @@
   ],
   "notes": [
     "STL triangles are sampled directly from selected surface_graph uv_grid cells.",
-    "STEP is a graph-derived triangular face compound, not an exact analytic CAD B-Rep."
+    "STEP is a graph-derived AP242 tessellated triangular face set with deduplicated sampled vertices.",
+    "STEP is not an exact analytic CAD B-Rep and does not contain CAD-native chamfer or fillet operations."
   ]
 }

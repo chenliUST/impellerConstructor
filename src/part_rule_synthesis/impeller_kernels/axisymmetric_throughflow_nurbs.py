@@ -31,11 +31,12 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     display_policy: dict[str, Any] | None = None,
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
+    profile_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
     stage = _normalize_geometry_stage(geometry_stage)
-    hub_profile, tip_profile = _profile_definitions(params, resolved_facets, profile_overrides)
+    hub_profile, tip_profile = _profile_definitions(params, resolved_facets, profile_overrides, profile_defaults)
     curve_controls = _validated_curve_overrides(curve_overrides, params, resolved_facets)
     hub_curve = _sample_profile_curve(hub_profile, SURFACE_U_COUNT)
     tip_curve = _sample_profile_curve(tip_profile, SURFACE_U_COUNT)
@@ -83,7 +84,7 @@ def build_axisymmetric_throughflow_nurbs_geometry(
                 "tip_or_shroud": tip_profile,
             },
             "profile_controls": {
-                "source": "user_override" if profile_overrides else "default_rule",
+                "source": "user_override" if profile_overrides else ("dsl_default" if profile_defaults else "default_rule"),
                 "editable_entities": ["hub_profile", "tip_or_shroud_profile"],
             },
             "meridional_curves": {
@@ -262,8 +263,22 @@ def _profile_definitions(
     params: dict[str, float],
     facets: dict[str, str],
     profile_overrides: dict[str, Any] | None = None,
+    profile_defaults: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     default_hub, default_tip = _default_profile_definitions(params, facets)
+    defaults = profile_defaults or {}
+    default_hub = _validated_profile_override(
+        "hub_profile",
+        defaults.get("hub_profile"),
+        default_hub,
+        source="dsl_default",
+    )
+    default_tip = _validated_profile_override(
+        "tip_or_shroud_profile",
+        defaults.get("tip_or_shroud_profile"),
+        default_tip,
+        source="dsl_default",
+    )
     overrides = profile_overrides or {}
     hub = _validated_profile_override("hub_profile", overrides.get("hub_profile"), default_hub)
     tip = _validated_profile_override("tip_or_shroud_profile", overrides.get("tip_or_shroud_profile"), default_tip)
@@ -312,6 +327,7 @@ def _validated_profile_override(
     name: str,
     override: dict[str, Any] | None,
     fallback: dict[str, Any],
+    source: str = "user_override",
 ) -> dict[str, Any]:
     if override is None:
         return fallback
@@ -382,7 +398,7 @@ def _validated_profile_override(
         "weights": [_round(value) for value in weights],
         "knots": knots,
         "coordinate_system": "rz_meridional_mm",
-        "source": "user_override",
+        "source": source,
     }
 
 

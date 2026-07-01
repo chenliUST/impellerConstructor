@@ -30,7 +30,7 @@ def write_surface_graph_exports(
 
     triangles = triangulation["triangles"]
     _write_binary_stl(stl_path, solid_name, triangles)
-    _write_step_faces(step_path, triangles)
+    step_metadata = _write_step_faces(step_path, triangles)
 
     common = {
         "source": "surface_graph",
@@ -51,6 +51,7 @@ def write_surface_graph_exports(
         "step": {
             **common,
             "export_exactness": "surface_graph_mesh_step",
+            **step_metadata,
             "face_count": triangulation["triangle_count"],
             "face_regions": triangulation["triangle_regions"],
         },
@@ -179,13 +180,14 @@ def _write_binary_stl(path: Path, solid_name: str, triangles: list[dict[str, Any
             handle.write(struct.pack("<12fH", *values, 0))
 
 
-def _write_step_faces(path: Path, triangles: list[dict[str, Any]]) -> None:
+def _write_step_faces(path: Path, triangles: list[dict[str, Any]]) -> dict[str, Any]:
+    vertices, faces = _deduplicated_indexed_faces(triangles)
     lines = [
         "ISO-10303-21;",
         "HEADER;",
-        "FILE_DESCRIPTION(('surface_graph_mesh_step; graph-derived faceted shell'),'2;1');",
+        "FILE_DESCRIPTION(('surface_graph_mesh_step; graph-derived tessellated mesh'),'2;1');",
         "FILE_NAME('surface_graph_mesh_step','2026-07-01T00:00:00',('part_rule_synthesis'),('part_rule_synthesis'),'part_rule_synthesis','surface_graph_faithful_export','');",
-        "FILE_SCHEMA(('CONFIG_CONTROL_DESIGN'));",
+        "FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING'));",
         "ENDSEC;",
         "DATA;",
     ]
@@ -219,29 +221,59 @@ def _write_step_faces(path: Path, triangles: list[dict[str, Any]]) -> None:
         "REPRESENTATION_CONTEXT('','3D') )"
     )
 
-    face_ids = []
-    for triangle in triangles:
-        vertex_ids = []
-        for point in triangle["points"]:
-            cartesian_point = add(
-                "CARTESIAN_POINT('',("
-                + ",".join(_step_float(coordinate) for coordinate in point)
-                + "))"
-            )
-            vertex_ids.append(add(f"VERTEX_POINT('',#{cartesian_point})"))
-        loop = add("POLY_LOOP('',(" + ",".join(f"#{vertex_id}" for vertex_id in vertex_ids) + "))")
-        bound = add(f"FACE_OUTER_BOUND('',#{loop},.T.)")
-        face_ids.append(add(f"FACE('',(#{bound}))"))
+    point_list = next_id
+    next_id += 1
+    lines.append(f"#{point_list} = CARTESIAN_POINT_LIST_3D('',(")
+    lines.extend(_step_tuple_lines(vertices))
+    lines.append("));")
 
-    shell = add("OPEN_SHELL('',(" + ",".join(f"#{face_id}" for face_id in face_ids) + "))")
-    surface_model = add(f"SHELL_BASED_SURFACE_MODEL('surface_graph_mesh_step',(#{shell}))")
+    face_set = next_id
+    next_id += 1
+    lines.append(f"#{face_set} = TRIANGULATED_FACE_SET('surface_graph_mesh_step',#{point_list},$,.F.,(")
+    lines.extend(_step_tuple_lines(faces))
+    lines.append("),$);")
+
     representation = add(
-        f"MANIFOLD_SURFACE_SHAPE_REPRESENTATION('surface_graph_mesh_step',(#{surface_model}),#{representation_context})"
+        f"TESSELLATED_SHAPE_REPRESENTATION('surface_graph_mesh_step',(#{face_set}),#{representation_context})"
     )
     add(f"SHAPE_DEFINITION_REPRESENTATION(#{product_shape},#{representation})")
 
     lines.extend(["ENDSEC;", "END-ISO-10303-21;", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
+    return {
+        "step_representation": "ap242_triangulated_face_set",
+        "vertex_count": len(vertices),
+    }
+
+
+def _deduplicated_indexed_faces(
+    triangles: list[dict[str, Any]],
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
+    vertices: list[tuple[float, float, float]] = []
+    vertex_index: dict[tuple[float, float, float], int] = {}
+    faces: list[tuple[int, int, int]] = []
+    for triangle in triangles:
+        face: list[int] = []
+        for point in triangle["points"]:
+            key = tuple(round(float(coordinate), 6) for coordinate in point)
+            if key not in vertex_index:
+                vertex_index[key] = len(vertices) + 1
+                vertices.append(key)
+            face.append(vertex_index[key])
+        faces.append((face[0], face[1], face[2]))
+    return vertices, faces
+
+
+def _step_tuple_lines(items: list[tuple[Any, ...]]) -> list[str]:
+    lines = []
+    for index, item in enumerate(items):
+        suffix = "," if index < len(items) - 1 else ""
+        if all(isinstance(value, int) for value in item):
+            values = ",".join(str(value) for value in item)
+        else:
+            values = ",".join(_step_float(value) for value in item)
+        lines.append(f"({values}){suffix}")
+    return lines
 
 
 def _step_float(value: Any) -> str:

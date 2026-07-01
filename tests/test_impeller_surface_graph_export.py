@@ -68,7 +68,9 @@ def test_write_surface_graph_exports_writes_binary_stl_step_and_manifests(tmp_pa
     assert stl_triangle_count == 2
     assert len(stl_bytes) == 84 + stl_triangle_count * 50
     assert "ISO-10303-21" in step_text
-    assert "CARTESIAN_POINT" in step_text
+    assert "CARTESIAN_POINT_LIST_3D" in step_text
+    assert "TRIANGULATED_FACE_SET" in step_text
+    assert "VERTEX_POINT" not in step_text
     assert "cadquery proxy" not in step_text.lower()
     assert manifests["stl"]["source"] == "surface_graph"
     assert manifests["stl"]["view"] == "cad_review_360"
@@ -77,6 +79,8 @@ def test_write_surface_graph_exports_writes_binary_stl_step_and_manifests(tmp_pa
     assert manifests["stl"]["triangle_count"] == 2
     assert manifests["step"]["source"] == "surface_graph"
     assert manifests["step"]["export_exactness"] == "surface_graph_mesh_step"
+    assert manifests["step"]["step_representation"] == "ap242_triangulated_face_set"
+    assert manifests["step"]["vertex_count"] == 4
     assert manifests["step"]["face_count"] == 2
     assert manifests["step"]["face_regions"] == manifests["stl"]["triangle_regions"]
 

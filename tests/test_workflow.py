@@ -7,6 +7,25 @@ from part_rule_synthesis.api import app, create_app
 from part_rule_synthesis.service import RuleSynthesisService
 
 
+V05_HUB_CONTROL_POINTS = [
+    [150.0, 400.0],
+    [170.0, 250.0],
+    [220.0, 150.0],
+    [330.0, 50.0],
+    [480.0, 10.0],
+    [580.0, 0.0],
+]
+
+V05_TIP_CONTROL_POINTS = [
+    [230.0, 401.0],
+    [250.0, 270.0],
+    [310.0, 170.0],
+    [400.0, 90.0],
+    [490.0, 50.0],
+    [581.0, 30.0],
+]
+
+
 def test_rotor_and_ngv_rule_engines_export_and_handle_feedback(tmp_path: Path):
     service = RuleSynthesisService(tmp_path)
 
@@ -157,6 +176,7 @@ def test_impeller_v05_exports_are_surface_graph_faithful_with_region_provenance(
         }
         stl_manifest = manifest["export_manifests"]["stl"]
         step_manifest = manifest["export_manifests"]["step"]
+        first_blade = manifest["geometry"]["sampled_blades"][0]
 
         assert manifest["export_strategy"] == {
             "mode": "surface_graph_faithful",
@@ -165,6 +185,11 @@ def test_impeller_v05_exports_are_surface_graph_faithful_with_region_provenance(
             "view": "cad_review_360",
             "reason": "STL/STEP are generated from selected surface_graph uv_grid samples",
         }
+        assert manifest["parameters"]["blade_count"] == 12
+        assert manifest["geometry_kernel"]["meridional_profiles"]["hub"]["control_points"] == V05_HUB_CONTROL_POINTS
+        assert manifest["geometry_kernel"]["meridional_profiles"]["tip_or_shroud"]["control_points"] == V05_TIP_CONTROL_POINTS
+        assert _max_line_deviation(first_blade["leading_edge_boundary"]) <= 2.0e-6
+        assert _max_line_deviation(first_blade["trailing_edge_boundary"]) <= 2.0e-6
         assert stl_manifest["source"] == "surface_graph"
         assert stl_manifest["export_exactness"] == "surface_graph_sampled_mesh"
         assert stl_manifest["surface_count"] == len(surface_ids)
@@ -175,6 +200,8 @@ def test_impeller_v05_exports_are_surface_graph_faithful_with_region_provenance(
         assert any(region["role"] == "blade_tip_closure" for region in stl_manifest["triangle_regions"])
         assert step_manifest["source"] == "surface_graph"
         assert step_manifest["export_exactness"] == "surface_graph_mesh_step"
+        assert step_manifest["step_representation"] == "ap242_triangulated_face_set"
+        assert step_manifest["vertex_count"] > 0
         assert step_manifest["face_count"] == stl_manifest["triangle_count"]
         assert step_manifest["face_regions"] == stl_manifest["triangle_regions"]
         assert Path(manifest["exports"]["stl"]).stat().st_size > 4096
@@ -202,3 +229,22 @@ def _binary_stl_bounds(path: Path) -> dict[str, float]:
         "z_min": min(zs),
         "z_max": max(zs),
     }
+
+
+def _max_line_deviation(points: list[list[float]]) -> float:
+    start = points[0]
+    end = points[-1]
+    axis = [end[index] - start[index] for index in range(3)]
+    axis_length = sum(value * value for value in axis) ** 0.5
+    if axis_length == 0.0:
+        return 0.0
+    maximum = 0.0
+    for point in points[1:-1]:
+        offset = [point[index] - start[index] for index in range(3)]
+        cross = [
+            offset[1] * axis[2] - offset[2] * axis[1],
+            offset[2] * axis[0] - offset[0] * axis[2],
+            offset[0] * axis[1] - offset[1] * axis[0],
+        ]
+        maximum = max(maximum, (sum(value * value for value in cross) ** 0.5) / axis_length)
+    return maximum
