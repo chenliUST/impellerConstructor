@@ -26,38 +26,33 @@ AxisymmetricThroughflowRadialBladedImpeller
 
 Current focus:
 
-- radial open impeller preset `radial_open_reference_v0_4`
-- radial closed impeller preset `radial_closed_reference_v0_4`
+- radial open impeller preset `radial_open_reference_v0_5`
+- radial closed impeller preset `radial_closed_reference_v0_5`
 - sampled surface graph generation
-- CadQuery-generated STEP/STL exports for external CAD review, with known mismatch risk against frontend `surface_graph`
+- surface-graph-faithful STL exports for external CAD review
+- graph-derived faceted STEP surface shells for external CAD review
 - surface/feature graph identity
 - full-360 CFD patch-group manifest
 - schema-only FEA solid view
 - frontend CAD review, CFD full-360, and feature-debug views
-
-Next planned frontier:
-
-- v0.5 surface-graph-faithful export contract
-- STL generated from the same `surface_graph` surfaces rendered in the frontend
-- export-region provenance from third-party file inspection back to `surface_graph_id`, feature, and role
 
 ## Claims The Repository Can Make
 
 The current code can claim:
 
 - deterministic runtime compilation from versioned JSON DSL resources
-- deterministic sampled impeller surface graph for the v0.4 open and closed presets
+- deterministic sampled impeller surface graph for the v0.5 open and closed presets
 - stable surface ids, feature ids, named boundary curves, and CFD patch group names for the tested presets
 - campaign signatures that freeze topology-level optimization shape
-- generated STEP files containing CadQuery/OCCT topology entities for third-party CAD inspection
-- generated binary STL files with non-empty triangle meshes for third-party geometry inspection
-- documented evidence that current v0.4 CadQuery exports can differ from the frontend surface graph, with a v0.5 plan to correct that
+- generated binary STL files derived from `manifest.geometry.surface_graph.surfaces[*].uv_grid`
+- generated STEP files as graph-derived faceted surface shells, not analytic B-Rep solids
+- export manifests with region provenance from exported triangles/faces to `surface_graph_id`, feature, and role
+- documented evidence that v0.4 CadQuery exports can differ from the frontend surface graph, and v0.5 corrects the source-of-truth split
 
 ## Claims The Repository Cannot Make Yet
 
 The current code cannot yet claim:
 
-- STEP/STL exports are faithful projections of `manifest.geometry.surface_graph`
 - exact industrial B-Rep geometry
 - watertight OCCT sewing or healing
 - exact variable-radius CAD fillets or chamfers
@@ -92,8 +87,9 @@ Use these labels consistently in docs and manifests:
 - `research_grade_sampled_surface`: sampled surface graph, not exact CAD
 - `analysis_review_cad_export`: CadQuery-generated STEP/STL intended for external inspection, not certified manufacturing geometry
 - `cadquery_sync`: synchronous CadQuery export path used by the API
-- `surface_graph_faithful_export`: planned v0.5 export mode where files are derived from selected `surface_graph` surfaces
-- `surface_graph_sampled_mesh`: planned v0.5 STL exactness label for sampled graph triangulation
+- `surface_graph_faithful_export`: v0.5 export mode where files are derived from selected `surface_graph` surfaces
+- `surface_graph_sampled_mesh`: v0.5 STL exactness label for sampled graph triangulation
+- `surface_graph_mesh_step`: v0.5 STEP exactness label for graph-derived faceted surface shells
 - `patch_contract_ready`: semantic CFD patch groups and instances are generated
 - `solver_adapter_missing`: no mesher or solver has been invoked
 - `schema_only`: resource shape exists but executable workflow does not

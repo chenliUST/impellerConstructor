@@ -142,6 +142,45 @@ def test_impeller_cad_exports_follow_profile_overrides(tmp_path: Path):
     assert changed_bounds["z_max"] > baseline_bounds["z_max"] + 30.0
 
 
+def test_impeller_v05_exports_are_surface_graph_faithful_with_region_provenance(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+
+    for preset_id in ["radial_open_reference_v0_5", "radial_closed_reference_v0_5"]:
+        engine = service.synthesize("impeller", preset_id)
+        run = service.instantiate(engine.engine_id, {})
+        manifest = run.manifest
+        surface_graph = manifest["geometry"]["surface_graph"]
+        surface_ids = {
+            surface["id"]
+            for surface in surface_graph["surfaces"]
+            if len(surface.get("uv_grid", [])) >= 2 and len(surface.get("uv_grid", [[]])[0]) >= 2
+        }
+        stl_manifest = manifest["export_manifests"]["stl"]
+        step_manifest = manifest["export_manifests"]["step"]
+
+        assert manifest["export_strategy"] == {
+            "mode": "surface_graph_faithful",
+            "cad_exports": "completed",
+            "source": "geometry.surface_graph",
+            "view": "cad_review_360",
+            "reason": "STL/STEP are generated from selected surface_graph uv_grid samples",
+        }
+        assert stl_manifest["source"] == "surface_graph"
+        assert stl_manifest["export_exactness"] == "surface_graph_sampled_mesh"
+        assert stl_manifest["surface_count"] == len(surface_ids)
+        assert set(stl_manifest["included_surface_ids"]) == surface_ids
+        assert stl_manifest["triangle_count"] > 0
+        assert {region["surface_graph_id"] for region in stl_manifest["triangle_regions"]} == surface_ids
+        assert any(region["role"] == "blade_leading_edge_closure" for region in stl_manifest["triangle_regions"])
+        assert any(region["role"] == "blade_tip_closure" for region in stl_manifest["triangle_regions"])
+        assert step_manifest["source"] == "surface_graph"
+        assert step_manifest["export_exactness"] == "surface_graph_mesh_step"
+        assert step_manifest["face_count"] == stl_manifest["triangle_count"]
+        assert step_manifest["face_regions"] == stl_manifest["triangle_regions"]
+        assert Path(manifest["exports"]["stl"]).stat().st_size > 4096
+        assert Path(manifest["exports"]["step"]).stat().st_size > 4096
+
+
 def _binary_stl_bounds(path: Path) -> dict[str, float]:
     data = path.read_bytes()
     triangle_count = struct.unpack("<I", data[80:84])[0]

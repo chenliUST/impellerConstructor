@@ -51,10 +51,10 @@ export const facetSchema = {
 export const presets = [
   {
     id: "axisymmetric-nurbs-open-throughflow",
-    presetId: "radial_open_reference_v0_4",
-    name: "NURBS open throughflow v0.4",
-    summary: "Open impeller: surface/feature graph, CFD full-360 manifest, finite hub solid, conformal blade surfaces.",
-    tags: ["open", "NURBS", "v0.4", "CFD"],
+    presetId: "radial_open_reference_v0_5",
+    name: "NURBS open throughflow v0.5",
+    summary: "Open impeller: surface/feature graph, CFD full-360 manifest, and surface-graph-faithful STL/STEP exports.",
+    tags: ["open", "NURBS", "v0.5", "CFD", "export"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -90,10 +90,10 @@ export const presets = [
   },
   {
     id: "axisymmetric-nurbs-closed-throughflow",
-    presetId: "radial_closed_reference_v0_4",
-    name: "NURBS closed throughflow v0.4",
-    summary: "Closed impeller: surface/feature graph, CFD full-360 manifest, finite hub solid, finite hood shell.",
-    tags: ["closed", "NURBS", "v0.4", "CFD"],
+    presetId: "radial_closed_reference_v0_5",
+    name: "NURBS closed throughflow v0.5",
+    summary: "Closed impeller: surface/feature graph, CFD full-360 manifest, and surface-graph-faithful STL/STEP exports.",
+    tags: ["closed", "NURBS", "v0.5", "CFD", "export"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",

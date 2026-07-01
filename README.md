@@ -10,12 +10,11 @@ This repository is a research-grade CAD/CAE integration prototype, not a product
 
 - Canonical workspace repository: `impellerConstructor`
 - Latest slice: `impeller.axisymmetric_throughflow_radial_bladed`
-- Latest DSL version: `v0_4`
-- Next planned DSL version: `v0_5` surface-graph-faithful export contract
-- Latest frontend workflow: v0.4 open/closed throughflow presets with CAD review, CFD full-360, and feature-debug views
-- Current export status: v0.4 impeller STEP/STL downloads are generated through a CadQuery analysis-review path, but they are not yet guaranteed to be faithful projections of the frontend `surface_graph`
-- v0.5 export direction: make exported inspection artifacts derive from `surface_graph` and record export-region provenance
-- Geometry exactness: sampled research surfaces plus analysis-review exports; exact industrial B-Rep fillets, meshing adapters, and solver adapters are future work
+- Latest DSL version: `v0_5`
+- Latest frontend workflow: v0.5 open/closed throughflow presets with CAD review, CFD full-360, feature-debug views, and surface-graph-faithful exports
+- Current export status: v0.5 impeller STL/STEP downloads are generated from `manifest.geometry.surface_graph` and include export-region provenance
+- Legacy export status: v0.4 and older impeller exports remain CadQuery analysis-review artifacts and are not claimed as surface-graph-faithful
+- Geometry exactness: sampled research surfaces plus graph-derived faceted export shells; exact industrial B-Rep fillets, meshing adapters, and solver adapters are future work
 
 The older sibling directory `part-rule-synthesis` is an archived baseline snapshot. Current work should happen in this repository.
 
@@ -30,7 +29,7 @@ Earlier versions are preserved in both Git history and versioned DSL folders.
 | `v0_2` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_2` | `radial_open_reference`, `radial_closed_reference` | First focused axisymmetric throughflow DSL slice and runtime contract. |
 | `v0_3` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_3` | `radial_open_reference_v0_3`, `radial_closed_reference_v0_3` | Solid hub/hood modeling, staged generation, and curve editor workflow. |
 | `v0_4` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_4` | `radial_open_reference_v0_4`, `radial_closed_reference_v0_4` | Optimization-ready design space, surface/feature graph, and CFD full-360 manifest. |
-| planned `v0_5` | pending implementation | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful STL/STEP export contract with region provenance. |
+| `v0_5` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_5` | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful STL/STEP export contract with region provenance. |
 
 See [docs/version-history.md](docs/version-history.md) and [src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/VERSION_INDEX.md](src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/VERSION_INDEX.md).
 
@@ -87,13 +86,13 @@ Use the repository-level verification helper from the repository root:
 .\scripts\verify_version_lineage.ps1
 ```
 
-`fast` runs compileall, focused v0.4 backend contract tests, frontend tests, and the frontend build check. `full` runs all backend tests plus the frontend checks.
-`verify_version_lineage.ps1` checks the current versioned resource folders and the historical `impeller-dsl-v0.2`, `impeller-dsl-v0.3`, and `impeller-dsl-v0.4` tags through temporary git worktrees.
+`fast` runs compileall, focused backend contract tests, frontend tests, and the frontend build check. `full` runs all backend tests plus the frontend checks.
+`verify_version_lineage.ps1` checks the current versioned resource folders through v0.5 and the historical `impeller-dsl-v0.2`, `impeller-dsl-v0.3`, and `impeller-dsl-v0.4` tags through temporary git worktrees.
 
 Expected current results:
 
-- Backend tests: `109 passed`
-- Frontend tests: `43 passed`
+- Backend tests: `115 passed`
+- Frontend tests: `44 passed`
 - Frontend build check: passed
 
 ## Development Notes
@@ -102,5 +101,5 @@ Expected current results:
 - Add a new version folder instead of overwriting old DSL semantics.
 - Keep historical tags available locally with `git fetch --unshallow --tags origin` when cloning shallow.
 - Preserve evidence screenshots, reports, and update plans that explain why a DSL version changed.
-- Do not treat sampled fillet/blend surfaces or analysis-review exports as exact industrial CAD operations; use `cad_exactness` and export fidelity metadata to distinguish research geometry from future B-Rep output.
+- Do not treat sampled fillet/blend surfaces, graph-derived faceted STEP shells, or analysis-review exports as exact industrial CAD operations; use `cad_exactness` and export fidelity metadata to distinguish research geometry from future B-Rep output.
 - Follow [docs/evidence-policy.md](docs/evidence-policy.md) before adding generated video, sweep data, or large visual artifacts.

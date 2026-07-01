@@ -6,7 +6,7 @@ from part_rule_synthesis.impeller_dsl_resources import ImpellerDslBundle, load_i
 from part_rule_synthesis.impeller_shape_control import normalize_shape_control_space
 
 
-IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4")
+IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4", "v0_5")
 
 IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
     "blade_count": {"min": 2, "max": 64},
@@ -48,6 +48,7 @@ def compile_impeller_runtime_preset(
     shape_control = normalize_shape_control_space(bundle.shape_control_schema, bundle.shape_controls)
     shape_control["shape_control_version"] = bundle.shape_controls["shape_control_version"]
     simulation_views = _simulation_views_for_constructor(bundle, constructor)
+    export_contract = _export_contract_for_constructor(bundle, constructor)
     dsl_version = str(bundle.schema["dsl_version"])
     return {
         "version": f"{dsl_version}.0",
@@ -70,6 +71,7 @@ def compile_impeller_runtime_preset(
         "solid_features": constructor.get("solid_features", {}),
         "feature_graph": constructor.get("feature_graph", {}),
         "simulation_views": simulation_views,
+        "export_contract": export_contract,
         "shape_control": shape_control,
         "validity_contracts": bundle.validity_contracts,
         "loss_schema": bundle.loss_schema,
@@ -187,13 +189,29 @@ def _simulation_views_for_constructor(
     return resolved
 
 
+def _export_contract_for_constructor(
+    bundle: ImpellerDslBundle,
+    constructor: dict[str, Any],
+) -> dict[str, Any]:
+    contracts = constructor.get("export_contracts", {})
+    if not contracts:
+        return {}
+    contract = contracts.get("surface_graph_faithful") or next(iter(contracts.values()))
+    contract_ref = contract.get("contract_ref")
+    if contract_ref is None:
+        return contract
+    contract_id = bundle.export_contract_refs[contract_ref]
+    return bundle.export_contracts[contract_id]
+
+
 def _selected_rules(
     bundle: Any,
     constructor: dict[str, Any],
     simulation_views: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
-    if bundle.schema["dsl_version"] == "0.4":
+    if bundle.schema["dsl_version"] in {"0.4", "0.5"}:
         view_ids = simulation_views or constructor.get("simulation_views", {})
+        export_contract_ids = constructor.get("export_contracts", {})
         return [
             f"ontology_slice.{bundle.slice['slice_id']}",
             f"constructor_family.{bundle.slice['constructor_family']}",
@@ -202,6 +220,7 @@ def _selected_rules(
             "surface_graph_contract.named_surfaces_required",
             "feature_graph_contract.features_are_first_class_nodes",
             *(f"simulation_views.{view_id}" for view_id in view_ids),
+            *(f"export_contract.{contract_id}" for contract_id in export_contract_ids),
         ]
     return [
         f"ontology_slice.{bundle.slice['slice_id']}",

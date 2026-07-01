@@ -1,0 +1,28 @@
+{
+  "date": "2026-07-01",
+  "note": "Generated from temporary local v0.5 service runs; STL/STEP binaries were not committed.",
+  "exports": [
+    {
+      "preset_id": "radial_open_reference_v0_5",
+      "dsl_version": "0.5",
+      "export_mode": "surface_graph_faithful",
+      "stl_size_bytes": 1507284,
+      "step_size_bytes": 13137201,
+      "surface_count": 51,
+      "triangle_count": 30144,
+      "face_count": 30144,
+      "edge_closure_regions": 28
+    },
+    {
+      "preset_id": "radial_closed_reference_v0_5",
+      "dsl_version": "0.5",
+      "export_mode": "surface_graph_faithful",
+      "stl_size_bytes": 1625684,
+      "step_size_bytes": 14171200,
+      "surface_count": 50,
+      "triangle_count": 32512,
+      "face_count": 32512,
+      "edge_closure_regions": 24
+    }
+  ]
+}

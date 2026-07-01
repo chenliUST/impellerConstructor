@@ -11,6 +11,7 @@ from uuid import uuid4
 from part_rule_synthesis.impeller_cfd_manifest import build_cfd_full_360_manifest
 from part_rule_synthesis.impeller_design_space import build_campaign_signature
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
+from part_rule_synthesis.impeller_surface_graph_export import write_surface_graph_exports
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset, impeller_json_preset_ids
 from part_rule_synthesis.impeller_taxonomy import (
@@ -41,6 +42,7 @@ PRIMITIVES = {
 
 _IMPELLER_DSL_BUNDLE = load_impeller_dsl_bundle()
 _IMPELLER_V04_DSL_BUNDLE = load_impeller_dsl_bundle("v0_4")
+_IMPELLER_V05_DSL_BUNDLE = load_impeller_dsl_bundle("v0_5")
 _JSON_IMPELLER_PRESET_IDS = impeller_json_preset_ids()
 
 
@@ -143,17 +145,6 @@ class RuleSynthesisService:
         run_id = f"run-{graph_hash[:12]}"
         run_dir = self.root / "model_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
-        exports = _write_exports(
-            run_dir,
-            dsl["part_family"],
-            bound,
-            dsl.get("facets", {}),
-            profile_overrides=normalized_profile_overrides,
-            curve_overrides=normalized_curve_overrides,
-            geometry_stage=normalized_geometry_stage,
-            dsl_context=dsl,
-        )
-        export_strategy = _export_strategy(dsl["part_family"])
         geometry_validity = _geometry_validity_metadata(
             dsl["part_family"],
             bound,
@@ -181,8 +172,20 @@ class RuleSynthesisService:
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
         )
+        exports, export_manifests = _write_exports(
+            run_dir,
+            dsl["part_family"],
+            bound,
+            dsl.get("facets", {}),
+            profile_overrides=normalized_profile_overrides,
+            curve_overrides=normalized_curve_overrides,
+            geometry_stage=normalized_geometry_stage,
+            dsl_context=dsl,
+            geometry_metadata=geometry_metadata,
+        )
+        export_strategy = _export_strategy(dsl["part_family"], dsl_context=dsl)
         simulation_manifests = {}
-        if dsl["part_family"] == "impeller" and _dsl_version(dsl) == "0.4":
+        if dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.4", "0.5"}:
             surface_graph = geometry_metadata.get("surface_graph", {})
             cfd_view = dsl.get("simulation_views", {}).get("cfd_full_360", {})
             simulation_manifests["cfd_full_360"] = build_cfd_full_360_manifest(
@@ -223,9 +226,10 @@ class RuleSynthesisService:
             "source_refs": dsl.get("source_refs", []),
             "export_strategy": export_strategy,
             "exports": exports,
+            "export_manifests": export_manifests,
             "notice": "Research geometry; inferred regions are not released for operation.",
         }
-        if manifest["dsl_version"] == "0.4":
+        if manifest["dsl_version"] in {"0.4", "0.5"}:
             manifest["campaign_signature"] = build_campaign_signature(
                 _campaign_signature_runtime_context(dsl),
                 normalized_profile_overrides,
@@ -741,12 +745,14 @@ def _dsl_version(dsl: dict[str, Any]) -> str:
 
 
 def _campaign_signature_runtime_context(dsl: dict[str, Any]) -> dict[str, Any]:
-    if _dsl_version(dsl) != "0.4":
+    dsl_version = _dsl_version(dsl)
+    if dsl_version not in {"0.4", "0.5"}:
         return dsl
+    bundle = _IMPELLER_V05_DSL_BUNDLE if dsl_version == "0.5" else _IMPELLER_V04_DSL_BUNDLE
     return {
         **dsl,
         "shape_control": {
-            **_IMPELLER_V04_DSL_BUNDLE.shape_controls,
+            **bundle.shape_controls,
             **dsl.get("shape_control", {}),
         },
     }
@@ -824,9 +830,23 @@ def _write_exports(
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
     dsl_context: dict[str, Any] | None = None,
-) -> dict[str, str]:
+    geometry_metadata: dict[str, Any] | None = None,
+) -> tuple[dict[str, str], dict[str, Any]]:
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
+    export_contract = (dsl_context or {}).get("export_contract", {})
+    if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_faithful":
+        surface_graph = (geometry_metadata or {}).get("surface_graph")
+        if not surface_graph:
+            raise RuntimeError("surface_graph_faithful export requires geometry.surface_graph")
+        export_manifests = write_surface_graph_exports(
+            step,
+            stl,
+            part_family,
+            surface_graph,
+            view_id=export_contract.get("default_view", "cad_review_360"),
+        )
+        return {"step": str(step), "stl": str(stl)}, export_manifests
     try:
         import cadquery as cq
         from cadquery import exporters
@@ -918,10 +938,19 @@ def _write_exports(
         # ponytail: keep legacy API usable without a working CAD backend.
         step.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
         stl.write_text(f"solid {part_family}\nendsolid {part_family}\n", encoding="utf-8")
-    return {"step": str(step), "stl": str(stl)}
+    return {"step": str(step), "stl": str(stl)}, {}
 
 
-def _export_strategy(part_family: str) -> dict[str, str]:
+def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None) -> dict[str, str]:
+    export_contract = (dsl_context or {}).get("export_contract", {})
+    if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_faithful":
+        return {
+            "mode": "surface_graph_faithful",
+            "cad_exports": "completed",
+            "source": "geometry.surface_graph",
+            "view": export_contract.get("default_view", "cad_review_360"),
+            "reason": "STL/STEP are generated from selected surface_graph uv_grid samples",
+        }
     if part_family in {"centrifugal_impeller", "impeller"}:
         return {
             "mode": "cadquery_sync",

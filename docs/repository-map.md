@@ -23,6 +23,7 @@ This document records the intended ownership boundaries of the repository. It is
 | `service.py` | Rule synthesis orchestration, instantiation, manifests, export paths, and feedback APIs. |
 | `impeller_dsl_resources.py` | Loading versioned JSON DSL/ontology resources from package paths. |
 | `impeller_runtime_compiler.py` | Compiling versioned impeller DSL presets into runtime dictionaries. |
+| `impeller_surface_graph_export.py` | Graph-derived STL and faceted STEP export writer with surface-region provenance. |
 | `impeller_shape_control.py` | Shape control normalization and compatibility helpers. |
 | `impeller_design_space.py` | v0.4 campaign signatures, topology freezing, and design vector contracts. |
 | `impeller_graph_contract.py` | Surface graph utility contracts, wetted-surface filtering, and area estimation. |
@@ -38,7 +39,7 @@ This document records the intended ownership boundaries of the repository. It is
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_2` | First focused slice contract. |
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_3` | Solid hub/hood and staged interactive curve workflow. |
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_4` | Optimization-ready surface/feature graph and CFD full-360 view. |
-| planned `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_5` | Surface-graph-faithful export contract and export-region provenance. |
+| `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_5` | Surface-graph-faithful export contract and export-region provenance. |
 | `src/part_rule_synthesis/ontology/impeller/v0_2` | Ontology resources aligned with v0.2. |
 | `src/part_rule_synthesis/ontology/impeller/v0_3` | v0.3 ontology slice marker. |
 | `src/part_rule_synthesis/ontology/impeller/v0_4` | Ontology resources aligned with v0.4. |
@@ -70,7 +71,7 @@ Each DSL version should remain loadable through tests after newer versions are a
 | `docs/axisymmetric-throughflow-nurbs-kernel.md` | Current kernel construction order and v0.4 graph contract. |
 | `docs/current-research-frontier.md` | Canonical statement of what the current repository can and cannot claim. |
 | `docs/evidence-policy.md` | Rules for committing evidence artifacts and large generated outputs. |
-| `docs/evidence/2026-07-01-impeller-v0-5-surface-graph-faithful-export/` | User-supplied mismatch screenshots and analysis motivating planned v0.5 export semantics. |
+| `docs/evidence/2026-07-01-impeller-v0-5-surface-graph-faithful-export/` | User-supplied mismatch screenshots and analysis motivating implemented v0.5 export semantics. |
 
 ## Scripts
 

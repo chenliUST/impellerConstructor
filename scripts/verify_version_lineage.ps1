@@ -26,6 +26,12 @@ $VersionCases = @(
         DslVersion = "0.4"
         Tag = "impeller-dsl-v0.4"
         Presets = @("radial_open_reference_v0_4", "radial_closed_reference_v0_4")
+    },
+    @{
+        Version = "v0_5"
+        DslVersion = "0.5"
+        Tag = $null
+        Presets = @("radial_open_reference_v0_5", "radial_closed_reference_v0_5")
     }
 )
 
@@ -98,6 +104,9 @@ New-Item -ItemType Directory -Force -Path $worktreeRoot | Out-Null
 Write-Host "Checking historical git tags through temporary worktrees..."
 foreach ($case in $VersionCases) {
     $tag = $case.Tag
+    if (-not $tag) {
+        continue
+    }
     git rev-parse --verify --quiet "refs/tags/$tag" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Missing local tag: $tag"

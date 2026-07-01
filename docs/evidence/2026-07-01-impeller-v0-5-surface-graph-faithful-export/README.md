@@ -156,3 +156,22 @@ v0.5 does not need to solve industrial exact B-Rep sewing in one step. It must f
 make exported inspection artifacts faithfully reflect the same graph that the frontend
 and manifests use.
 
+## 8. Implemented Result
+
+The implemented v0.5 path adds:
+
+- `radial_open_reference_v0_5` and `radial_closed_reference_v0_5` presets;
+- `export_contracts/surface_graph_faithful.json`;
+- binary STL generated from selected `surface_graph` `uv_grid` samples;
+- STEP generated as a graph-derived faceted surface shell;
+- `export_manifests.stl` and `export_manifests.step` metadata with exactness,
+  counts, included surface ids, skipped triangle counts, and region provenance.
+
+The STEP exactness label is `surface_graph_mesh_step`. This is intentionally not an
+exact analytic B-Rep claim.
+
+Verification on 2026-07-01:
+
+- `verify_repository.ps1 -Mode fast`: backend focused tests `42 passed`, frontend tests `44 passed`, frontend build passed.
+- `verify_repository.ps1 -Mode full`: backend tests `115 passed`, frontend tests `44 passed`, frontend build passed.
+- `verify_version_lineage.ps1`: current v0.2-v0.5 resource folders passed; historical v0.2-v0.4 tags passed.

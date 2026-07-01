@@ -15,7 +15,7 @@ The versions are not replacements for one another. They are research checkpoints
 | `v0_2` | `radial_open_reference`, `radial_closed_reference` | Initial focused DSL slice, open/closed constructors, shape-control schema, validity contracts. |
 | `v0_3` | `radial_open_reference_v0_3`, `radial_closed_reference_v0_3` | Solid hub/hood thickness, chamfers, curve overrides, staged geometry workflow. |
 | `v0_4` | `radial_open_reference_v0_4`, `radial_closed_reference_v0_4` | Design-space campaign signature, variable NURBS topology, surface/feature graph, CFD full-360 manifest. |
-| planned `v0_5` | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful export contract, STL region provenance, and honest STEP fidelity labels. |
+| `v0_5` | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful export contract, STL/STEP region provenance, and honest STEP fidelity labels. |
 
 ## Folder Contract
 
@@ -35,7 +35,7 @@ Additional subfolders may be added when a version needs them. v0.4 adds:
 simulation_views/
 ```
 
-The planned v0.5 export contract adds:
+The v0.5 export contract adds:
 
 ```text
 export_contracts/
@@ -53,17 +53,16 @@ src/part_rule_synthesis/impeller_runtime_compiler.py
 Service-level synthesis selects a preset id and receives a compiled runtime DSL dictionary:
 
 ```python
-engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
-```
-
-The planned v0.5 implementation should use:
-
-```python
 engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_5")
 ```
 
-v0.5 is not implemented until the `v0_5/` folder, runtime compiler support, and
-lineage tests are added.
+Legacy v0.4 studies remain loadable:
+
+```python
+engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
+```
+
+v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived export writer, and lineage tests.
 
 ## Historical Git Tags
 
@@ -87,10 +86,9 @@ The script creates temporary detached git worktrees under `.worktrees/version-li
 
 Keep old version folders reproducible. When new engineer feedback changes the meaning of a feature, add a new version or explicit patch resource instead of silently changing old semantics.
 
-## Planned v0.5 Evidence
+## v0.5 Evidence
 
-The v0.5 export direction is documented before implementation so the ontology
-evolution has a traceable reason:
+The v0.5 export direction and implementation are documented so the ontology evolution has a traceable reason:
 
 ```text
 docs/evidence/2026-07-01-impeller-v0-5-surface-graph-faithful-export/README.md

@@ -70,6 +70,14 @@ describe("frontend application files", () => {
     assert.match(panelSource, /optimization_stage/);
   });
 
+  test("manifest panel exposes export fidelity metadata", () => {
+    const panelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(panelSource, /export_manifests/);
+    assert.match(panelSource, /export_exactness/);
+    assert.match(panelSource, /surface_graph_faithful/);
+  });
+
   test("viewer gives blade boundary construction lines and named boundaries dedicated layers", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 
