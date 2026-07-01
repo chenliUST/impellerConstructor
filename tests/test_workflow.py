@@ -138,6 +138,29 @@ def test_api_v06_export_route_serves_model_output_files_with_filenames(tmp_path:
         assert Path(manifest["exports"][export_format]).name in export_response.headers["content-disposition"]
 
 
+def test_api_export_route_returns_404_when_manifest_file_is_missing(tmp_path: Path):
+    client = TestClient(create_app(tmp_path), raise_server_exceptions=False)
+
+    engine_response = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_6"},
+    )
+    assert engine_response.status_code == 200
+
+    run_response = client.post(
+        f"/api/rule-engines/{engine_response.json()['engine_id']}/instantiate",
+        json={"parameters": {}},
+    )
+    assert run_response.status_code == 200
+    manifest = run_response.json()["manifest"]
+    Path(manifest["exports"]["step"]).unlink()
+
+    export_response = client.get(f"/api/model-runs/{manifest['run_id']}/exports/step")
+
+    assert export_response.status_code == 404
+    assert export_response.json()["detail"] == "export file missing"
+
+
 def test_impeller_interactive_instantiation_writes_real_cad_exports(tmp_path: Path):
     service = RuleSynthesisService(tmp_path)
     engine = service.synthesize("impeller", "axisymmetric_nurbs_open_throughflow_study")
