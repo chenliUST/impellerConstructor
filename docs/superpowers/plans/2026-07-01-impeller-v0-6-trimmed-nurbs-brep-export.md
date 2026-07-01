@@ -2,7 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build V0.6 as the first impeller version that can export `surface_graph` geometry as trimmed NURBS/analytic B-Rep STEP, while preserving V0.5 mesh exports, adding `Model Output/` artifact routing, CFD360 mesh inspection, and interactive fillet/blend controls.
+**Goal:** Build V0.6 toward the intended target of exporting `surface_graph` geometry as trimmed NURBS/analytic B-Rep STEP, while preserving V0.5 mesh exports, adding `Model Output/` artifact routing, CFD360 mesh inspection, and interactive fillet/blend controls.
+
+**Current implementation note, 2026-07-02:** The final Task 14 review clarified that
+this branch implements a support-face subset of the original target. V0.6 generated
+STEP files contain graph-derived unsewn NURBS/analytic B-Rep support faces built from
+`cad_surface` payloads. The STEP writer does not yet consume `trim_loops` or
+`cad_edge` wires for true trimmed topological faces. Any earlier task language in this
+plan that says trimmed NURBS/analytic B-Rep should be read as the intended contract
+target unless explicitly described as current support-face evidence.
 
 **Architecture:** Keep V0.5 untouched and add a V0.6 resource line. Add a focused OCCT/OCP B-Rep exporter beside the existing mesh exporter, enrich `surface_graph` with `cad_surface` and `cad_edge` payloads, and route V0.6 exports through the B-Rep path while still emitting STL and mesh STEP for comparison. Add frontend controls for export type, mesh inspection, and fillet radii without changing legacy presets.
 
@@ -2065,7 +2073,8 @@ Supersedes: `v0_5`
 ## Changes
 
 1. Added `surface_graph_trimmed_brep` export contract.
-2. Added trimmed NURBS/analytic B-Rep STEP exactness label.
+2. Added `surface_graph_trimmed_nurbs_step` STEP exactness label for the intended
+   trimmed-face contract target.
 3. Preserved STL and mesh STEP exports as separately labeled artifacts.
 4. Added CAD payloads for exportable graph surfaces.
 5. Added explicit blade root and edge fillet/blend feature controls.
@@ -2078,7 +2087,7 @@ Supersedes: `v0_5`
 Change supported claims from "proposed V0.6" to implemented claims only after the workflow tests pass:
 
 ```text
-generated STEP files as graph-derived trimmed NURBS/analytic B-Rep faces for V0.6 presets
+generated STEP files as graph-derived unsewn NURBS/analytic B-Rep support faces for V0.6 presets
 ```
 
 Keep limitations:
@@ -2094,7 +2103,7 @@ not universal CAD healing across all parameters
 Add:
 
 ```markdown
-| `v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | Trimmed NURBS/analytic B-Rep STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
+| `v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | NURBS/analytic B-Rep support-face STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
 ```
 
 - [ ] **Step 5: Run documentation sanity checks**
