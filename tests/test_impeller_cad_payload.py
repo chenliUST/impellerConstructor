@@ -1,7 +1,9 @@
 from part_rule_synthesis.impeller_cad_payload import (
     boundary_edge_payload,
     bspline_surface_payload_from_control_net,
+    cylinder_surface_payload,
     knot_values_and_multiplicities,
+    plane_surface_payload,
 )
 
 
@@ -53,3 +55,25 @@ def test_boundary_edge_payload_uses_bspline_curve_shape():
         1.0,
         0.0,
     ]
+
+
+def test_analytic_surface_payload_helpers_round_and_include_outer_trim_loop():
+    plane = plane_surface_payload([0, 0, -1.2345678], [0, 0, 1], [1, 0, 0], [0, 1, 0])
+    cylinder = cylinder_surface_payload(12.3456789, -5.0, 42.0000001)
+
+    assert plane == {
+        "surface_type": "plane",
+        "origin": [0.0, 0.0, -1.234568],
+        "normal": [0.0, 0.0, 1.0],
+        "u_dir": [1.0, 0.0, 0.0],
+        "v_dir": [0.0, 1.0, 0.0],
+        "trim_loops": [{"orientation": "outer", "edges": []}],
+    }
+    assert cylinder == {
+        "surface_type": "cylinder",
+        "radius_mm": 12.345679,
+        "z_min_mm": -5.0,
+        "z_max_mm": 42.0,
+        "axis": "z",
+        "trim_loops": [{"orientation": "outer", "edges": []}],
+    }

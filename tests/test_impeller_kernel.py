@@ -414,6 +414,31 @@ def test_axisymmetric_nurbs_blade_has_le_te_root_and_tip_closure_surfaces():
     assert edges["blade_0_suction_trailing_edge"]["relation"] == "closed_blade_edge"
 
 
+def test_v06_surface_graph_emits_cad_surface_payloads():
+    from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+    from part_rule_synthesis.service import _bind_parameters, _geometry_metadata
+
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_6")
+    parameters = _bind_parameters(runtime, {})
+    geometry = _geometry_metadata(
+        "impeller",
+        parameters,
+        runtime["facets"],
+        dsl_context=runtime,
+    )
+    surfaces = {surface["id"]: surface for surface in geometry["surface_graph"]["surfaces"]}
+
+    pressure = surfaces["blade_0_pressure_surface"]
+    hub = surfaces["hub_revolve_surface"]
+    bottom = surfaces["inner_hub_bottom_face"]
+
+    assert pressure["cad_surface"]["surface_type"] == "bspline_surface"
+    assert pressure["cad_surface"]["degree_u"] == 3
+    assert pressure["cad_surface"]["degree_v"] == 3
+    assert hub["cad_surface"]["surface_type"] in {"bspline_surface", "revolved_bspline_surface"}
+    assert bottom["cad_surface"]["surface_type"] == "plane"
+
+
 def test_axisymmetric_nurbs_blade_edges_are_visible_construction_lines_from_closure_surfaces():
     parameters = {
         "blade_count": 7,

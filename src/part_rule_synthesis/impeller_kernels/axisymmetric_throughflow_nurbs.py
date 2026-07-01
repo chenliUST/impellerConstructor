@@ -3,6 +3,12 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from part_rule_synthesis.impeller_cad_payload import (
+    bspline_surface_payload_from_control_net,
+    cylinder_surface_payload,
+    plane_surface_payload,
+)
+
 
 SURFACE_U_COUNT = 41
 SURFACE_V_COUNT = 33
@@ -785,6 +791,14 @@ def _surface_graph(
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    hub_grid = _revolve_grid(hub_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
+    hub_control_net, hub_cad_surface = _control_net_and_cad_surface(
+        "hub_revolve_surface",
+        "hub",
+        "hub",
+        hub_grid,
+        source="surface_graph.control_net_revolved_profile_sample",
+    )
     surfaces = [
         {
             "id": "hub_revolve_surface",
@@ -796,27 +810,38 @@ def _surface_graph(
             "material": True,
             "material_domain": "hub",
             "profile": hub_profile,
-            "uv_grid": _revolve_grid(hub_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "control_net": hub_control_net,
+            "uv_grid": hub_grid,
             "profile_samples_rz": _profile_samples_rz(hub_profile, SURFACE_U_COUNT),
+            "cad_surface": hub_cad_surface,
             "display": {"color": "#7a946f", "opacity": 0.9},
             "boundary_ids": ["hub_inlet_circle", "hub_outlet_circle"],
         }
     ]
     surfaces.extend(_hub_solid_surfaces(params, hub_profile, solid_features))
     tip_surface_id = "shroud_surface" if facets["shroud_topology"] == "closed" else "tip_reference_surface"
+    tip_role = (
+        "front_shroud_inner_surface"
+        if facets["shroud_topology"] == "closed"
+        else (
+            "construction_support_only"
+            if _surface_hidden_by_policy("blade_tip_support_surface", display_policy)
+            else "reference_only"
+        )
+    )
+    tip_grid = _revolve_grid(tip_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
+    tip_control_net, tip_cad_surface = _control_net_and_cad_surface(
+        tip_surface_id,
+        tip_role,
+        "front_shroud" if facets["shroud_topology"] == "closed" else "tip_reference",
+        tip_grid,
+        source="surface_graph.control_net_revolved_profile_sample",
+    )
     surfaces.append(
         {
             "id": tip_surface_id,
             "kind": "nurbs_revolve_surface",
-            "role": (
-                "front_shroud_inner_surface"
-                if facets["shroud_topology"] == "closed"
-                else (
-                    "construction_support_only"
-                    if _surface_hidden_by_policy("blade_tip_support_surface", display_policy)
-                    else "reference_only"
-                )
-            ),
+            "role": tip_role,
             "cfd_role": "tip_or_shroud_wall",
             "feature_id": "front_shroud" if facets["shroud_topology"] == "closed" else "tip_reference",
             "display_role": "shroud" if facets["shroud_topology"] == "closed" else "open_tip_reference",
@@ -824,8 +849,10 @@ def _surface_graph(
             "material": facets["shroud_topology"] == "closed",
             "material_domain": "front_hood" if facets["shroud_topology"] == "closed" else None,
             "profile": tip_profile,
-            "uv_grid": _revolve_grid(tip_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "control_net": tip_control_net,
+            "uv_grid": tip_grid,
             "profile_samples_rz": _profile_samples_rz(tip_profile, SURFACE_U_COUNT),
+            "cad_surface": tip_cad_surface,
             "display": {
                 "color": "#9db7c5" if facets["shroud_topology"] == "closed" else "#c8c08d",
                 "opacity": 0.34 if facets["shroud_topology"] == "open" else 0.72,
@@ -903,6 +930,42 @@ def _surface_graph(
                 },
             ]
         )
+        pressure_control_net, pressure_cad_surface = _control_net_and_cad_surface(
+            f"{prefix}_pressure_surface",
+            "blade_pressure",
+            blade_feature_id,
+            blade["pressure_surface"],
+        )
+        suction_control_net, suction_cad_surface = _control_net_and_cad_surface(
+            f"{prefix}_suction_surface",
+            "blade_suction",
+            blade_feature_id,
+            blade["suction_surface"],
+        )
+        leading_control_net, leading_cad_surface = _control_net_and_cad_surface(
+            f"{prefix}_leading_edge_surface",
+            "blade_leading_edge_closure",
+            f"{blade_feature_id}.leading_edge_round",
+            blade["leading_edge_surface"],
+        )
+        trailing_control_net, trailing_cad_surface = _control_net_and_cad_surface(
+            f"{prefix}_trailing_edge_surface",
+            "blade_trailing_edge_closure",
+            f"{blade_feature_id}.trailing_edge_round",
+            blade["trailing_edge_surface"],
+        )
+        root_control_net, root_cad_surface = _control_net_and_cad_surface(
+            f"{prefix}_root_closure_surface",
+            "blade_root_hub_closure",
+            f"{blade_feature_id}.root_fillet",
+            blade["root_closure_surface"],
+        )
+        tip_control_net, tip_cad_surface = _control_net_and_cad_surface(
+            f"{prefix}_tip_closure_surface",
+            "blade_tip_closure",
+            f"{blade_feature_id}.tip_transition",
+            blade["tip_closure_surface"],
+        )
         surfaces.extend(
             [
                 {
@@ -913,8 +976,9 @@ def _surface_graph(
                     "feature_id": blade_feature_id,
                     "degree_u": 3,
                     "degree_v": 3,
-                    "control_net": _control_net_from_grid(blade["pressure_surface"]),
+                    "control_net": pressure_control_net,
                     "uv_grid": blade["pressure_surface"],
+                    "cad_surface": pressure_cad_surface,
                     "display": {"color": "#70a46f", "opacity": 0.9},
                     "boundary_ids": [
                         f"{prefix}_pressure_leading_edge",
@@ -931,8 +995,9 @@ def _surface_graph(
                     "feature_id": blade_feature_id,
                     "degree_u": 3,
                     "degree_v": 3,
-                    "control_net": _control_net_from_grid(blade["suction_surface"]),
+                    "control_net": suction_control_net,
                     "uv_grid": blade["suction_surface"],
+                    "cad_surface": suction_cad_surface,
                     "display": {"color": "#5f8f66", "opacity": 0.9},
                     "boundary_ids": [
                         f"{prefix}_suction_leading_edge",
@@ -948,7 +1013,11 @@ def _surface_graph(
                     "cfd_role": "leading_edge_transition",
                     "feature_id": f"{blade_feature_id}.leading_edge_round",
                     "closure_model": "ruled_pressure_mean_suction",
+                    "degree_u": 3,
+                    "degree_v": 3,
+                    "control_net": leading_control_net,
                     "uv_grid": blade["leading_edge_surface"],
+                    "cad_surface": leading_cad_surface,
                     "display": {"color": "#f59e0b", "opacity": 1.0, "edge_highlight": True},
                     "boundary_ids": [
                         f"{prefix}_pressure_leading_edge",
@@ -962,7 +1031,11 @@ def _surface_graph(
                     "cfd_role": "trailing_edge_transition",
                     "feature_id": f"{blade_feature_id}.trailing_edge_round",
                     "closure_model": "ruled_pressure_mean_suction",
+                    "degree_u": 3,
+                    "degree_v": 3,
+                    "control_net": trailing_control_net,
                     "uv_grid": blade["trailing_edge_surface"],
+                    "cad_surface": trailing_cad_surface,
                     "display": {"color": "#ef4444", "opacity": 1.0, "edge_highlight": True},
                     "boundary_ids": [
                         f"{prefix}_pressure_trailing_edge",
@@ -976,7 +1049,11 @@ def _surface_graph(
                     "cfd_role": "root_transition",
                     "feature_id": f"{blade_feature_id}.root_fillet",
                     "closure_model": "ruled_pressure_mean_suction",
+                    "degree_u": 3,
+                    "degree_v": 3,
+                    "control_net": root_control_net,
                     "uv_grid": blade["root_closure_surface"],
+                    "cad_surface": root_cad_surface,
                     "display": {"color": "#22c55e", "opacity": 1.0, "edge_highlight": True},
                     "boundary_ids": [
                         f"{prefix}_pressure_hub_root",
@@ -990,7 +1067,11 @@ def _surface_graph(
                     "cfd_role": "tip_transition",
                     "feature_id": f"{blade_feature_id}.tip_transition",
                     "closure_model": "ruled_pressure_mean_suction",
+                    "degree_u": 3,
+                    "degree_v": 3,
+                    "control_net": tip_control_net,
                     "uv_grid": blade["tip_closure_surface"],
+                    "cad_surface": tip_cad_surface,
                     "display": {"color": "#38bdf8", "opacity": 1.0, "edge_highlight": True},
                     "boundary_ids": [
                         f"{prefix}_pressure_tip_edge",
@@ -1095,6 +1176,14 @@ def _hub_solid_surfaces(
         "weights": hub_profile["weights"][:],
         "knots": hub_profile["knots"][:],
     }
+    outer_grid = _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
+    outer_control_net, outer_cad_surface = _control_net_and_cad_surface(
+        "outer_hub_shell_surface",
+        "outer_hub_shell",
+        "hub",
+        outer_grid,
+        source="surface_graph.control_net_revolved_profile_sample",
+    )
     surfaces = [
         {
             "id": "outer_hub_shell_surface",
@@ -1103,8 +1192,10 @@ def _hub_solid_surfaces(
             "material_domain": "hub",
             "wall_thickness_mm": _round(params["hub_wall_thickness_mm"]),
             "profile": outer_profile,
-            "uv_grid": _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "control_net": outer_control_net,
+            "uv_grid": outer_grid,
             "profile_samples_rz": _profile_samples_rz(outer_profile, SURFACE_U_COUNT),
+            "cad_surface": outer_cad_surface,
             "display": {"color": "#78936a", "opacity": 0.48},
             "boundary_ids": ["outer_hub_top_circle", "outer_hub_bottom_circle"],
         },
@@ -1118,6 +1209,12 @@ def _hub_solid_surfaces(
             "outer_radius_mm": _round(bottom[0]),
             "z_mm": _round(bottom[1]),
             "uv_grid": _annular_plane_grid(bore_radius, bottom[0], bottom[1], 8, SURFACE_V_COUNT),
+            "cad_surface": plane_surface_payload(
+                [0.0, 0.0, bottom[1]],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ),
             "display": {"color": "#6d7f6a", "opacity": 0.82},
             "boundary_ids": ["mounting_bore_bottom_circle", "outer_hub_bottom_circle"],
         },
@@ -1131,6 +1228,12 @@ def _hub_solid_surfaces(
             "outer_radius_mm": _round(top[0]),
             "z_mm": _round(top[1]),
             "uv_grid": _annular_plane_grid(bore_radius, top[0], top[1], 8, SURFACE_V_COUNT),
+            "cad_surface": plane_surface_payload(
+                [0.0, 0.0, top[1]],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ),
             "display": {"color": "#768c68", "opacity": 0.82},
             "boundary_ids": ["mounting_bore_top_circle", "outer_hub_top_circle"],
         },
@@ -1144,6 +1247,7 @@ def _hub_solid_surfaces(
             "z_min_mm": _round(bottom[1]),
             "z_max_mm": _round(top[1]),
             "uv_grid": _cylinder_grid(bore_radius, bottom[1], top[1], SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "cad_surface": cylinder_surface_payload(bore_radius, bottom[1], top[1]),
             "display": {"color": "#4b5563", "opacity": 0.86},
             "boundary_ids": ["mounting_bore_bottom_circle", "mounting_bore_top_circle"],
         },
@@ -1893,6 +1997,29 @@ def _control_net_from_grid(grid: list[list[list[float]]]) -> list[list[list[floa
     u_indices = [0, len(grid) // 3, (len(grid) * 2) // 3, len(grid) - 1]
     v_indices = [0, len(grid[0]) // 3, (len(grid[0]) * 2) // 3, len(grid[0]) - 1]
     return [[grid[u_index][v_index] for v_index in v_indices] for u_index in u_indices]
+
+
+def _control_net_and_cad_surface(
+    surface_id: str,
+    role: str,
+    feature_id: str,
+    grid: list[list[list[float]]],
+    *,
+    source: str = "surface_graph.control_net",
+) -> tuple[list[list[list[float]]], dict[str, Any]]:
+    control_net = _control_net_from_grid(grid)
+    payload = bspline_surface_payload_from_control_net(
+        {
+            "id": surface_id,
+            "role": role,
+            "feature_id": feature_id,
+            "degree_u": 3,
+            "degree_v": 3,
+            "control_net": control_net,
+        }
+    )
+    payload["source"] = source
+    return control_net, payload
 
 
 def _section_metadata(

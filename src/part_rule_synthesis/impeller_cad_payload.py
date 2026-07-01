@@ -73,6 +73,28 @@ def bspline_surface_payload_from_control_net(surface: dict[str, Any]) -> dict[st
     }
 
 
+def plane_surface_payload(origin: list[float], normal: list[float], u_dir: list[float], v_dir: list[float]) -> dict[str, Any]:
+    return {
+        "surface_type": "plane",
+        "origin": [round(float(value), 6) for value in origin],
+        "normal": [round(float(value), 6) for value in normal],
+        "u_dir": [round(float(value), 6) for value in u_dir],
+        "v_dir": [round(float(value), 6) for value in v_dir],
+        "trim_loops": [{"orientation": "outer", "edges": []}],
+    }
+
+
+def cylinder_surface_payload(radius: float, z_min: float, z_max: float) -> dict[str, Any]:
+    return {
+        "surface_type": "cylinder",
+        "radius_mm": round(float(radius), 6),
+        "z_min_mm": round(float(z_min), 6),
+        "z_max_mm": round(float(z_max), 6),
+        "axis": "z",
+        "trim_loops": [{"orientation": "outer", "edges": []}],
+    }
+
+
 def boundary_edge_payload(
     edge_id: str,
     points: list[list[float]],
