@@ -295,6 +295,27 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
     assert "TRIANGULATED_FACE_SET" not in step_text
 
 
+def test_api_default_v06_exports_copy_to_cwd_model_output(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PART_RULE_SYNTHESIS_ROOT", raising=False)
+    monkeypatch.delenv("PART_RULE_SYNTHESIS_MODEL_OUTPUT_DIR", raising=False)
+    client = TestClient(create_app())
+
+    engine_id = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_6"},
+    ).json()["engine_id"]
+    manifest = client.post(
+        f"/api/rule-engines/{engine_id}/instantiate",
+        json={"parameters": {}},
+    ).json()["manifest"]
+
+    step_path = Path(manifest["exports"]["step"])
+    assert step_path.parent == tmp_path / "Model Output"
+    assert step_path.name.startswith("radial_open_reference_v0_6-run-")
+    assert step_path.exists()
+
+
 def test_impeller_v06_open_and_closed_workflows_include_brep_mesh_and_fillets(tmp_path: Path):
     service = RuleSynthesisService(tmp_path)
 

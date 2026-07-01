@@ -85,8 +85,9 @@ class RulePatchProposal:
 
 
 class RuleSynthesisService:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, model_output_root: Path | None = None):
         self.root = Path(root)
+        self.model_output_root = Path(model_output_root) if model_output_root is not None else None
         self.engines: dict[str, dict[str, Any]] = {}
         self.runs: dict[str, ModelRun] = {}
         self.issues: dict[str, FeedbackIssue] = {}
@@ -184,6 +185,7 @@ class RuleSynthesisService:
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
             geometry_metadata=geometry_metadata,
+            model_output_root=self.model_output_root,
         )
         export_strategy = _export_strategy(dsl["part_family"], dsl_context=dsl)
         simulation_manifests = {}
@@ -840,6 +842,7 @@ def _write_exports(
     geometry_stage: str = "edge_closures",
     dsl_context: dict[str, Any] | None = None,
     geometry_metadata: dict[str, Any] | None = None,
+    model_output_root: Path | None = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
@@ -848,7 +851,7 @@ def _write_exports(
         surface_graph = (geometry_metadata or {}).get("surface_graph")
         if not surface_graph:
             raise RuntimeError("surface_graph_brep export requires geometry.surface_graph")
-        output_dir = _model_output_dir_for_run(run_dir)
+        output_dir = _model_output_dir_for_run(run_dir, model_output_root)
         stem = _safe_export_stem((dsl_context or {}).get("preset_id"), run_dir.name)
         step = output_dir / f"{stem}.step"
         stl = output_dir / f"{stem}.stl"
@@ -990,8 +993,8 @@ def _safe_export_stem(preset_id: str | None, run_id: str) -> str:
     return safe_run_id
 
 
-def _model_output_dir_for_run(run_dir: Path) -> Path:
-    output_dir = run_dir.parent.parent / "Model Output"
+def _model_output_dir_for_run(run_dir: Path, model_output_root: Path | None = None) -> Path:
+    output_dir = Path(model_output_root) if model_output_root is not None else run_dir.parent.parent / "Model Output"
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 

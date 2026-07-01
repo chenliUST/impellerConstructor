@@ -68,7 +68,14 @@ python -m pytest tests -q
 python -m compileall -q src
 ```
 
-Start API service from a Python shell or script via `part_rule_synthesis.api:create_app`, or run tests against `RuleSynthesisService` directly.
+Start the local API from the repository root:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m uvicorn part_rule_synthesis.api:app --host 127.0.0.1 --port 8040
+```
+
+With the default API app, downloadable V0.6 exports are copied to the repository `Model Output/` directory. Override the run-data root with `PART_RULE_SYNTHESIS_ROOT` and the export-copy directory with `PART_RULE_SYNTHESIS_MODEL_OUTPUT_DIR` when needed.
 
 ## Frontend Quick Start
 
@@ -98,8 +105,8 @@ Use the repository-level verification helper from the repository root:
 
 Expected current results:
 
-- Backend tests: `115 passed`
-- Frontend tests: `44 passed`
+- Backend tests: `139 passed`
+- Frontend tests: `50 passed`
 - Frontend build check: passed
 
 ## Development Notes
