@@ -68,7 +68,7 @@ def bspline_surface_payload_from_control_net(surface: dict[str, Any]) -> dict[st
         "knot_multiplicities_u": knot_multiplicities_u,
         "knot_values_v": knot_values_v,
         "knot_multiplicities_v": knot_multiplicities_v,
-        "trim_loops": surface.get("trim_loops", {"outer": []}),
+        "trim_loops": surface.get("trim_loops", [{"orientation": "outer", "edges": []}]),
         "source": "surface_graph.control_net",
     }
 

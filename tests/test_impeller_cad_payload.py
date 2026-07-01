@@ -36,6 +36,7 @@ def test_bspline_surface_payload_from_control_net():
     assert payload["weights"][0][0] == 1.0
     assert payload["knots_u"] == [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
     assert payload["knots_v"] == [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+    assert payload["trim_loops"] == [{"orientation": "outer", "edges": []}]
 
 
 def test_boundary_edge_payload_uses_bspline_curve_shape():
