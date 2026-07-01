@@ -22,8 +22,12 @@ describe("frontend application files", () => {
       "src/components/PresetList.js",
       "src/components/FacetPanel.js",
       "src/components/ParameterPanel.js",
+      "src/components/GeometryLayerPanel.js",
+      "src/components/CfdManifestPanel.js",
       "src/components/ModelViewer.js",
       "src/components/ManifestPanel.js",
+      "src/simulationViewModel.js",
+      "src/workspaceModel.js",
       "src/styles.css",
     ]) {
       assert.equal(existsSync(resolve(root, file)), true, `${file} should exist`);
@@ -47,10 +51,102 @@ describe("frontend application files", () => {
     assert.match(panelSource, /type:\s*"number"/);
   });
 
-  test("viewer gives blade edge construction lines a dedicated visible layer", () => {
+  test("parameter panel renders ontology DSL parameter groups", () => {
+    const panelSource = readFileSync(resolve(root, "src/components/ParameterPanel.js"), "utf-8");
+
+    assert.match(panelSource, /parameterGroups/);
+    assert.match(panelSource, /parameter-group/);
+    assert.match(panelSource, /blade_boundaries/);
+    assert.match(panelSource, /controlKind/);
+  });
+
+  test("manifest panel exposes ontology constructor and shape-control metadata", () => {
+    const panelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(panelSource, /ontology_slice/);
+    assert.match(panelSource, /constructor_family/);
+    assert.match(panelSource, /constructor_id/);
+    assert.match(panelSource, /shape_control/);
+    assert.match(panelSource, /optimization_stage/);
+  });
+
+  test("viewer gives blade boundary construction lines and named boundaries dedicated layers", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 
-    assert.match(viewerSource, /blade_edges/);
+    assert.match(viewerSource, /blade_boundaries/);
+    assert.match(viewerSource, /named_boundary_curve/);
     assert.match(viewerSource, /edge_closure_surface/);
+  });
+
+  test("application exposes geometry layer controls to the model viewer", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    const panelSource = readFileSync(resolve(root, "src/components/GeometryLayerPanel.js"), "utf-8");
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(appSource, /GeometryLayerPanel/);
+    assert.match(appSource, /visibleLayers/);
+    assert.match(panelSource, /layerSchema/);
+    assert.match(viewerSource, /layerForSurface/);
+    assert.match(viewerSource, /layerForConstructionFeature/);
+  });
+
+  test("application includes cfd simulation inspection view controls", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const cfdPanelSource = readFileSync(resolve(root, "src/components/CfdManifestPanel.js"), "utf-8");
+    const manifestPanelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(appSource, /simulationViewMode/);
+    assert.match(appSource, /CfdManifestPanel/);
+    assert.match(appSource, /h\(ManifestPanel,\s*\{[\s\S]*before:\s*h\(CfdManifestPanel,/);
+    assert.match(viewerSource, /surfaceVisibleInView/);
+    assert.match(viewerSource, /patchSurfaceIds/);
+    assert.match(cfdPanelSource, /cfdPatchGroups/);
+    assert.match(manifestPanelSource, /before/);
+  });
+
+  test("application includes curve editors and staged generation controls", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+
+    for (const file of [
+      "src/profileEditorModel.js",
+      "src/bladeCurveEditorModel.js",
+      "src/components/ProfileCurveEditor.js",
+      "src/components/BladeCurveEditor.js",
+      "src/components/GenerationStagePanel.js",
+    ]) {
+      assert.equal(existsSync(resolve(root, file)), true, `${file} should exist`);
+    }
+
+    assert.match(appSource, /profileOverrides/);
+    assert.match(appSource, /curveOverrides/);
+    assert.match(appSource, /geometryStage/);
+    assert.match(appSource, /GenerationStagePanel/);
+  });
+
+  test("curve editors expose engineering-unit numeric control-point inputs", () => {
+    const profileSource = readFileSync(resolve(root, "src/components/ProfileCurveEditor.js"), "utf-8");
+    const bladeSource = readFileSync(resolve(root, "src/components/BladeCurveEditor.js"), "utf-8");
+    const styles = readFileSync(resolve(root, "src/styles.css"), "utf-8");
+
+    assert.match(profileSource, /width:\s*520/);
+    assert.match(profileSource, /height:\s*320/);
+    assert.match(profileSource, /profile-control-table/);
+    assert.match(profileSource, /type:\s*"number"/);
+    assert.match(bladeSource, /width:\s*420/);
+    assert.match(bladeSource, /height:\s*128/);
+    assert.match(bladeSource, /curve-control-table/);
+    assert.match(bladeSource, /type:\s*"number"/);
+    assert.match(styles, /profile-control-table/);
+    assert.match(styles, /curve-control-table/);
+  });
+
+  test("application includes CFD manifest panel and simulation view model", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    const modelSource = readFileSync(resolve(root, "src/simulationViewModel.js"), "utf-8");
+
+    assert.match(appSource, /CfdManifestPanel/);
+    assert.match(modelSource, /cfdPatchGroups/);
+    assert.match(modelSource, /surfaceVisibleInView/);
   });
 });

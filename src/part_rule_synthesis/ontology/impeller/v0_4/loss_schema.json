@@ -1,0 +1,57 @@
+{
+  "loss_record_schema_version": "0.4",
+  "supersedes": "../v0_2/loss_schema.json",
+  "required_fields": [
+    "loss_id",
+    "source",
+    "raw_feedback",
+    "target_entities",
+    "violated_contracts",
+    "patch_intents",
+    "shape_patch",
+    "evidence_artifacts",
+    "approval_status"
+  ],
+  "optional_fields": [
+    "simulation_view",
+    "cfd_patch_group",
+    "cfd_patch_instance",
+    "surface_graph_id",
+    "feature_graph_id",
+    "campaign_signature_id"
+  ],
+  "source_values": [
+    "human_review",
+    "geometry_validator",
+    "topology_validator",
+    "simulation_view_validator",
+    "cad_exporter",
+    "mesh_precheck",
+    "cfd_precheck",
+    "fea_precheck",
+    "engineering_precheck"
+  ],
+  "patch_intent_values": [
+    "add_entity",
+    "add_relation",
+    "rename_concept",
+    "split_concept",
+    "tighten_contract",
+    "tighten_shape_constraint",
+    "add_constructor_field",
+    "change_constructor_algorithm",
+    "change_default_parameter",
+    "add_design_variable",
+    "add_topology_variable",
+    "change_control_point_coordinates",
+    "change_control_point_count",
+    "change_knot_policy",
+    "change_degree",
+    "change_weight_policy",
+    "lock_shape_variable",
+    "unlock_shape_variable",
+    "add_simulation_view",
+    "change_patch_group",
+    "add_regression_test"
+  ]
+}

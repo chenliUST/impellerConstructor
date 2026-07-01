@@ -1,0 +1,53 @@
+{
+  "ontology_version": "0.3",
+  "slice_id": "impeller.axisymmetric_throughflow_radial_bladed",
+  "supersedes": "ontology/impeller/v0_2/slice.json",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "definition": "A radial throughflow impeller constructor whose blades are bounded by axisymmetric hub and blade-tip mathematical support profiles, while material domains are explicit finite-thickness solids with bore, caps, chamfers, and shroud/hood shell semantics.",
+  "in_scope": {
+    "part_family": ["impeller"],
+    "flow_topology": ["radial"],
+    "passage_topology": ["throughflow_bladed_channel"],
+    "shroud_topology": ["open", "closed"],
+    "entry_topology": ["single_entry"],
+    "suction_topology": ["single_suction"],
+    "blade_exit_geometry": ["backward_curved"],
+    "blade_population": ["full_blade_set"],
+    "working_domain": ["pump"],
+    "support_surface_model": ["axisymmetric_revolved_meridional_profiles"],
+    "blade_surface_model": ["meanline_thickness_edge_surface_graph"],
+    "hub_material_model": ["capped_revolved_solid_with_bore_and_nonzero_thickness"],
+    "hood_material_model": ["none_for_open", "finite_thickness_revolved_shell_for_closed"]
+  },
+  "out_of_scope": [
+    "mixed_flow",
+    "axial_flow",
+    "recessed_vortex",
+    "single_channel",
+    "multi_channel",
+    "cutter",
+    "double_entry",
+    "double_suction",
+    "splitter_blades",
+    "non_axisymmetric_support_surfaces",
+    "structural_fea_sizing",
+    "manufacturing_process_sizing"
+  ],
+  "semantic_changes_from_v0_2": [
+    "Open impeller blade-tip support is construction-only and not a display/material surface.",
+    "Hub material domain is an explicit finite solid, not only a display surface.",
+    "Hub cap faces and bottom thickness are required.",
+    "Mounting bore is modeled as a cylindrical removal from the hub material domain.",
+    "Closed hood/shroud is a finite-thickness material shell with inner and outer surfaces.",
+    "Hub and hood/shroud chamfer or fillet features are declared as material-domain features."
+  ],
+  "source_refs": [
+    "ksb_impeller",
+    "cfturbo_meridional_contour",
+    "cfturbo_blade_profiles",
+    "cfturbo_blade_edges",
+    "caeses_shrouded_impeller_geometry",
+    "agromayor_2021_unified_parametrization",
+    "user_observed_frontend_geometry_feedback_2026_06_30"
+  ]
+}

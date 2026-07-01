@@ -1,10 +1,17 @@
 import React, { useMemo, useState } from "react";
 
 import { instantiateImpeller, modelExportUrl, synthesizeImpeller } from "./apiClient.js";
-import { apiDefault, presets, selectedPreset } from "./appModel.js";
+import { apiDefault, overridesAfterParameterChange, presets, selectedPreset } from "./appModel.js";
+import { viewModeOptions } from "./simulationViewModel.js";
+import { defaultVisibleLayers } from "./workspaceModel.js";
+import { BladeCurveEditor } from "./components/BladeCurveEditor.js";
+import { CfdManifestPanel } from "./components/CfdManifestPanel.js";
+import { GenerationStagePanel } from "./components/GenerationStagePanel.js";
+import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js";
 import { ManifestPanel } from "./components/ManifestPanel.js";
 import { ModelViewer } from "./components/ModelViewer.js";
 import { ParameterPanel } from "./components/ParameterPanel.js";
+import { ProfileCurveEditor } from "./components/ProfileCurveEditor.js";
 import { PresetList } from "./components/PresetList.js";
 
 const h = React.createElement;
@@ -19,7 +26,13 @@ export function App() {
   const [manifest, setManifest] = useState(null);
   const [stlUrl, setStlUrl] = useState("");
   const [viewMode, setViewMode] = useState("combined");
+  const [simulationViewMode, setSimulationViewMode] = useState("cad_review_360");
+  const [selectedPatch, setSelectedPatch] = useState(null);
   const [autoRotate, setAutoRotate] = useState(false);
+  const [visibleLayers, setVisibleLayers] = useState(defaultVisibleLayers);
+  const [profileOverrides, setProfileOverrides] = useState(null);
+  const [curveOverrides, setCurveOverrides] = useState(null);
+  const [geometryStage, setGeometryStage] = useState("edge_closures");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -38,6 +51,7 @@ export function App() {
       step: modelExportUrl(apiBase, manifest.run_id, "step"),
     };
   }, [apiBase, manifest]);
+  const simulationModes = viewModeOptions();
 
   async function generateModel() {
     setLoading(true);
@@ -48,9 +62,17 @@ export function App() {
       const currentEngineId = synthesized.engine_id;
       setEngineId(currentEngineId);
 
-      const run = await instantiateImpeller(apiBase, currentEngineId, parameters);
+      const run = await instantiateImpeller(
+        apiBase,
+        currentEngineId,
+        parameters,
+        profileOverrides,
+        curveOverrides,
+        geometryStage,
+      );
       setManifest(run.manifest);
       setStlUrl(modelExportUrl(apiBase, run.run_id, "stl"));
+      setSelectedPatch(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -63,15 +85,33 @@ export function App() {
     setParameters({ ...preset.parameters });
     setFacets({ ...preset.facets });
     setEngineId("");
+    setManifest(null);
+    setStlUrl("");
+    setSelectedPatch(null);
+    setProfileOverrides(null);
+    setCurveOverrides(null);
+    setGeometryStage("edge_closures");
   }
 
   function updateParameter(name, value) {
     setParameters((current) => ({ ...current, [name]: value }));
+    const nextOverrides = overridesAfterParameterChange(name, profileOverrides, curveOverrides);
+    if (nextOverrides.profileOverrides !== profileOverrides) {
+      setProfileOverrides(nextOverrides.profileOverrides);
+    }
+    if (nextOverrides.curveOverrides !== curveOverrides) {
+      setCurveOverrides(nextOverrides.curveOverrides);
+    }
   }
 
   function updateFacet(name, value) {
     setFacets((current) => ({ ...current, [name]: value }));
     setEngineId("");
+    setSelectedPatch(null);
+  }
+
+  function updateLayer(layerId, visible) {
+    setVisibleLayers((current) => ({ ...current, [layerId]: visible }));
   }
 
   return h(
@@ -105,8 +145,32 @@ export function App() {
         onReset: () => {
           setParameters({ ...activePreset.parameters });
           setFacets({ ...activePreset.facets });
+          setProfileOverrides(null);
+          setCurveOverrides(null);
+          setGeometryStage("edge_closures");
         },
         loading,
+      }),
+      h(GenerationStagePanel, {
+        geometryStage,
+        onChange: setGeometryStage,
+      }),
+      h(ProfileCurveEditor, {
+        manifest,
+        profileOverrides,
+        onProfileOverridesChange: setProfileOverrides,
+        onResetProfileOverrides: () => setProfileOverrides(null),
+      }),
+      h(BladeCurveEditor, {
+        parameters,
+        curveOverrides,
+        onCurveOverridesChange: setCurveOverrides,
+        onResetCurveOverrides: () => setCurveOverrides(null),
+      }),
+      h(GeometryLayerPanel, {
+        manifest,
+        visibleLayers,
+        onToggle: updateLayer,
       }),
     ),
     h(
@@ -129,9 +193,29 @@ export function App() {
           ),
         ),
         h(
-          "button",
-          { className: "primary-action", onClick: generateModel, disabled: loading },
-          loading ? "Generating..." : "Generate",
+          "div",
+          { className: "viewer-header-actions" },
+          h(
+            "div",
+            { className: "view-mode-tabs" },
+            simulationModes.map((mode) =>
+              h(
+                "button",
+                {
+                  key: mode.id,
+                  className: simulationViewMode === mode.id ? "selected" : "",
+                  type: "button",
+                  onClick: () => setSimulationViewMode(mode.id),
+                },
+                mode.label,
+              ),
+            ),
+          ),
+          h(
+            "button",
+            { className: "primary-action", onClick: generateModel, disabled: loading },
+            loading ? "Generating..." : "Generate",
+          ),
         ),
       ),
       error ? h("div", { className: "error-banner" }, error) : null,
@@ -141,13 +225,22 @@ export function App() {
         constructionLines: manifest?.geometry?.construction_lines || {},
         viewMode,
         setViewMode,
+        simulationViewMode,
+        selectedPatch,
+        manifest,
         autoRotate,
         setAutoRotate,
+        visibleLayers,
       }),
     ),
     h(ManifestPanel, {
       manifest,
       exportLinks,
+      before: h(CfdManifestPanel, {
+        manifest,
+        selectedPatch,
+        onSelectPatch: setSelectedPatch,
+      }),
     }),
   );
 }

@@ -1,0 +1,39 @@
+{
+  "ontology_version": "0.2",
+  "slice_id": "impeller.axisymmetric_throughflow_radial_bladed",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "definition": "A radial throughflow impeller constructor whose blade passages are bounded by axisymmetric hub and blade-tip support surfaces, and whose blades are finite-thickness surface graphs with pressure/suction sides, leading/trailing edge closures, root/tip treatment, and explicit material-domain contracts.",
+  "in_scope": {
+    "part_family": ["impeller"],
+    "flow_topology": ["radial"],
+    "passage_topology": ["throughflow_bladed_channel"],
+    "shroud_topology": ["open", "closed"],
+    "entry_topology": ["single_entry"],
+    "suction_topology": ["single_suction"],
+    "blade_exit_geometry": ["backward_curved"],
+    "blade_population": ["full_blade_set"],
+    "working_domain": ["pump"],
+    "support_surface_model": ["axisymmetric_revolved_meridional_profiles"],
+    "blade_surface_model": ["meanline_thickness_edge_surface_graph"]
+  },
+  "out_of_scope": [
+    "mixed_flow",
+    "axial_flow",
+    "recessed_vortex",
+    "single_channel",
+    "multi_channel",
+    "cutter",
+    "double_entry",
+    "double_suction",
+    "splitter_blades",
+    "non_axisymmetric_support_surfaces"
+  ],
+  "source_refs": [
+    "ksb_impeller",
+    "cfturbo_meridional_contour",
+    "cfturbo_blade_profiles",
+    "cfturbo_blade_edges",
+    "caeses_shrouded_impeller_geometry",
+    "agromayor_2021_unified_parametrization"
+  ]
+}

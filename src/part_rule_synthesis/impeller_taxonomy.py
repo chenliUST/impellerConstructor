@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
+from part_rule_synthesis.impeller_runtime_compiler import compiled_impeller_presets
+
+
+_DSL_BUNDLE = load_impeller_dsl_bundle()
 
 ONTOLOGY: dict[str, Any] = {
     "version": "0.2.0",
@@ -68,6 +73,35 @@ ONTOLOGY: dict[str, Any] = {
         "patterned_around_axis",
     ],
 }
+
+
+def _augment_ontology_with_axisymmetric_slice(ontology: dict[str, Any]) -> None:
+    impeller = ontology["part_families"]["impeller"]
+    impeller["ontology_slices"] = {
+        "axisymmetric_throughflow_radial_bladed": {
+            "slice_id": _DSL_BUNDLE.slice["slice_id"],
+            "constructor_family": _DSL_BUNDLE.slice["constructor_family"],
+            "flow_topology": _DSL_BUNDLE.slice["in_scope"]["flow_topology"],
+            "passage_topology": _DSL_BUNDLE.slice["in_scope"]["passage_topology"],
+            "shroud_topology": _DSL_BUNDLE.slice["in_scope"]["shroud_topology"],
+        }
+    }
+    ontology["terms"] = sorted(
+        set(ontology["terms"])
+        | {
+            term
+            for values in _DSL_BUNDLE.entities.values()
+            if isinstance(values, list)
+            for term in values
+        }
+    )
+    ontology["relations"] = sorted(set(ontology["relations"]) | set(_DSL_BUNDLE.relations["relations"]))
+    ontology["shape_control_schema"] = _DSL_BUNDLE.shape_control_schema
+    ontology["validity_contracts"] = _DSL_BUNDLE.validity_contracts
+    ontology["loss_schema"] = _DSL_BUNDLE.loss_schema
+
+
+_augment_ontology_with_axisymmetric_slice(ONTOLOGY)
 
 
 IMPELLER_FACET_AXES: dict[str, list[str]] = ONTOLOGY["part_families"]["impeller"]["facet_axes"]
@@ -303,6 +337,9 @@ IMPELLER_PRESETS: dict[str, dict[str, Any]] = {
         "source_refs": ["reference_image_closed_twisted_impeller", "research_proxy"],
     },
 }
+
+
+IMPELLER_PRESETS.update(compiled_impeller_presets())
 
 
 LEGACY_CENTRIFUGAL_IMPELLER_FACETS = {

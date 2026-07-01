@@ -1,0 +1,352 @@
+{
+  "shape_control_version": "0.2",
+  "optimization_stage": 1,
+  "target_entities": [
+    "hub_meridional_profile",
+    "blade_tip_meridional_profile",
+    "leading_edge_boundary",
+    "trailing_edge_boundary",
+    "blade_mean_surface",
+    "blade_thickness_distribution",
+    "leading_edge_closure_surface",
+    "trailing_edge_closure_surface",
+    "root_closure_or_fillet_surface",
+    "tip_closure_or_shroud_join_surface"
+  ],
+  "policies": {
+    "hub_meridional_profile": {
+      "target_entity": "hub_meridional_profile",
+      "representation": "nurbs_curve_rz",
+      "representation_topology": {
+        "degree": 3,
+        "control_point_count": 6,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [
+        {
+          "id": "hub_cp_0_r",
+          "kind": "control_point_coordinate",
+          "coordinate": "r",
+          "control_point_index": 0,
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [40.0, 260.0]
+        },
+        {
+          "id": "hub_cp_0_z",
+          "kind": "control_point_coordinate",
+          "coordinate": "z",
+          "control_point_index": 0,
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [-140.0, 40.0]
+        },
+        {
+          "id": "hub_cp_5_r",
+          "kind": "control_point_coordinate",
+          "coordinate": "r",
+          "control_point_index": 5,
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [20.0, 180.0]
+        },
+        {
+          "id": "hub_cp_5_z",
+          "kind": "control_point_coordinate",
+          "coordinate": "z",
+          "control_point_index": 5,
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [20.0, 260.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "hub_base_radius",
+          "maps_to": ["hub_cp_0_r", "hub_cp_1_r"],
+          "intent": "Set lower hub radius; must remain larger than the hub nose radius."
+        },
+        {
+          "id": "hub_nose_radius",
+          "maps_to": ["hub_cp_4_r", "hub_cp_5_r"],
+          "intent": "Set upper hub radius near the inlet eye."
+        },
+        {
+          "id": "hub_profile_convexity",
+          "maps_to": ["hub_cp_2_r", "hub_cp_3_r", "hub_cp_2_z", "hub_cp_3_z"],
+          "intent": "Adjust meridional bulge without reversing profile orientation."
+        }
+      ],
+      "constraints": [
+        "radius_positive",
+        "hub_profile_base_radius_greater_than_nose_radius",
+        "nurbs_knot_vector_non_decreasing",
+        "control_net_dimension_matches_degree",
+        "hub_tip_profiles_do_not_cross"
+      ]
+    },
+    "blade_tip_meridional_profile": {
+      "target_entity": "blade_tip_meridional_profile",
+      "representation": "nurbs_curve_rz",
+      "representation_topology": {
+        "degree": 3,
+        "control_point_count": 6,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [
+        {
+          "id": "tip_cp_0_r",
+          "kind": "control_point_coordinate",
+          "coordinate": "r",
+          "control_point_index": 0,
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [80.0, 400.0]
+        },
+        {
+          "id": "tip_cp_5_r",
+          "kind": "control_point_coordinate",
+          "coordinate": "r",
+          "control_point_index": 5,
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [180.0, 2000.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "tip_inlet_radius",
+          "maps_to": ["tip_cp_0_r", "tip_cp_1_r"],
+          "intent": "Set blade-tip support radius near inlet."
+        },
+        {
+          "id": "tip_outlet_radius",
+          "maps_to": ["tip_cp_4_r", "tip_cp_5_r"],
+          "intent": "Set blade-tip support radius near outlet."
+        }
+      ],
+      "constraints": [
+        "radius_positive",
+        "hub_tip_profiles_do_not_cross",
+        "nurbs_knot_vector_non_decreasing",
+        "control_net_dimension_matches_degree"
+      ]
+    },
+    "leading_edge_boundary": {
+      "target_entity": "leading_edge_boundary",
+      "representation": "nurbs_curve_xyz",
+      "representation_topology": {
+        "degree": 3,
+        "control_point_count": 4,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [
+        {
+          "id": "leading_edge_lean_deg",
+          "kind": "semantic_angle",
+          "editable": true,
+          "optimizable": true,
+          "bounds_deg": [-60.0, 60.0]
+        },
+        {
+          "id": "leading_edge_sweep_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [-300.0, 300.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "leading_edge_direction",
+          "maps_to": ["leading_edge_lean_deg", "leading_edge_sweep_mm"],
+          "intent": "Control the u=0 blade boundary direction between hub and tip supports."
+        }
+      ],
+      "constraints": [
+        "leading_edge_boundary_connects_hub_to_tip_support",
+        "nurbs_knot_vector_non_decreasing",
+        "control_net_dimension_matches_degree"
+      ]
+    },
+    "trailing_edge_boundary": {
+      "target_entity": "trailing_edge_boundary",
+      "representation": "nurbs_curve_xyz",
+      "representation_topology": {
+        "degree": 3,
+        "control_point_count": 4,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [
+        {
+          "id": "trailing_edge_lean_deg",
+          "kind": "semantic_angle",
+          "editable": true,
+          "optimizable": true,
+          "bounds_deg": [-60.0, 60.0]
+        },
+        {
+          "id": "trailing_edge_sweep_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [-300.0, 300.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "trailing_edge_direction",
+          "maps_to": ["trailing_edge_lean_deg", "trailing_edge_sweep_mm"],
+          "intent": "Control the u=1 blade boundary direction between hub and tip supports."
+        }
+      ],
+      "constraints": [
+        "trailing_edge_boundary_connects_hub_to_tip_support",
+        "nurbs_knot_vector_non_decreasing",
+        "control_net_dimension_matches_degree"
+      ]
+    },
+    "blade_mean_surface": {
+      "target_entity": "blade_mean_surface",
+      "representation": "nurbs_surface_uv_xyz",
+      "representation_topology": {
+        "degree_u": 3,
+        "degree_v": 3,
+        "control_point_count_u": 6,
+        "control_point_count_v": 4,
+        "degree": 3,
+        "control_point_count": 24,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [
+        {
+          "id": "blade_wrap_deg",
+          "kind": "semantic_angle",
+          "editable": true,
+          "optimizable": true,
+          "bounds_deg": [-240.0, 240.0]
+        },
+        {
+          "id": "blade_lean_deg",
+          "kind": "semantic_angle",
+          "editable": true,
+          "optimizable": true,
+          "bounds_deg": [-60.0, 60.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "blade_wrap",
+          "maps_to": ["blade_wrap_deg"],
+          "intent": "Control circumferential blade wrapping from leading to trailing edge."
+        }
+      ],
+      "constraints": [
+        "blade_root_boundary_conforms_to_hub_support_surface",
+        "blade_tip_boundary_conforms_to_blade_tip_support_surface",
+        "pressure_suction_surfaces_do_not_swap"
+      ]
+    },
+    "blade_thickness_distribution": {
+      "target_entity": "blade_thickness_distribution",
+      "representation": "scalar_field_uv",
+      "representation_topology": {
+        "degree": 2,
+        "control_point_count": 9,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [
+        {
+          "id": "blade_thickness_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [0.5, 120.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "blade_mid_thickness",
+          "maps_to": ["blade_thickness_mm"],
+          "intent": "Control nominal blade thickness before edge closure shaping."
+        }
+      ],
+      "constraints": [
+        "nurbs_weights_positive",
+        "leading_edge_thickness_plausibility"
+      ]
+    },
+    "leading_edge_closure_surface": {
+      "target_entity": "leading_edge_closure_surface",
+      "representation": "nurbs_surface_uv_xyz",
+      "representation_topology": {
+        "degree": 2,
+        "control_point_count": 9,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [],
+      "semantic_handles": [],
+      "constraints": ["blade_has_leading_and_trailing_edge_closures"]
+    },
+    "trailing_edge_closure_surface": {
+      "target_entity": "trailing_edge_closure_surface",
+      "representation": "nurbs_surface_uv_xyz",
+      "representation_topology": {
+        "degree": 2,
+        "control_point_count": 9,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [],
+      "semantic_handles": [],
+      "constraints": ["blade_has_leading_and_trailing_edge_closures"]
+    },
+    "root_closure_or_fillet_surface": {
+      "target_entity": "root_closure_or_fillet_surface",
+      "representation": "nurbs_surface_uv_xyz",
+      "representation_topology": {
+        "degree": 2,
+        "control_point_count": 9,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [
+        {
+          "id": "root_fillet_radius_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [0.0, 80.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "root_fillet_radius",
+          "maps_to": ["root_fillet_radius_mm"],
+          "intent": "Control blade-root transition radius into the hub material domain."
+        }
+      ],
+      "constraints": ["root_fillet_radius_positive"]
+    },
+    "tip_closure_or_shroud_join_surface": {
+      "target_entity": "tip_closure_or_shroud_join_surface",
+      "representation": "nurbs_surface_uv_xyz",
+      "representation_topology": {
+        "degree": 2,
+        "control_point_count": 9,
+        "knot_policy": "clamped_uniform",
+        "weights": "unit"
+      },
+      "control_variables": [],
+      "semantic_handles": [],
+      "constraints": ["blade_has_root_and_tip_treatment"]
+    }
+  }
+}

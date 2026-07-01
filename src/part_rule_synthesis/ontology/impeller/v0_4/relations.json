@@ -1,0 +1,28 @@
+{
+  "ontology_version": "0.4",
+  "supersedes": "../v0_2/relations.json",
+  "relations": [
+    "revolves_about(profile_curve, rotation_axis)",
+    "generates_surface(profile_curve, support_surface)",
+    "bounds_meridional_channel(hub_meridional_profile, blade_tip_meridional_profile)",
+    "lies_on(boundary_curve, support_surface)",
+    "conforms_to(blade_root_boundary, hub_support_surface)",
+    "conforms_to(blade_tip_boundary, blade_tip_support_surface)",
+    "bounds_surface(boundary_curve, camber_surface)",
+    "offsets_from(pressure_surface, camber_surface)",
+    "offsets_from(suction_surface, camber_surface)",
+    "closes_between(leading_edge_transition, pressure_surface, suction_surface)",
+    "closes_between(trailing_edge_transition, pressure_surface, suction_surface)",
+    "blends_between(root_transition, blade_root_boundary, hub_support_surface)",
+    "blends_between(tip_transition, blade_tip_boundary, blade_tip_support_surface)",
+    "owns_feature(feature_graph, feature_node)",
+    "generates_feature_surface(feature_node, surface_node)",
+    "suppresses_feature_in_view(feature_node, simulation_view)",
+    "assigns_to_patch_group(surface_node, cfd_patch_group)",
+    "names_patch_instance(surface_node, cfd_patch_instance)",
+    "freezes_topology(campaign_signature, topology_variable)",
+    "varies_design_variable(campaign_signature, design_variable)",
+    "records_loss_against(loss_record, surface_node)",
+    "records_loss_against(loss_record, feature_node)"
+  ]
+}

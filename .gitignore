@@ -1,5 +1,6 @@
 .worktrees/
 worktrees/
+.superpowers/
 frontend/node_modules/
 runs/
 .pytest_cache/

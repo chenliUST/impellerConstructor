@@ -1,0 +1,111 @@
+{
+  "shape_control_version": "0.3",
+  "supersedes": "../../v0_2/shape_controls/default_shape_controls.json",
+  "optimization_stage": 2,
+  "target_entities": [
+    "hub_meridional_profile",
+    "blade_tip_meridional_profile",
+    "leading_edge_boundary",
+    "trailing_edge_boundary",
+    "blade_mean_surface",
+    "blade_thickness_distribution",
+    "leading_edge_closure_surface",
+    "trailing_edge_closure_surface",
+    "root_closure_or_fillet_surface",
+    "tip_closure_or_shroud_join_surface",
+    "hub_material_solid",
+    "front_hood_shell",
+    "hub_chamfer_features",
+    "hood_chamfer_features"
+  ],
+  "material_domain_controls": {
+    "hub_material_solid": {
+      "control_variables": [
+        {
+          "id": "hub_wall_thickness_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [1.0, 120.0]
+        },
+        {
+          "id": "hub_bottom_thickness_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [1.0, 160.0]
+        },
+        {
+          "id": "hub_top_cap_thickness_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [1.0, 80.0]
+        }
+      ],
+      "constraints": [
+        "hub_wall_thickness_positive",
+        "hub_bottom_thickness_positive",
+        "hub_top_cap_thickness_positive",
+        "mounting_bore_radius_less_than_local_hub_radius"
+      ]
+    },
+    "front_hood_shell": {
+      "control_variables": [
+        {
+          "id": "hood_wall_thickness_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [1.0, 80.0]
+        }
+      ],
+      "constraints": [
+        "hood_wall_thickness_positive_for_closed_impeller",
+        "hood_shell_inner_outer_surfaces_do_not_cross"
+      ]
+    },
+    "hub_chamfer_features": {
+      "control_variables": [
+        {
+          "id": "hub_chamfer_radius_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [0.0, 30.0]
+        }
+      ],
+      "constraints": [
+        "hub_chamfer_radius_nonnegative",
+        "hub_chamfer_does_not_remove_blade_root_boundary"
+      ]
+    },
+    "hood_chamfer_features": {
+      "control_variables": [
+        {
+          "id": "hood_chamfer_radius_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [0.0, 30.0]
+        }
+      ],
+      "constraints": [
+        "hood_chamfer_radius_nonnegative",
+        "hood_chamfer_does_not_remove_blade_tip_boundary"
+      ]
+    }
+  },
+  "carried_forward_from_v0_2": [
+    "hub_meridional_profile",
+    "blade_tip_meridional_profile",
+    "leading_edge_boundary",
+    "trailing_edge_boundary",
+    "blade_mean_surface",
+    "blade_thickness_distribution",
+    "leading_edge_closure_surface",
+    "trailing_edge_closure_surface",
+    "root_closure_or_fillet_surface",
+    "tip_closure_or_shroud_join_surface"
+  ]
+}

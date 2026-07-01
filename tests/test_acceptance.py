@@ -1,8 +1,10 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from part_rule_synthesis.api import create_app
+from part_rule_synthesis.service import RuleSynthesisService
 
 
 def test_acceptance_ontology_and_primitives_are_queryable(tmp_path: Path):
@@ -56,6 +58,316 @@ def test_acceptance_impeller_ontology_exposes_facets_and_presets(tmp_path: Path)
         }
     )
     assert all(preset["part_family_id"] == "impeller" for preset in preset_payload)
+
+
+def test_acceptance_impeller_ontology_exposes_axisymmetric_radial_slice(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    ontology = client.get("/api/ontology").json()
+    impeller = ontology["part_families"]["impeller"]
+
+    assert impeller["ontology_slices"]["axisymmetric_throughflow_radial_bladed"]["constructor_family"] == (
+        "AxisymmetricThroughflowRadialBladedImpeller"
+    )
+    assert impeller["ontology_slices"]["axisymmetric_throughflow_radial_bladed"]["flow_topology"] == ["radial"]
+    assert "blade_tip_support_surface" in ontology["terms"]
+    assert "leading_edge_boundary" in ontology["terms"]
+    assert "trailing_edge_boundary" in ontology["terms"]
+    assert "shape_control_policy" in ontology["terms"]
+    assert "semantic_handle" in ontology["terms"]
+
+
+def test_acceptance_legacy_impeller_preset_alias_compiles_to_new_constructor_family(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "axisymmetric_nurbs_open_throughflow_study"},
+    )
+
+    assert engine.status_code == 200
+    payload = engine.json()
+    rule = json.loads(Path(payload["dsl_path"]).read_text(encoding="utf-8"))
+    assert rule["preset_id"] == "radial_open_reference"
+    assert rule["legacy_preset_id"] == "axisymmetric_nurbs_open_throughflow_study"
+    assert rule["ontology_slice"] == "impeller.axisymmetric_throughflow_radial_bladed"
+    assert rule["constructor_family"] == "AxisymmetricThroughflowRadialBladedImpeller"
+    assert rule["constructor_id"] == "axisymmetric_throughflow_radial_bladed.open"
+    assert rule["shape_control"]["optimization_stage"] == 1
+    assert rule["shape_control"]["locked_topology"] is True
+
+
+def test_acceptance_impeller_manifest_includes_ontology_constructor_validity_loss_and_shape_control(
+    tmp_path: Path,
+):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference"},
+    ).json()
+
+    manifest = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}},
+    ).json()["manifest"]
+
+    assert manifest["ontology_slice"] == "impeller.axisymmetric_throughflow_radial_bladed"
+    assert manifest["constructor_family"] == "AxisymmetricThroughflowRadialBladedImpeller"
+    assert manifest["constructor_id"] == "axisymmetric_throughflow_radial_bladed.open"
+    assert manifest["dsl_version"] == "0.2"
+    assert manifest["shape_control"]["optimization_stage"] == 1
+    assert manifest["shape_control"]["locked_topology"] is True
+    assert manifest["shape_control"]["shape_optimization_space"]["editable_variables"]
+    assert manifest["shape_control"]["provenance"]["source"] in {
+        "default_rule",
+        "explicit_dsl_control_net",
+        "human_patch",
+        "optimizer_patch",
+    }
+    assert "geometry_contracts" in manifest["validity"]
+    assert "topology_contracts" in manifest["validity"]
+    assert "engineering_warnings" in manifest["validity"]
+    assert manifest["loss_records"] == []
+
+
+def test_acceptance_impeller_instantiate_accepts_profile_curve_overrides_and_stage(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", "radial_open_reference", {})
+    default_run = service.instantiate(engine.engine_id, {})
+    hub = default_run.manifest["geometry_kernel"]["meridional_profiles"]["hub"]
+    tip = default_run.manifest["geometry_kernel"]["meridional_profiles"]["tip_or_shroud"]
+    edited_hub = {
+        **hub,
+        "control_points": [
+            [point[0] + (4.0 if index == 1 else 0.0), point[1]]
+            for index, point in enumerate(hub["control_points"])
+        ],
+    }
+
+    run = service.instantiate(
+        engine.engine_id,
+        {},
+        profile_overrides={"hub_profile": edited_hub, "tip_or_shroud_profile": tip},
+        geometry_stage="hub_support",
+    )
+
+    assert run.run_id != default_run.run_id
+    assert run.manifest["geometry_stage"] == "hub_support"
+    assert run.manifest["profile_overrides"]["hub_profile"]["control_points"] == edited_hub["control_points"]
+    assert run.manifest["curve_overrides"] == {}
+    assert all(
+        surface["role"] in {"hub", "outer_hub_shell", "inner_hub_bottom", "mounting_bore", "reference_only", "front_shroud_inner_surface"}
+        for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]
+    )
+
+
+def test_acceptance_impeller_instantiate_accepts_curve_overrides(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", "radial_open_reference", {})
+
+    run = service.instantiate(
+        engine.engine_id,
+        {},
+        curve_overrides={
+            "blade_mean": {
+                "theta_center_u_curve": {
+                    "coordinate_system": "u_theta_deg",
+                    "control_points": [[0.0, 0.0], [0.33, -20.0], [0.66, -70.0], [1.0, -118.0]],
+                },
+                "span_lean_u_curve": {
+                    "coordinate_system": "u_lean_deg",
+                    "control_points": [[0.0, 12.0], [0.5, 8.0], [1.0, -8.0]],
+                },
+            },
+            "blade_edges": {
+                "leading_edge_sweep_v_curve": {
+                    "coordinate_system": "v_support_u_offset",
+                    "control_points": [[0.0, -0.03], [0.5, 0.0], [1.0, 0.03]],
+                },
+                "trailing_edge_sweep_v_curve": {
+                    "coordinate_system": "v_support_u_offset",
+                    "control_points": [[0.0, 0.05], [0.5, 0.0], [1.0, -0.05]],
+                },
+            },
+            "thickness": {
+                "thickness_u_curve": {
+                    "coordinate_system": "u_thickness_mm",
+                    "control_points": [[0.0, 18.0], [0.5, 14.0], [1.0, 10.0]],
+                }
+            },
+        },
+        geometry_stage="blade_surfaces",
+    )
+
+    assert run.manifest["geometry_stage"] == "blade_surfaces"
+    assert run.manifest["curve_overrides"]["blade_mean"]["theta_center_u_curve"]["coordinate_system"] == "u_theta_deg"
+    assert any(surface["role"] == "blade_pressure" for surface in run.manifest["geometry"]["surface_graph"]["surfaces"])
+    assert not any(surface["kind"] == "edge_closure_surface" for surface in run.manifest["geometry"]["surface_graph"]["surfaces"])
+
+
+def test_acceptance_impeller_instantiate_rejects_invalid_geometry_stage(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference"},
+    ).json()
+
+    response = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}, "geometry_stage": "floating_blades"},
+    )
+
+    assert response.status_code == 400
+    assert "invalid geometry stage" in response.json()["detail"]
+
+
+def test_acceptance_open_and_closed_impellers_share_tip_support_surface_semantics(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    cases = [
+        ("radial_open_reference", "reference_only", False),
+        ("radial_closed_reference", "front_shroud_inner_surface", True),
+    ]
+
+    for preset_id, expected_role, expected_material in cases:
+        engine = client.post(
+            "/api/rule-engines/synthesize",
+            json={"part_family_id": "impeller", "preset_id": preset_id},
+        ).json()
+        manifest = client.post(
+            f"/api/rule-engines/{engine['engine_id']}/instantiate",
+            json={"parameters": {}},
+        ).json()["manifest"]
+        tip_surfaces = [
+            surface
+            for surface in manifest["geometry"]["surface_graph"]["surfaces"]
+            if surface.get("ontology_id") == "blade_tip_support_surface"
+        ]
+
+        assert len(tip_surfaces) == 1
+        assert tip_surfaces[0]["role"] == expected_role
+        assert tip_surfaces[0]["material"] is expected_material
+        assert manifest["geometry"]["surface_graph"]["named_boundary_curves"]
+        assert manifest["geometry"]["construction_lines"]["blade_boundaries"]
+
+
+def test_acceptance_v03_open_impeller_hides_tip_support_and_records_finite_hub(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_3"},
+    ).json()
+    manifest = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}},
+    ).json()["manifest"]
+
+    surface_graph = manifest["geometry"]["surface_graph"]
+    surfaces = {surface["id"]: surface for surface in surface_graph["surfaces"]}
+    surface_uv_ids = {
+        line["surface_id"]
+        for line in manifest["geometry"]["construction_lines"]["surface_uv"]
+    }
+    geometry_checks = {check["name"]: check for check in manifest["geometry_validity"]["geometry_checks"]}
+    topology_checks = {check["name"]: check for check in manifest["geometry_validity"]["topology_checks"]}
+
+    assert manifest["dsl_version"] == "0.3"
+    assert "tip_reference_surface" not in surfaces
+    assert "tip_reference_surface" not in surface_uv_ids
+    assert "hub_top_cap_face" in surfaces
+    assert "hub_chamfer_top_cap_surface" in surfaces
+    assert surfaces["mounting_bore_cylinder"]["role"] == "mounting_bore"
+    assert manifest["geometry_kernel"]["material_domains"]["hub"]["kind"] == "capped_revolved_solid_with_bore"
+    assert manifest["geometry_kernel"]["material_domains"]["hub"]["wall_thickness_mm"] > 0.0
+    assert geometry_checks["material_domain_positive_thickness"]["status"] == "PASS"
+    assert topology_checks["open_tip_support_surface_hidden_from_display_graph"]["status"] == "PASS"
+    assert topology_checks["hub_solid_has_caps_and_bore"]["status"] == "PASS"
+
+
+def test_acceptance_v03_closed_impeller_displays_finite_hood_shell(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_closed_reference_v0_3"},
+    ).json()
+    manifest = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}},
+    ).json()["manifest"]
+
+    surfaces = {surface["id"]: surface for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_checks = {check["name"]: check for check in manifest["geometry_validity"]["geometry_checks"]}
+    topology_checks = {check["name"]: check for check in manifest["geometry_validity"]["topology_checks"]}
+
+    assert manifest["dsl_version"] == "0.3"
+    assert surfaces["shroud_surface"]["role"] == "front_shroud_inner_surface"
+    assert "hood_outer_surface" in surfaces
+    assert "hood_outlet_cap_surface" in surfaces
+    assert manifest["geometry_kernel"]["material_domains"]["front_hood"]["kind"] == "finite_thickness_revolved_shell"
+    assert manifest["geometry_kernel"]["material_domains"]["front_hood"]["wall_thickness_mm"] > 0.0
+    assert geometry_checks["material_domain_positive_thickness"]["status"] == "PASS"
+    assert topology_checks["closed_hood_shell_surfaces_present"]["status"] == "PASS"
+
+
+def test_impeller_v04_manifest_includes_valid_cfd_full_360_patch_groups(tmp_path):
+    service = RuleSynthesisService(tmp_path)
+
+    for preset_id in ["radial_open_reference_v0_4", "radial_closed_reference_v0_4"]:
+        engine = service.synthesize("impeller", preset_id=preset_id)
+        dsl = service.engines[engine.engine_id]
+        parameters = {name: spec["default"] for name, spec in dsl["parameters"].items()}
+
+        run = service.instantiate(engine.engine_id, parameters)
+        cfd = run.manifest["simulation_manifests"]["cfd_full_360"]
+
+        assert cfd["domain_kind"] == "full_360_wetted_surface"
+        assert cfd["feature_suppression"]["suppressed_features"]
+        assert cfd["validity"]["status"] == "PASS"
+        for group_id in dsl["simulation_views"]["cfd_full_360"]["required_patch_groups"]:
+            assert group_id in cfd["patch_groups"]
+            assert cfd["patch_groups"][group_id]["instances"], f"{preset_id} missing {group_id}"
+        assert all(
+            cfd["patch_instances"][instance_id]["source_type"] == "boundary_curve"
+            for instance_id in cfd["patch_groups"]["inlet_patch"]["instances"]
+        )
+        assert all(
+            cfd["patch_instances"][instance_id]["source_type"] == "boundary_curve"
+            for instance_id in cfd["patch_groups"]["outlet_patch"]["instances"]
+        )
+        assert all("mounting_bore" not in instance_id for instance_id in cfd["patch_instances"])
+
+
+def test_impeller_v04_full_360_cfd_view_is_stable_under_numeric_parameter_change(tmp_path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
+    dsl = service.engines[engine.engine_id]
+    parameters = {name: spec["default"] for name, spec in dsl["parameters"].items()}
+
+    default_run = service.instantiate(engine.engine_id, parameters)
+    edited_run = service.instantiate(
+        engine.engine_id,
+        {**parameters, "blade_wrap_deg": parameters["blade_wrap_deg"] + 5.0},
+    )
+
+    default_cfd = default_run.manifest["simulation_manifests"]["cfd_full_360"]
+    edited_cfd = edited_run.manifest["simulation_manifests"]["cfd_full_360"]
+
+    assert set(edited_cfd["patch_groups"]) == set(default_cfd["patch_groups"])
+    assert (
+        edited_run.manifest["campaign_signature"]["design_vector_length"]
+        == default_run.manifest["campaign_signature"]["design_vector_length"]
+    )
+
+
+def test_impeller_legacy_manifest_keeps_empty_simulation_manifests_for_compatibility(tmp_path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_3")
+
+    run = service.instantiate(engine.engine_id, {})
+
+    assert run.manifest["simulation_manifests"] == {}
 
 
 def test_acceptance_impeller_rule_engine_records_facets_rules_and_construction_lines(tmp_path: Path):

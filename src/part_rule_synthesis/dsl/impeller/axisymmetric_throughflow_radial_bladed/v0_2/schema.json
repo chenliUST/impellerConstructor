@@ -1,0 +1,32 @@
+{
+  "dsl_version": "0.2",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "required_sections": [
+    "classification",
+    "coordinate_system",
+    "main_dimensions",
+    "primary_flow_path",
+    "support_surfaces",
+    "shape_control",
+    "material_domain",
+    "blade_pattern",
+    "blade_boundaries",
+    "blade_surface_construction",
+    "blade_profile",
+    "blade_edges",
+    "surface_graph",
+    "validation"
+  ],
+  "variant_rules": {
+    "open": {
+      "blade_tip_support_surface.material": false,
+      "blade_tip_support_surface.role": "reference_only",
+      "front_shroud_material_solid": "forbidden"
+    },
+    "closed": {
+      "blade_tip_support_surface.material": true,
+      "blade_tip_support_surface.role": "front_shroud_inner_surface",
+      "front_shroud_material_solid": "required"
+    }
+  }
+}

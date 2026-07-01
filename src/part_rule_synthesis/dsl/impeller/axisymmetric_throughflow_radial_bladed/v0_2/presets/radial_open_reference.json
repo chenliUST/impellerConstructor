@@ -1,0 +1,44 @@
+{
+  "preset_id": "radial_open_reference",
+  "display_name": "Radial open reference",
+  "summary": "Open radial throughflow impeller using the AxisymmetricThroughflowRadialBladedImpeller constructor and stage-1 locked NURBS shape control.",
+  "constructor_id": "axisymmetric_throughflow_radial_bladed.open",
+  "parameter_values": {
+    "blade_count": 7,
+    "inlet_radius_mm": 180.0,
+    "exit_radius_mm": 620.0,
+    "inlet_blade_height_mm": 150.0,
+    "outlet_blade_height_mm": 72.0,
+    "inlet_blade_angle_deg": 21.0,
+    "outlet_blade_angle_deg": 42.0,
+    "blade_thickness_mm": 18.0,
+    "hub_curve_height_mm": 82.0,
+    "mounting_bore_radius_mm": 40.0,
+    "blade_wrap_deg": 118.0,
+    "blade_lean_deg": 8.0,
+    "leading_edge_lean_deg": 12.0,
+    "trailing_edge_lean_deg": -8.0,
+    "leading_edge_sweep_mm": 30.0,
+    "trailing_edge_sweep_mm": -45.0,
+    "root_fillet_radius_mm": 8.0
+  },
+  "editable_parameters": [
+    "blade_count",
+    "inlet_radius_mm",
+    "exit_radius_mm",
+    "inlet_blade_height_mm",
+    "outlet_blade_height_mm",
+    "mounting_bore_radius_mm",
+    "blade_wrap_deg",
+    "leading_edge_lean_deg",
+    "trailing_edge_lean_deg",
+    "leading_edge_sweep_mm",
+    "trailing_edge_sweep_mm",
+    "blade_thickness_mm",
+    "root_fillet_radius_mm"
+  ],
+  "source_refs": [
+    "research_inferred_initial_values",
+    "cfturbo_design_workflow"
+  ]
+}

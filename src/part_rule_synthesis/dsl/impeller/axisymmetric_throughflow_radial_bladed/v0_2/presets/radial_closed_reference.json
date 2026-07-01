@@ -1,0 +1,44 @@
+{
+  "preset_id": "radial_closed_reference",
+  "display_name": "Radial closed reference",
+  "summary": "Closed radial throughflow impeller using the same blade-tip support math as the open constructor, with material front-shroud semantics.",
+  "constructor_id": "axisymmetric_throughflow_radial_bladed.closed",
+  "parameter_values": {
+    "blade_count": 6,
+    "inlet_radius_mm": 190.0,
+    "exit_radius_mm": 600.0,
+    "inlet_blade_height_mm": 130.0,
+    "outlet_blade_height_mm": 68.0,
+    "inlet_blade_angle_deg": 22.0,
+    "outlet_blade_angle_deg": 38.0,
+    "blade_thickness_mm": 16.0,
+    "hub_curve_height_mm": 74.0,
+    "mounting_bore_radius_mm": 42.0,
+    "blade_wrap_deg": 95.0,
+    "blade_lean_deg": -5.0,
+    "leading_edge_lean_deg": 8.0,
+    "trailing_edge_lean_deg": -6.0,
+    "leading_edge_sweep_mm": 24.0,
+    "trailing_edge_sweep_mm": -36.0,
+    "root_fillet_radius_mm": 7.0
+  },
+  "editable_parameters": [
+    "blade_count",
+    "inlet_radius_mm",
+    "exit_radius_mm",
+    "inlet_blade_height_mm",
+    "outlet_blade_height_mm",
+    "mounting_bore_radius_mm",
+    "blade_wrap_deg",
+    "leading_edge_lean_deg",
+    "trailing_edge_lean_deg",
+    "leading_edge_sweep_mm",
+    "trailing_edge_sweep_mm",
+    "blade_thickness_mm",
+    "root_fillet_radius_mm"
+  ],
+  "source_refs": [
+    "research_inferred_initial_values",
+    "cfturbo_design_workflow"
+  ]
+}

@@ -8,11 +8,18 @@ export async function synthesizeImpeller(apiBase, preset) {
   });
 }
 
-export async function instantiateImpeller(apiBase, engineId, parameters) {
+export async function instantiateImpeller(
+  apiBase,
+  engineId,
+  parameters,
+  profileOverrides = null,
+  curveOverrides = null,
+  geometryStage = "edge_closures",
+) {
   return requestJson(`${normalizeBase(apiBase)}/api/rule-engines/${encodeURIComponent(engineId)}/instantiate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildInstantiatePayload(parameters)),
+    body: JSON.stringify(buildInstantiatePayload(parameters, profileOverrides, curveOverrides, geometryStage)),
   });
 }
 

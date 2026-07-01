@@ -1,16 +1,42 @@
 export const apiDefault = "http://127.0.0.1:8040";
 
+export const parameterGroups = [
+  { id: "main_dimensions", label: "Main dimensions" },
+  { id: "meridional_support", label: "Meridional support" },
+  { id: "shape_control", label: "Shape control" },
+  { id: "blade_pattern", label: "Blade pattern" },
+  { id: "blade_boundaries", label: "Blade boundaries" },
+  { id: "blade_surface", label: "Blade surface" },
+  { id: "blade_profile", label: "Blade profile" },
+  { id: "solid_material", label: "Solid material" },
+  { id: "edge_treatment", label: "Edge treatment" },
+];
+
 export const parameterSchema = {
-  blade_count: { label: "Blade count", unit: "", step: 1, valueType: "integer", default: 7 },
-  inlet_radius_mm: { label: "Inlet radius", unit: "mm", step: 1, default: 180 },
-  exit_radius_mm: { label: "Exit radius", unit: "mm", step: 1, default: 620 },
-  inlet_blade_height_mm: { label: "Inlet blade height", unit: "mm", step: 1, default: 150 },
-  outlet_blade_height_mm: { label: "Outlet blade height", unit: "mm", step: 1, default: 72 },
-  hub_curve_height_mm: { label: "Hub curve height", unit: "mm", step: 1, default: 82 },
-  mounting_bore_radius_mm: { label: "Mounting bore radius", unit: "mm", step: 1, default: 40 },
-  blade_wrap_deg: { label: "Blade wrap", unit: "deg", step: 1, default: 118 },
-  blade_lean_deg: { label: "Blade lean", unit: "deg", step: 1, default: 8 },
-  blade_thickness_mm: { label: "Blade thickness", unit: "mm", step: 0.5, default: 18 },
+  blade_count: { label: "Blade count", unit: "", step: 1, valueType: "integer", default: 7, group: "blade_pattern" },
+  inlet_radius_mm: { label: "Inlet radius", unit: "mm", step: 1, default: 180, group: "main_dimensions" },
+  exit_radius_mm: { label: "Exit radius", unit: "mm", step: 1, default: 620, group: "main_dimensions" },
+  inlet_blade_height_mm: { label: "Inlet blade height", unit: "mm", step: 1, default: 150, group: "meridional_support" },
+  outlet_blade_height_mm: { label: "Outlet blade height", unit: "mm", step: 1, default: 72, group: "meridional_support" },
+  hub_curve_height_mm: { label: "Hub curve height", unit: "mm", step: 1, default: 82, group: "meridional_support" },
+  mounting_bore_radius_mm: { label: "Mounting bore radius", unit: "mm", step: 1, default: 40, group: "main_dimensions" },
+  hub_base_radius_mm: { label: "Hub base radius", unit: "mm", step: 1, default: 190, group: "shape_control", controlKind: "semantic_handle" },
+  hub_nose_radius_mm: { label: "Hub nose radius", unit: "mm", step: 1, default: 72, group: "shape_control", controlKind: "semantic_handle" },
+  hub_profile_convexity: { label: "Hub profile convexity", unit: "", step: 0.05, default: 0.35, group: "shape_control", controlKind: "semantic_handle" },
+  blade_wrap_deg: { label: "Blade wrap", unit: "deg", step: 1, default: 118, group: "blade_surface" },
+  blade_lean_deg: { label: "Blade lean", unit: "deg", step: 1, default: 8, group: "blade_surface" },
+  leading_edge_lean_deg: { label: "Leading edge lean", unit: "deg", step: 1, default: 12, group: "blade_boundaries" },
+  trailing_edge_lean_deg: { label: "Trailing edge lean", unit: "deg", step: 1, default: -8, group: "blade_boundaries" },
+  leading_edge_sweep_mm: { label: "Leading edge sweep", unit: "mm", step: 1, default: 30, group: "blade_boundaries" },
+  trailing_edge_sweep_mm: { label: "Trailing edge sweep", unit: "mm", step: 1, default: -45, group: "blade_boundaries" },
+  blade_thickness_mm: { label: "Blade thickness", unit: "mm", step: 0.5, default: 18, group: "blade_profile" },
+  root_fillet_radius_mm: { label: "Root fillet radius", unit: "mm", step: 0.5, default: 8, group: "edge_treatment" },
+  hub_wall_thickness_mm: { label: "Hub wall thickness", unit: "mm", step: 0.5, default: 18, group: "solid_material" },
+  hub_bottom_thickness_mm: { label: "Hub bottom thickness", unit: "mm", step: 0.5, default: 24, group: "solid_material" },
+  hub_top_cap_thickness_mm: { label: "Hub top cap thickness", unit: "mm", step: 0.5, default: 8, group: "solid_material" },
+  hub_chamfer_radius_mm: { label: "Hub chamfer radius", unit: "mm", step: 0.5, default: 3, group: "edge_treatment" },
+  hood_wall_thickness_mm: { label: "Hood wall thickness", unit: "mm", step: 0.5, default: 12, group: "solid_material" },
+  hood_chamfer_radius_mm: { label: "Hood chamfer radius", unit: "mm", step: 0.5, default: 3, group: "edge_treatment" },
 };
 
 export const facetSchema = {
@@ -25,10 +51,10 @@ export const facetSchema = {
 export const presets = [
   {
     id: "axisymmetric-nurbs-open-throughflow",
-    presetId: "axisymmetric_nurbs_open_throughflow_study",
-    name: "NURBS open throughflow",
-    summary: "Open impeller: revolved NURBS hub/tip profiles with conformal pressure and suction surfaces.",
-    tags: ["open", "NURBS", "throughflow"],
+    presetId: "radial_open_reference_v0_4",
+    name: "NURBS open throughflow v0.4",
+    summary: "Open impeller: surface/feature graph, CFD full-360 manifest, finite hub solid, conformal blade surfaces.",
+    tags: ["open", "NURBS", "v0.4", "CFD"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -48,15 +74,26 @@ export const presets = [
       mounting_bore_radius_mm: 40,
       blade_wrap_deg: 118,
       blade_lean_deg: 8,
+      leading_edge_lean_deg: 12,
+      trailing_edge_lean_deg: -8,
+      leading_edge_sweep_mm: 30,
+      trailing_edge_sweep_mm: -45,
       blade_thickness_mm: 18,
+      root_fillet_radius_mm: 8,
+      hub_wall_thickness_mm: 18,
+      hub_bottom_thickness_mm: 24,
+      hub_top_cap_thickness_mm: 8,
+      hub_chamfer_radius_mm: 3,
+      hood_wall_thickness_mm: 12,
+      hood_chamfer_radius_mm: 3,
     },
   },
   {
     id: "axisymmetric-nurbs-closed-throughflow",
-    presetId: "axisymmetric_nurbs_closed_throughflow_study",
-    name: "NURBS closed throughflow",
-    summary: "Closed impeller: revolved NURBS hub/shroud profiles with conformal pressure and suction surfaces.",
-    tags: ["closed", "NURBS", "throughflow"],
+    presetId: "radial_closed_reference_v0_4",
+    name: "NURBS closed throughflow v0.4",
+    summary: "Closed impeller: surface/feature graph, CFD full-360 manifest, finite hub solid, finite hood shell.",
+    tags: ["closed", "NURBS", "v0.4", "CFD"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -76,12 +113,28 @@ export const presets = [
       mounting_bore_radius_mm: 42,
       blade_wrap_deg: 95,
       blade_lean_deg: -5,
+      leading_edge_lean_deg: 8,
+      trailing_edge_lean_deg: -6,
+      leading_edge_sweep_mm: 24,
+      trailing_edge_sweep_mm: -36,
       blade_thickness_mm: 16,
+      root_fillet_radius_mm: 7,
+      hub_wall_thickness_mm: 18,
+      hub_bottom_thickness_mm: 24,
+      hub_top_cap_thickness_mm: 8,
+      hub_chamfer_radius_mm: 3,
+      hood_wall_thickness_mm: 12,
+      hood_chamfer_radius_mm: 3,
     },
   },
 ];
 
-export function buildInstantiatePayload(inputParameters) {
+export function buildInstantiatePayload(
+  inputParameters,
+  profileOverrides = null,
+  curveOverrides = null,
+  geometryStage = "edge_closures",
+) {
   const parameters = {};
 
   for (const [name, spec] of Object.entries(parameterSchema)) {
@@ -91,7 +144,14 @@ export function buildInstantiatePayload(inputParameters) {
     parameters[name] = spec.valueType === "integer" ? Math.round(numeric) : roundForApi(numeric);
   }
 
-  return { parameters };
+  const payload = { parameters, geometry_stage: geometryStage };
+  if (profileOverrides) {
+    payload.profile_overrides = profileOverrides;
+  }
+  if (curveOverrides) {
+    payload.curve_overrides = curveOverrides;
+  }
+  return payload;
 }
 
 export function buildSynthesizePayload(preset) {
@@ -99,6 +159,13 @@ export function buildSynthesizePayload(preset) {
     part_family_id: preset.partFamilyId,
     preset_id: preset.presetId,
     facets: { ...preset.facets },
+  };
+}
+
+export function overridesAfterParameterChange(name, profileOverrides, curveOverrides) {
+  return {
+    profileOverrides: profileDriverParameters.has(name) ? null : profileOverrides,
+    curveOverrides: curveDriverParameters.has(name) ? null : curveOverrides,
   };
 }
 
@@ -134,3 +201,27 @@ export function manifestSummary(manifest) {
 function roundForApi(value) {
   return Math.round(value * 1000) / 1000;
 }
+
+const profileDriverParameters = new Set([
+  "inlet_radius_mm",
+  "exit_radius_mm",
+  "inlet_blade_height_mm",
+  "outlet_blade_height_mm",
+  "hub_curve_height_mm",
+  "mounting_bore_radius_mm",
+  "hub_base_radius_mm",
+  "hub_nose_radius_mm",
+  "hub_profile_convexity",
+]);
+
+const curveDriverParameters = new Set([
+  "inlet_radius_mm",
+  "exit_radius_mm",
+  "blade_wrap_deg",
+  "blade_lean_deg",
+  "leading_edge_lean_deg",
+  "trailing_edge_lean_deg",
+  "leading_edge_sweep_mm",
+  "trailing_edge_sweep_mm",
+  "blade_thickness_mm",
+]);

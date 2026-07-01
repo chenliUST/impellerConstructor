@@ -1,0 +1,70 @@
+{
+  "ontology_version": "0.4",
+  "supersedes": "../v0_2/entities.json",
+  "coordinate_system": [
+    "rotation_axis",
+    "meridional_plane",
+    "cylindrical_frame"
+  ],
+  "primary_flow_path": [
+    "hub_meridional_profile",
+    "blade_tip_meridional_profile",
+    "inlet_flow_path_boundary",
+    "outlet_flow_path_boundary",
+    "meridional_channel_wire"
+  ],
+  "support_surfaces": [
+    "hub_support_surface",
+    "blade_tip_support_surface",
+    "front_shroud_inner_surface"
+  ],
+  "blade_surface_model": [
+    "camber_surface",
+    "pressure_surface",
+    "suction_surface",
+    "leading_edge_transition",
+    "trailing_edge_transition",
+    "root_transition",
+    "tip_transition",
+    "thickness_field"
+  ],
+  "feature_graph": [
+    "leading_edge_round",
+    "trailing_edge_round",
+    "root_fillet",
+    "tip_transition",
+    "mounting_bore",
+    "shaft_seat",
+    "keyway",
+    "rear_hub_groove",
+    "balance_holes",
+    "trim_edge",
+    "lightening_slots"
+  ],
+  "surface_graph": [
+    "surface_graph",
+    "surface_node",
+    "boundary_curve",
+    "adjacency_edge",
+    "cfd_patch_group",
+    "cfd_patch_instance"
+  ],
+  "simulation_views": [
+    "cad_review_360",
+    "cfd_full_360",
+    "fea_solid"
+  ],
+  "design_space": [
+    "topology_variable",
+    "design_variable",
+    "campaign_signature",
+    "campaign_freeze_rule"
+  ],
+  "validation": [
+    "geometry_validity_report",
+    "topology_validity_report",
+    "simulation_view_validity_report",
+    "engineering_warning_report",
+    "loss_record"
+  ]
+}

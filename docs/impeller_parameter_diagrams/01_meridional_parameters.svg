@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="760" viewBox="0 0 1120 760">
+<defs>
+<marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+<path d="M0,0 L0,6 L9,3 z" fill="context-stroke" />
+</marker>
+<style>
+.title{font:700 26px Arial,sans-serif;fill:#17231f}
+.subtitle{font:700 16px Arial,sans-serif;fill:#24342f}
+.label{font:700 13px Arial,sans-serif;fill:#17231f}
+.small{font:12px Arial,sans-serif;fill:#40514b}
+</style>
+</defs>
+<rect x="0" y="0" width="100%" height="100%" fill="#f5f7f6"/>
+<text x="50.00" y="48.00" class="title">Meridional support parameters</text>
+<text x="50.00" y="76.00" class="small">Generated from axisymmetric_throughflow_nurbs: hub/tip NURBS profiles sampled by the current kernel.</text>
+<line x1="90.00" y1="630.00" x2="970.00" y2="630.00" stroke="#94a3b8" stroke-width="1.0" stroke-linecap="round"/>
+<line x1="90.00" y1="155.00" x2="90.00" y2="630.00" stroke="#94a3b8" stroke-width="1.0" stroke-linecap="round"/>
+<text x="875.00" y="664.00" class="small">R radius (mm)</text>
+<text x="35.00" y="169.00" class="small">Z height (mm)</text>
+<polyline points="255.59,477.32 430.65,510.68 731.34,595.64 839.63,630.00" fill="none" stroke="#64748b" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="326.56,205.89 465.34,273.67 742.90,439.32 904.81,499.71" fill="none" stroke="#64748b" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 5"/>
+<polyline points="255.59,477.32 268.95,479.92 282.75,482.70 296.96,485.65 311.56,488.77 326.50,492.05 341.77,495.47 357.33,499.03 373.16,502.71 389.21,506.51 405.47,510.42 421.90,514.42 438.48,518.52 455.16,522.69 471.93,526.93 488.76,531.23 505.61,535.58 522.45,539.97 539.26,544.39 556.00,548.83 572.65,553.28 589.17,557.74 605.53,562.19 621.72,566.62 637.68,571.02 653.40,575.39 668.85,579.71 684.00,583.97 698.81,588.17 713.25,592.30 727.31,596.34 740.93,600.28 754.11,604.13 766.80,607.86 778.98,611.47 790.62,614.94 801.69,618.28 812.15,621.46 821.98,624.48 831.15,627.33 839.63,630.00" fill="none" stroke="#2f7d67" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="326.56,205.89 337.22,211.16 348.39,216.77 360.02,222.71 372.10,228.96 384.61,235.50 397.52,242.31 410.81,249.38 424.45,256.68 438.42,264.19 452.69,271.90 467.25,279.79 482.06,287.83 497.11,296.02 512.37,304.32 527.82,312.72 543.43,321.20 559.18,329.75 575.04,338.34 590.99,346.95 607.01,355.57 623.08,364.18 639.16,372.75 655.24,381.27 671.29,389.72 687.29,398.08 703.21,406.33 719.04,414.45 734.74,422.43 750.29,430.23 765.67,437.86 780.86,445.28 795.83,452.47 810.55,459.43 825.01,466.12 839.17,472.53 853.03,478.64 866.54,484.44 879.69,489.89 892.46,494.99 904.81,499.71" fill="none" stroke="#2f6f9e" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="255.59" cy="477.32" r="5" fill="#2f7d67"/>
+<text x="263.59" y="471.32" class="small">H0</text>
+<circle cx="430.65" cy="510.68" r="5" fill="#2f7d67"/>
+<text x="438.65" y="504.68" class="small">H1</text>
+<circle cx="731.34" cy="595.64" r="5" fill="#2f7d67"/>
+<text x="739.34" y="589.64" class="small">H2</text>
+<circle cx="839.63" cy="630.00" r="5" fill="#2f7d67"/>
+<text x="847.63" y="624.00" class="small">H3</text>
+<circle cx="326.56" cy="205.89" r="5" fill="#2f6f9e"/>
+<text x="334.56" y="199.89" class="small">T0</text>
+<circle cx="465.34" cy="273.67" r="5" fill="#2f6f9e"/>
+<text x="473.34" y="267.67" class="small">T1</text>
+<circle cx="742.90" cy="439.32" r="5" fill="#2f6f9e"/>
+<text x="750.90" y="433.32" class="small">T2</text>
+<circle cx="904.81" cy="499.71" r="5" fill="#2f6f9e"/>
+<text x="912.81" y="493.71" class="small">T3</text>
+<line x1="90.00" y1="162.46" x2="326.56" y2="162.46" stroke="#111827" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="90.00" y1="154.46" x2="90.00" y2="170.46" stroke="#111827" stroke-width="1.0" stroke-linecap="round"/>
+<line x1="326.56" y1="154.46" x2="326.56" y2="170.46" stroke="#111827" stroke-width="1.0" stroke-linecap="round"/>
+<text x="153.28" y="152.46" class="label">inlet_radius_mm = 180</text>
+<line x1="90.00" y1="445.43" x2="904.81" y2="445.43" stroke="#111827" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="90.00" y1="437.43" x2="90.00" y2="453.43" stroke="#111827" stroke-width="1.0" stroke-linecap="round"/>
+<line x1="904.81" y1="437.43" x2="904.81" y2="453.43" stroke="#111827" stroke-width="1.0" stroke-linecap="round"/>
+<text x="442.41" y="435.43" class="label">exit_radius_mm = 620</text>
+<line x1="344.56" y1="477.32" x2="344.56" y2="205.89" stroke="#111827" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="255.59" y1="477.32" x2="352.56" y2="477.32" stroke="#111827" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="3 4"/>
+<line x1="326.56" y1="205.89" x2="352.56" y2="205.89" stroke="#111827" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="3 4"/>
+<text x="354.56" y="341.61" class="label">inlet_blade_height_mm = 150</text>
+<line x1="922.81" y1="630.00" x2="922.81" y2="499.71" stroke="#111827" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="839.63" y1="630.00" x2="930.81" y2="630.00" stroke="#111827" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="3 4"/>
+<line x1="904.81" y1="499.71" x2="930.81" y2="499.71" stroke="#111827" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="3 4"/>
+<text x="692.81" y="564.86" class="label">outlet_blade_height_mm = 72</text>
+<line x1="170.03" y1="630.00" x2="170.03" y2="477.32" stroke="#111827" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="152.03" y1="630.00" x2="178.03" y2="630.00" stroke="#111827" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="3 4"/>
+<line x1="152.03" y1="477.32" x2="178.03" y2="477.32" stroke="#111827" stroke-width="1.0" stroke-linecap="round" stroke-dasharray="3 4"/>
+<text x="180.03" y="553.66" class="label">hub_curve_height_mm = 82</text>
+<line x1="90.00" y1="604.67" x2="142.57" y2="604.67" stroke="#111827" stroke-width="2" stroke-linecap="round" marker-end="url(#arrow)"/>
+<line x1="90.00" y1="596.67" x2="90.00" y2="612.67" stroke="#111827" stroke-width="1.0" stroke-linecap="round"/>
+<line x1="142.57" y1="596.67" x2="142.57" y2="612.67" stroke="#111827" stroke-width="1.0" stroke-linecap="round"/>
+<text x="61.28" y="594.67" class="label">mounting_bore_radius_mm = 40</text>
+<rect x="780.00" y="120.00" width="260.00" height="106.00" rx="8" fill="#ffffff" stroke="#d8e0dc" stroke-width="1"/>
+<line x1="798.00" y1="145.00" x2="832.00" y2="145.00" stroke="#2f7d67" stroke-width="4.0" stroke-linecap="round"/>
+<text x="842.00" y="150.00" class="small">Hub NURBS profile</text>
+<line x1="798.00" y1="171.00" x2="832.00" y2="171.00" stroke="#2f6f9e" stroke-width="4.0" stroke-linecap="round"/>
+<text x="842.00" y="176.00" class="small">Tip/shroud support profile</text>
+<line x1="798.00" y1="197.00" x2="832.00" y2="197.00" stroke="#64748b" stroke-width="4.0" stroke-linecap="round"/>
+<text x="842.00" y="202.00" class="small">Control polygon</text>
+<rect x="710.00" y="275.00" width="340.00" height="188.00" rx="8" fill="#ffffff" stroke="#d8e0dc" stroke-width="1"/>
+<text x="726.00" y="301.00" class="label">Current formula:</text>
+<text x="726.00" y="319.00" class="small">hub_profile = clamped cubic NURBS in R-Z</text>
+<text x="726.00" y="337.00" class="small">tip_profile = clamped cubic NURBS in R-Z</text>
+<text x="726.00" y="355.00" class="small">surface = revolve(profile, Z axis)</text>
+<text x="726.00" y="373.00" class="small"></text>
+<text x="726.00" y="391.00" class="small">Not wired in this kernel yet:</text>
+<text x="726.00" y="409.00" class="small">hub_base_radius_mm</text>
+<text x="726.00" y="427.00" class="small">hub_nose_radius_mm</text>
+<text x="726.00" y="445.00" class="small">hub_profile_convexity</text>
+</svg>

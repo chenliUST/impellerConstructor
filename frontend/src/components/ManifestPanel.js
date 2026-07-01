@@ -4,12 +4,19 @@ import { manifestSummary } from "../appModel.js";
 
 const h = React.createElement;
 
-export function ManifestPanel({ manifest, exportLinks }) {
+export function ManifestPanel({ manifest, exportLinks, before = null }) {
   const summary = manifestSummary(manifest);
+  const ontology_slice = manifest?.ontology_slice || "";
+  const constructor_family = manifest?.constructor_family || "";
+  const constructor_id = manifest?.constructor_id || "";
+  const shape_control = manifest?.shape_control || {};
+  const optimization_stage = shape_control.optimization_stage || "unset";
+  const validityContracts = manifest?.validity || {};
 
   return h(
     "aside",
     { className: "right-panel" },
+    before,
     h("div", { className: "section-title" }, "Run manifest"),
     h(
       "div",
@@ -18,6 +25,17 @@ export function ManifestPanel({ manifest, exportLinks }) {
       h(Metric, { label: "Run", value: summary.runId || "Not generated" }),
       h(Metric, { label: "Parameters", value: String(summary.parameterCount) }),
       h(Metric, { label: "Ops", value: String(summary.operationCount) }),
+      h(Metric, { label: "Slice", value: ontology_slice || "None" }),
+      h(Metric, { label: "Constructor", value: constructor_id || constructor_family || "None" }),
+      h(Metric, { label: "Shape stage", value: optimization_stage }),
+      h(Metric, {
+        label: "Contracts",
+        value: String(
+          (validityContracts.geometry_contracts || []).length +
+            (validityContracts.topology_contracts || []).length +
+            (validityContracts.engineering_contracts || []).length,
+        ),
+      }),
     ),
     manifest
       ? h(
@@ -32,6 +50,35 @@ export function ManifestPanel({ manifest, exportLinks }) {
           h(Section, {
             title: "Source refs",
             body: summary.sourceRefs.length ? summary.sourceRefs.join(", ") : "None",
+          }),
+          h(Section, {
+            title: "Ontology constructor",
+            body: h(
+              "pre",
+              null,
+              JSON.stringify(
+                {
+                  ontology_slice,
+                  constructor_family,
+                  constructor_id,
+                  dsl_version: manifest.dsl_version,
+                },
+                null,
+                2,
+              ),
+            ),
+          }),
+          h(Section, {
+            title: "Shape control",
+            body: h("pre", null, JSON.stringify(shape_control, null, 2)),
+          }),
+          h(Section, {
+            title: "Validity contracts",
+            body: h("pre", null, JSON.stringify(validityContracts, null, 2)),
+          }),
+          h(Section, {
+            title: "Loss records",
+            body: h("pre", null, JSON.stringify(manifest.loss_records || {}, null, 2)),
           }),
           h(Section, {
             title: "Facets",

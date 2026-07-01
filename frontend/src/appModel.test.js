@@ -6,6 +6,8 @@ import {
   buildSynthesizePayload,
   exportUrl,
   facetSchema,
+  overridesAfterParameterChange,
+  parameterGroups,
   parameterSchema,
   presets,
 } from "./appModel.js";
@@ -71,15 +73,29 @@ describe("impeller frontend model", () => {
       "outlet_blade_height_mm",
       "hub_curve_height_mm",
       "mounting_bore_radius_mm",
+      "hub_base_radius_mm",
+      "hub_nose_radius_mm",
+      "hub_profile_convexity",
       "blade_wrap_deg",
       "blade_lean_deg",
+      "leading_edge_lean_deg",
+      "trailing_edge_lean_deg",
+      "leading_edge_sweep_mm",
+      "trailing_edge_sweep_mm",
       "blade_thickness_mm",
+      "root_fillet_radius_mm",
+      "hub_wall_thickness_mm",
+      "hub_bottom_thickness_mm",
+      "hub_top_cap_thickness_mm",
+      "hub_chamfer_radius_mm",
+      "hood_wall_thickness_mm",
+      "hood_chamfer_radius_mm",
     ]);
   });
 
   test("presets include focused open and closed NURBS throughflow studies", () => {
-    const open = presets.find((preset) => preset.presetId === "axisymmetric_nurbs_open_throughflow_study");
-    const closed = presets.find((preset) => preset.presetId === "axisymmetric_nurbs_closed_throughflow_study");
+    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_4");
+    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_4");
 
     assert.ok(open);
     assert.ok(closed);
@@ -89,6 +105,109 @@ describe("impeller frontend model", () => {
     assert.equal(closed.facets.passage_topology, "throughflow_bladed_channel");
     assert.ok(open.parameters.blade_wrap_deg > 0);
     assert.ok(closed.parameters.blade_wrap_deg > 0);
+    assert.ok(open.parameters.hub_wall_thickness_mm > 0);
+    assert.ok(closed.parameters.hood_wall_thickness_mm > 0);
+  });
+
+  test("declares parameter groups in display order", () => {
+    assert.deepEqual(parameterGroups.map((group) => group.id), [
+      "main_dimensions",
+      "meridional_support",
+      "shape_control",
+      "blade_pattern",
+      "blade_boundaries",
+      "blade_surface",
+      "blade_profile",
+      "solid_material",
+      "edge_treatment",
+    ]);
+  });
+
+  test("exposes leading trailing controls and semantic shape handles", () => {
+    assert.equal(parameterSchema.leading_edge_lean_deg.group, "blade_boundaries");
+    assert.equal(parameterSchema.trailing_edge_lean_deg.group, "blade_boundaries");
+    assert.equal(parameterSchema.leading_edge_sweep_mm.group, "blade_boundaries");
+    assert.equal(parameterSchema.trailing_edge_sweep_mm.group, "blade_boundaries");
+    assert.equal(parameterSchema.hub_base_radius_mm.group, "shape_control");
+    assert.equal(parameterSchema.hub_nose_radius_mm.group, "shape_control");
+    assert.equal(parameterSchema.hub_profile_convexity.group, "shape_control");
+    assert.equal(parameterSchema.hub_base_radius_mm.controlKind, "semantic_handle");
+  });
+
+  test("buildInstantiatePayload preserves explicit boundary parameters", () => {
+    const payload = buildInstantiatePayload({
+      leading_edge_lean_deg: 15,
+      trailing_edge_lean_deg: -10,
+      leading_edge_sweep_mm: 25,
+      trailing_edge_sweep_mm: -30,
+    });
+
+    assert.equal(payload.parameters.leading_edge_lean_deg, 15);
+    assert.equal(payload.parameters.trailing_edge_lean_deg, -10);
+    assert.equal(payload.parameters.leading_edge_sweep_mm, 25);
+    assert.equal(payload.parameters.trailing_edge_sweep_mm, -30);
+  });
+
+  test("buildInstantiatePayload serializes profile curve overrides and generation stage", () => {
+    const profileOverrides = {
+      hub_profile: {
+        kind: "nurbs_curve",
+        degree: 3,
+        coordinate_system: "rz_meridional_mm",
+        control_points: [[120, 80], [260, 60], [460, 24], [570, 0]],
+        weights: [1, 1, 1, 1],
+        knots: [0, 0, 0, 0, 1, 1, 1, 1],
+      },
+    };
+    const curveOverrides = {
+      blade_mean: {
+        theta_center_u_curve: {
+          coordinate_system: "u_theta_deg",
+          control_points: [[0, 0], [0.5, -60], [1, -118]],
+        },
+      },
+    };
+
+    const payload = buildInstantiatePayload(
+      presets[0].parameters,
+      profileOverrides,
+      curveOverrides,
+      "blade_surfaces",
+    );
+
+    assert.equal(payload.geometry_stage, "blade_surfaces");
+    assert.deepEqual(payload.profile_overrides, profileOverrides);
+    assert.deepEqual(payload.curve_overrides, curveOverrides);
+  });
+
+  test("changing hub profile driver clears stale profile overrides", () => {
+    const profileOverrides = {
+      hub_profile: { control_points: [[1, 1], [2, 2], [3, 3], [4, 4]] },
+      tip_or_shroud_profile: { control_points: [[2, 3], [3, 4], [4, 5], [5, 6]] },
+    };
+    const curveOverrides = {
+      blade_mean: {
+        theta_center_u_curve: {
+          coordinate_system: "u_theta_deg",
+          control_points: [[0, 0], [1, -118]],
+        },
+      },
+    };
+
+    const next = overridesAfterParameterChange("hub_curve_height_mm", profileOverrides, curveOverrides);
+
+    assert.equal(next.profileOverrides, null);
+    assert.deepEqual(next.curveOverrides, curveOverrides);
+  });
+
+  test("changing blade curve driver clears stale curve overrides", () => {
+    const profileOverrides = { hub_profile: { control_points: [] } };
+    const curveOverrides = { thickness: { thickness_u_curve: { control_points: [[0, 18], [1, 9]] } } };
+
+    const next = overridesAfterParameterChange("blade_wrap_deg", profileOverrides, curveOverrides);
+
+    assert.deepEqual(next.profileOverrides, profileOverrides);
+    assert.equal(next.curveOverrides, null);
   });
 
   test("exportUrl builds API export paths", () => {
