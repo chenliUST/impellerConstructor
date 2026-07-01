@@ -71,6 +71,11 @@ It should not be treated as a V0.5 patch because it requires:
 - new interactive fillet/blend design variables;
 - new acceptance evidence from third-party CAD tools.
 
+In this branch, V0.6 is implemented as graph-derived trimmed NURBS/analytic
+B-Rep STEP evidence for the open and closed reference presets. The implementation is
+research B-Rep evidence, not certified manufacturing CAD, solver-ready CFD volume
+meshing, or a promise that every parameter combination heals in every CAD tool.
+
 ## 5. Ontology Insight
 
 V0.5 established:
@@ -79,7 +84,7 @@ V0.5 established:
 export_artifact is a projection of surface_graph
 ```
 
-V0.6 should establish:
+V0.6 establishes:
 
 ```text
 surface_graph must contain both sampled view geometry and CAD-construction geometry.
@@ -94,25 +99,42 @@ These are distinct but linked layers:
 - `mesh_region`: simulation mesh review region;
 - `blend_feature`: explicit fillet/rounding feature with design variables.
 
-## 6. Evidence To Preserve During Implementation
+## 6. Implemented Evidence
 
-When V0.6 is implemented, this folder should receive:
+Task 14 generated local V0.6 sample outputs under `Model Output/_v06_evidence_runs`.
+The generated STEP/STL/mesh STEP files are intentionally local artifacts and should
+remain untracked unless a small sample is explicitly selected as evidence.
+
+```python
+{'runs': [{'preset_id': 'radial_open_reference_v0_6', 'run_id': 'run-962deafb7272', 'step': 'Model Output\\_v06_evidence_runs\\Model Output\\radial_open_reference_v0_6-run-962deafb7272.step', 'stl': 'Model Output\\_v06_evidence_runs\\Model Output\\radial_open_reference_v0_6-run-962deafb7272.stl', 'mesh_step': 'Model Output\\_v06_evidence_runs\\Model Output\\radial_open_reference_v0_6-run-962deafb7272.mesh.step', 'brep_face_count': 81, 'mesh_triangle_count': 42624, 'root_fillet_radius_mm': 8.0}, {'preset_id': 'radial_closed_reference_v0_6', 'run_id': 'run-331c7cacc1c2', 'step': 'Model Output\\_v06_evidence_runs\\Model Output\\radial_closed_reference_v0_6-run-331c7cacc1c2.step', 'stl': 'Model Output\\_v06_evidence_runs\\Model Output\\radial_closed_reference_v0_6-run-331c7cacc1c2.stl', 'mesh_step': 'Model Output\\_v06_evidence_runs\\Model Output\\radial_closed_reference_v0_6-run-331c7cacc1c2.mesh.step', 'brep_face_count': 86, 'mesh_triangle_count': 48000, 'root_fillet_radius_mm': 8.0}]}
+```
+
+Implemented pieces recorded by the branch:
+
+1. `surface_graph_trimmed_brep` export contract.
+2. OCP/OCCT STEP writer for graph-derived B-Rep faces.
+3. `cad_surface` payloads on exportable graph surfaces.
+4. Analytic plane and cylinder support alongside NURBS surface payloads.
+5. STEP exactness label `surface_graph_trimmed_nurbs_step`.
+6. STL and mesh STEP retained as separately labeled sampled/mesh artifacts.
+7. Default output copies under the project `Model Output/` folder.
+8. CFD surface mesh manifest with triangle-count evidence for mesh inspection.
+9. Frontend V0.6 export options, mesh view affordances, and fillet controls.
+
+## 7. Remaining Evidence Gaps
+
+Manual evidence still to collect:
 
 1. STEP import screenshots from at least one third-party CAD/viewer.
-2. A machine-readable export summary with B-Rep face count, shell count, sewing status,
-   and exactness labels.
-3. A screenshot or export manifest showing visible blade root fillets.
-4. A screenshot or manifest showing leading/trailing edge rounding.
-5. Mesh view screenshots showing CFD360 mesh inspection and quality metrics.
-6. Any failed CAD import logs, because failed import is useful ontology evidence.
+2. Screenshot evidence that blade root fillets and edge rounding are visible in a
+   third-party CAD/viewer.
+3. Mesh-view screenshots showing CFD360 mesh inspection and quality metrics.
+4. Failed CAD import logs across parameter sweeps, because failed import is useful
+   ontology evidence.
 
-Generated heavy STEP/STL outputs should remain in `Model Output/` unless a small
-sample file is explicitly selected as evidence.
+## 8. Current Status
 
-## 7. Current Status
-
-No V0.6 runtime resources exist yet.
-
-This evidence folder records the motivation and required research trace for a future
-V0.6 implementation. It does not claim that trimmed NURBS/B-Rep export is already
-implemented.
+V0.6 runtime resources exist in this branch and generate STEP files as graph-derived
+trimmed NURBS/analytic B-Rep faces for `radial_open_reference_v0_6` and
+`radial_closed_reference_v0_6`. The separate STL and mesh STEP artifacts remain
+sampled mesh outputs and are labeled as such.

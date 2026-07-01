@@ -4,19 +4,25 @@ Date: 2026-07-01
 
 Supersedes: `v0_5`
 
-## Motivation
-
-v0.6 starts the trimmed NURBS B-Rep STEP resource line while keeping the v0.5 surface graph baseline loadable. It records the intended exact STEP export contract separately from the mesh-inspection path so downstream implementation cannot label mesh STEP output as B-Rep output.
-
 ## Changes
 
-1. Added `export_contracts/surface_graph_trimmed_brep.json`.
-2. Added constructor-level `surface_graph_trimmed_brep` export contract references.
-3. Kept the v0.5 surface/feature graph, CFD full-360, and FEA schema resources as the geometry baseline.
-4. Defined exact STEP direction as `surface_graph_trimmed_nurbs_step`.
-5. Kept mesh inspection explicit as `surface_graph_sampled_mesh` and `surface_graph_mesh_step`.
-6. Added explicit leading-edge, trailing-edge, tip-edge, and root-fillet defaults to the v0.6 presets.
+1. Added `surface_graph_trimmed_brep` export contract.
+2. Added trimmed NURBS/analytic B-Rep STEP exactness label.
+3. Preserved STL and mesh STEP exports as separately labeled artifacts.
+4. Added CAD payloads for exportable graph surfaces.
+5. Added explicit blade root and edge fillet/blend feature controls.
+6. Added CFD surface mesh manifest for mesh-quality inspection.
+7. Added default output copies under `Model Output/`.
 
-## Implementation Status
+## Implementation Evidence
 
-The v0.6 resources define the contract for trimmed NURBS B-Rep STEP export. Writer implementation and later geometry-kernel work are intentionally outside this resource-line task.
+Task 14 generated local evidence runs for `radial_open_reference_v0_6` and
+`radial_closed_reference_v0_6`. The open preset emitted 81 B-Rep faces and 42624 mesh
+triangles; the closed preset emitted 86 B-Rep faces and 48000 mesh triangles. Both
+runs used `root_fillet_radius_mm` of 8.0.
+
+## Limitations
+
+- V0.6 STEP output is research B-Rep evidence, not certified manufacturing geometry.
+- CFD support is a surface mesh inspection manifest, not a solver-ready volume mesh.
+- CAD healing/import quality still needs third-party review across parameter ranges.
