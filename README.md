@@ -39,10 +39,9 @@ See [docs/repository-map.md](docs/repository-map.md).
 
 ## Backend Quick Start
 
-PowerShell:
+PowerShell from the repository root:
 
 ```powershell
-cd "C:\Users\CHEN Li\Documents\TurboJetCase\part-rule-synthesis"
 $env:PYTHONPATH='src'
 python -m pytest tests -q
 python -m compileall -q src
@@ -52,10 +51,10 @@ Start API service from a Python shell or script via `part_rule_synthesis.api:cre
 
 ## Frontend Quick Start
 
-PowerShell:
+PowerShell from the repository root:
 
 ```powershell
-cd "C:\Users\CHEN Li\Documents\TurboJetCase\part-rule-synthesis\frontend"
+cd frontend
 npm.cmd test
 npm.cmd run build
 npm.cmd run dev
