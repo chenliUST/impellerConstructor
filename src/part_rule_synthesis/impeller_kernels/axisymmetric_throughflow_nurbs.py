@@ -1844,6 +1844,7 @@ def _check_fillet_radius_feasible(params: dict[str, float]) -> dict[str, Any]:
         params.get("root_fillet_radius_mm", 0.0),
         params.get("leading_edge_radius_mm", 0.0),
         params.get("trailing_edge_radius_mm", 0.0),
+        params.get("tip_edge_radius_mm", 0.0),
     )
     return {
         "name": "fillet_radius_within_local_thickness_bounds",

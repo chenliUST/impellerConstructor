@@ -460,12 +460,16 @@ def test_v06_root_and_edge_fillets_are_explicit_design_surfaces():
     with TemporaryDirectory() as directory:
         service = RuleSynthesisService(Path(directory))
         engine = service.synthesize("impeller", "radial_open_reference_v0_6")
-        run = service.instantiate(engine.engine_id, {"root_fillet_radius_mm": 10.0})
+        run = service.instantiate(
+            engine.engine_id,
+            {"root_fillet_radius_mm": 10.0, "tip_edge_radius_mm": 4.0},
+        )
 
     surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
     root = surfaces["blade_0_root_fillet_surface"]
     leading = surfaces["blade_0_leading_edge_fillet_surface"]
     trailing = surfaces["blade_0_trailing_edge_fillet_surface"]
+    tip = surfaces["blade_0_tip_edge_fillet_surface"]
     validity_check_names = {
         check["name"]
         for check in run.manifest["geometry"]["validity"]["geometry_checks"]
@@ -480,8 +484,47 @@ def test_v06_root_and_edge_fillets_are_explicit_design_surfaces():
     assert root["cad_surface"]["surface_type"] == "bspline_surface"
     assert leading["role"] == "blade_leading_edge_fillet"
     assert trailing["role"] == "blade_trailing_edge_fillet"
+    assert tip["role"] == "blade_tip_edge_fillet"
+    assert tip["radius_mm"] == 4.0
     assert "fillet_radius_within_local_thickness_bounds" in validity_check_names
     assert "fillet_radius_within_local_thickness_bounds" in manifest_validity_check_names
+
+
+def test_v06_tip_fillet_radius_participates_in_feasibility_check():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_6")
+        run = service.instantiate(
+            engine.engine_id,
+            {
+                "blade_thickness_mm": 18.0,
+                "root_fillet_radius_mm": 1.0,
+                "leading_edge_radius_mm": 1.0,
+                "trailing_edge_radius_mm": 1.0,
+                "tip_edge_radius_mm": 100.0,
+            },
+        )
+
+    surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_checks = {
+        check["name"]: check
+        for check in run.manifest["geometry"]["validity"]["geometry_checks"]
+    }
+    manifest_geometry_checks = {
+        check["name"]: check
+        for check in run.manifest["geometry_validity"]["geometry_checks"]
+    }
+
+    assert surfaces["blade_0_tip_edge_fillet_surface"]["radius_mm"] == 100.0
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["status"] == "FAIL"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
+    assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["status"] == "FAIL"
+    assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
 
 
 def test_axisymmetric_nurbs_blade_edges_are_visible_construction_lines_from_closure_surfaces():
