@@ -12,9 +12,9 @@ This repository is a research-grade CAD/CAE integration prototype, not a product
 - Latest slice: `impeller.axisymmetric_throughflow_radial_bladed`
 - Latest DSL version: `v0_6`
 - Latest frontend workflow: v0.6 open/closed throughflow presets with CAD review, CFD full-360, mesh inspection, feature-debug views, export options, and fillet controls
-- Current export status: V0.6 generated STEP files are graph-derived trimmed NURBS/analytic B-Rep faces for the reference presets; STL and mesh STEP remain separate sampled/mesh artifacts
+- Current export status: V0.6 generated STEP files are graph-derived unsewn NURBS/analytic B-Rep support faces for the reference presets; STL and mesh STEP remain separate sampled/mesh artifacts
 - Legacy export status: v0.4 and older impeller exports remain CadQuery analysis-review artifacts and are not claimed as surface-graph-faithful
-- Geometry exactness: graph-derived B-Rep STEP evidence plus sampled research surfaces; certified manufacturing CAD, solver-ready CFD volume meshes, universal CAD healing, and production meshing adapters are future work
+- Geometry exactness: graph-derived B-Rep support-face STEP evidence plus sampled research surfaces; trim-loop/wire export is not yet consumed by the STEP writer, and certified manufacturing CAD, solver-ready CFD volume meshes, universal CAD healing, and production meshing adapters are future work
 
 The older sibling directory `part-rule-synthesis` is an archived baseline snapshot. Current work should happen in this repository.
 
@@ -30,7 +30,7 @@ Earlier versions are preserved in both Git history and versioned DSL folders.
 | `v0_3` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_3` | `radial_open_reference_v0_3`, `radial_closed_reference_v0_3` | Solid hub/hood modeling, staged generation, and curve editor workflow. |
 | `v0_4` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_4` | `radial_open_reference_v0_4`, `radial_closed_reference_v0_4` | Optimization-ready design space, surface/feature graph, and CFD full-360 manifest. |
 | `v0_5` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_5` | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful STL/STEP export contract with region provenance. |
-| `v0_6` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | Trimmed NURBS/analytic B-Rep STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
+| `v0_6` | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | NURBS/analytic B-Rep support-face STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
 
 See [docs/version-history.md](docs/version-history.md) and [src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/VERSION_INDEX.md](src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/VERSION_INDEX.md).
 

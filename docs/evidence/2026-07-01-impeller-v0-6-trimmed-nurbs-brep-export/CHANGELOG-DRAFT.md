@@ -9,7 +9,9 @@ Status: implemented in this branch
 V0.5 made exported STL/STEP files faithful to `surface_graph`, but its STEP file was
 a tessellated mesh representation. V0.6 adds a graph-derived B-Rep export path where
 exportable surfaces carry `cad_surface` payloads and the primary STEP output is
-labeled as trimmed NURBS/analytic B-Rep evidence.
+unsewn NURBS/analytic B-Rep support-face evidence. The exactness label retains the
+trimmed-face contract name, but the current writer does not yet consume trim loops or
+`cad_edge` wires.
 
 ## Implemented Changes
 
@@ -18,7 +20,7 @@ labeled as trimmed NURBS/analytic B-Rep evidence.
 2. Added `surface_graph_trimmed_brep` export contract.
 3. Added `cad_surface` payloads for exportable graph surfaces.
 4. Added OCP/OCCT STEP writer support for graph-derived NURBS, plane, and cylinder
-   faces.
+   support faces.
 5. Preserved STL and mesh STEP as separate sampled/mesh artifacts with separate
    exactness labels.
 6. Added default output copies under project `Model Output/`.
@@ -34,6 +36,10 @@ surface_graph_trimmed_nurbs_step
 surface_graph_sampled_mesh
 surface_graph_mesh_step
 ```
+
+`surface_graph_trimmed_nurbs_step` is the V0.6 contract/exactness label. Current
+implementation evidence is support-face B-Rep geometry only; true trim-loop/wire
+export remains unwired.
 
 ## Local Evidence
 
@@ -52,13 +58,16 @@ V0.6 does not claim:
 - certified manufacturing CAD geometry;
 - solver-ready CFD volume mesh;
 - universal CAD healing or import compatibility across all parameter values;
+- consumed trim-loop/wire STEP export from `trim_loops` or `cad_edge` data;
 - exact variable-radius industrial fillets across all parameter values.
 
 ## Evidence Still To Collect
 
 1. Third-party manual CAD import screenshots.
-2. Screenshot evidence for visible blade root fillets and edge rounding in a CAD
+2. STEP writer consumption of `trim_loops` and `cad_edge` wires for actual trimmed
+   topological faces.
+3. Screenshot evidence for visible blade root fillets and edge rounding in a CAD
    viewer.
-3. Mesh-view screenshots for CFD360 inspection and mesh-quality review.
-4. Failed CAD import logs from parameter sweeps where import or healing quality is
+4. Mesh-view screenshots for CFD360 inspection and mesh-quality review.
+5. Failed CAD import logs from parameter sweeps where import or healing quality is
    poor.

@@ -31,7 +31,7 @@ Current focus:
 - sampled surface graph generation
 - surface-graph-faithful STL exports for external CAD review
 - graph-derived tessellated STEP mesh artifacts for external visual review
-- generated STEP files as graph-derived trimmed NURBS/analytic B-Rep faces for V0.6 presets
+- generated STEP files as graph-derived unsewn NURBS/analytic B-Rep support faces for V0.6 presets
 - surface/feature graph identity
 - full-360 CFD patch-group manifest and CFD surface mesh inspection manifest
 - schema-only FEA solid view
@@ -46,19 +46,20 @@ The current code can claim:
 - stable surface ids, feature ids, named boundary curves, and CFD patch group names for the tested presets
 - campaign signatures that freeze topology-level optimization shape
 - generated binary STL files derived from `manifest.geometry.surface_graph.surfaces[*].uv_grid`
-- generated STEP files as graph-derived trimmed NURBS/analytic B-Rep faces for V0.6 presets
+- generated STEP files as graph-derived unsewn NURBS/analytic B-Rep support faces for V0.6 presets
 - generated mesh STEP files as graph-derived tessellated mesh artifacts, separate from the V0.6 B-Rep STEP
 - export manifests with region provenance from exported triangles/faces to `surface_graph_id`, feature, and role
 - `cad_surface` payloads for exportable NURBS, plane, and cylinder graph surfaces
 - CFD surface mesh manifests for mesh-quality inspection
 - documented evidence that v0.4 CadQuery exports can differ from the frontend surface graph, and v0.5 corrects the source-of-truth split
-- documented V0.6 implementation evidence for trimmed NURBS/analytic B-Rep export, mesh inspection, and explicit fillet/blend controls
+- documented V0.6 implementation evidence for NURBS/analytic B-Rep support-face export, mesh inspection, and explicit fillet/blend controls
 
 ## Claims The Repository Cannot Make Yet
 
 The current code cannot yet claim:
 
 - certified manufacturing CAD geometry
+- consumed trim-loop/wire STEP export from `trim_loops` or `cad_edge` data
 - watertight OCCT sewing or healing
 - exact variable-radius industrial CAD fillets or chamfers across all parameter values
 - universal CAD repair/import quality across the full parameter space
@@ -96,7 +97,7 @@ Use these labels consistently in docs and manifests:
 - `surface_graph_faithful_export`: v0.5 export mode where files are derived from selected `surface_graph` surfaces
 - `surface_graph_sampled_mesh`: v0.5 STL exactness label for sampled graph triangulation
 - `surface_graph_mesh_step`: v0.5 STEP exactness label for graph-derived tessellated mesh STEP
-- `surface_graph_trimmed_nurbs_step`: v0.6 exactness label for graph-derived trimmed NURBS/analytic B-Rep STEP faces
+- `surface_graph_trimmed_nurbs_step`: v0.6 contract/exactness label; the current writer emits graph-derived unsewn NURBS/analytic B-Rep support faces and does not yet consume trim loops or `cad_edge` wires
 - `patch_contract_ready`: semantic CFD patch groups and instances are generated
 - `solver_adapter_missing`: no mesher or solver has been invoked
 - `schema_only`: resource shape exists but executable workflow does not

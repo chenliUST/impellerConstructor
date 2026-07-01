@@ -16,7 +16,7 @@ The versions are not replacements for one another. They are research checkpoints
 | `v0_3` | `radial_open_reference_v0_3`, `radial_closed_reference_v0_3` | Solid hub/hood thickness, chamfers, curve overrides, staged geometry workflow. |
 | `v0_4` | `radial_open_reference_v0_4`, `radial_closed_reference_v0_4` | Design-space campaign signature, variable NURBS topology, surface/feature graph, CFD full-360 manifest. |
 | `v0_5` | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful export contract, STL/STEP region provenance, AP242 tessellated STEP, 12-blade default baseline, and honest STEP fidelity labels. |
-| `v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | Trimmed NURBS/analytic B-Rep STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
+| `v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | NURBS/analytic B-Rep support-face STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
 
 ## Folder Contract
 
@@ -63,7 +63,7 @@ Legacy v0.4 studies remain loadable:
 engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
 ```
 
-v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived trimmed NURBS/analytic B-Rep STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests.
+v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests.
 
 ## Historical Git Tags
 
@@ -110,7 +110,9 @@ docs/superpowers/specs/2026-07-01-impeller-v0-6-trimmed-nurbs-brep-export-design
 src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_6/CHANGELOG.md
 ```
 
-V0.6 generated STEP files are graph-derived trimmed NURBS/analytic B-Rep faces for
-the reference presets. They are research B-Rep evidence, not certified manufacturing
-geometry, not solver-ready CFD volume meshes, and not universal CAD healing across all
-parameters.
+V0.6 generated STEP files are graph-derived unsewn NURBS/analytic B-Rep support faces
+for the reference presets. The `surface_graph_trimmed_nurbs_step` label records the
+contract target, but the current writer does not yet consume `trim_loops` or `cad_edge`
+wires for true trimmed-face export. The files are research B-Rep evidence, not
+certified manufacturing geometry, not solver-ready CFD volume meshes, and not
+universal CAD healing across all parameters.

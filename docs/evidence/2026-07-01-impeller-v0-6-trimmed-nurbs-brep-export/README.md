@@ -71,8 +71,10 @@ It should not be treated as a V0.5 patch because it requires:
 - new interactive fillet/blend design variables;
 - new acceptance evidence from third-party CAD tools.
 
-In this branch, V0.6 is implemented as graph-derived trimmed NURBS/analytic
-B-Rep STEP evidence for the open and closed reference presets. The implementation is
+In this branch, V0.6 is implemented as graph-derived unsewn NURBS/analytic
+B-Rep support-face STEP evidence for the open and closed reference presets. The STEP
+writer creates support faces from `cad_surface` payloads, but it does not yet consume
+`trim_loops` or `cad_edge` wires for true trimmed-face export. The implementation is
 research B-Rep evidence, not certified manufacturing CAD, solver-ready CFD volume
 meshing, or a promise that every parameter combination heals in every CAD tool.
 
@@ -94,8 +96,8 @@ These are distinct but linked layers:
 
 - `uv_grid`: sampled points for rendering, STL, and mesh inspection;
 - `cad_surface`: parametric support surface;
-- `cad_edge`: topological and geometric trim boundary;
-- `brep_face`: exported CAD face;
+- `cad_edge`: topological and geometric trim boundary, not yet consumed by the STEP writer;
+- `brep_face`: exported support face in the current writer, with true trim-loop/wire export still pending;
 - `mesh_region`: simulation mesh review region;
 - `blend_feature`: explicit fillet/rounding feature with design variables.
 
@@ -112,10 +114,11 @@ remain untracked unless a small sample is explicitly selected as evidence.
 Implemented pieces recorded by the branch:
 
 1. `surface_graph_trimmed_brep` export contract.
-2. OCP/OCCT STEP writer for graph-derived B-Rep faces.
+2. OCP/OCCT STEP writer for graph-derived unsewn B-Rep support faces.
 3. `cad_surface` payloads on exportable graph surfaces.
 4. Analytic plane and cylinder support alongside NURBS surface payloads.
-5. STEP exactness label `surface_graph_trimmed_nurbs_step`.
+5. STEP exactness label `surface_graph_trimmed_nurbs_step`, with current implementation
+   limited to support-face B-Rep geometry without consumed trim loops or wires.
 6. STL and mesh STEP retained as separately labeled sampled/mesh artifacts.
 7. Default output copies under the project `Model Output/` folder.
 8. CFD surface mesh manifest with triangle-count evidence for mesh inspection.
@@ -126,15 +129,17 @@ Implemented pieces recorded by the branch:
 Manual evidence still to collect:
 
 1. STEP import screenshots from at least one third-party CAD/viewer.
-2. Screenshot evidence that blade root fillets and edge rounding are visible in a
+2. STEP writer consumption of `trim_loops` and `cad_edge` wires for actual trimmed
+   topological faces.
+3. Screenshot evidence that blade root fillets and edge rounding are visible in a
    third-party CAD/viewer.
-3. Mesh-view screenshots showing CFD360 mesh inspection and quality metrics.
-4. Failed CAD import logs across parameter sweeps, because failed import is useful
+4. Mesh-view screenshots showing CFD360 mesh inspection and quality metrics.
+5. Failed CAD import logs across parameter sweeps, because failed import is useful
    ontology evidence.
 
 ## 8. Current Status
 
 V0.6 runtime resources exist in this branch and generate STEP files as graph-derived
-trimmed NURBS/analytic B-Rep faces for `radial_open_reference_v0_6` and
+unsewn NURBS/analytic B-Rep support faces for `radial_open_reference_v0_6` and
 `radial_closed_reference_v0_6`. The separate STL and mesh STEP artifacts remain
 sampled mesh outputs and are labeled as such.
