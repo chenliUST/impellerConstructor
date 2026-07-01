@@ -1184,6 +1184,38 @@ def _hub_solid_surfaces(
         outer_grid,
         source="surface_graph.control_net_revolved_profile_sample",
     )
+    bottom_outer_chamfer_grid = _chamfer_band_grid(max(bore_radius, bottom[0] - chamfer), bottom[0], bottom[1], bottom[1] + chamfer)
+    bottom_outer_chamfer_control_net, bottom_outer_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hub_chamfer_bottom_outer_surface",
+        "hub_chamfer",
+        "hub",
+        bottom_outer_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
+    top_cap_chamfer_grid = _chamfer_band_grid(max(bore_radius, top[0] - chamfer), top[0], top[1] - chamfer, top[1])
+    top_cap_chamfer_control_net, top_cap_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hub_chamfer_top_cap_surface",
+        "hub_chamfer",
+        "hub",
+        top_cap_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
+    bore_top_chamfer_grid = _chamfer_band_grid(bore_radius, bore_radius + chamfer, top[1] - chamfer, top[1])
+    bore_top_chamfer_control_net, bore_top_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hub_chamfer_bore_top_surface",
+        "hub_chamfer",
+        "hub",
+        bore_top_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
+    bore_bottom_chamfer_grid = _chamfer_band_grid(bore_radius, bore_radius + chamfer, bottom[1], bottom[1] + chamfer)
+    bore_bottom_chamfer_control_net, bore_bottom_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hub_chamfer_bore_bottom_surface",
+        "hub_chamfer",
+        "hub",
+        bore_bottom_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
     surfaces = [
         {
             "id": "outer_hub_shell_surface",
@@ -1257,7 +1289,9 @@ def _hub_solid_surfaces(
             "role": "hub_chamfer",
             "material_domain": "hub",
             "radius_mm": _round(params["hub_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(max(bore_radius, bottom[0] - chamfer), bottom[0], bottom[1], bottom[1] + chamfer),
+            "control_net": bottom_outer_chamfer_control_net,
+            "uv_grid": bottom_outer_chamfer_grid,
+            "cad_surface": bottom_outer_chamfer_cad_surface,
             "display": {"color": "#91aa80", "opacity": 0.9},
             "boundary_ids": ["hub_bottom_outer_chamfer_a", "hub_bottom_outer_chamfer_b"],
         },
@@ -1267,7 +1301,9 @@ def _hub_solid_surfaces(
             "role": "hub_chamfer",
             "material_domain": "hub",
             "radius_mm": _round(params["hub_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(max(bore_radius, top[0] - chamfer), top[0], top[1] - chamfer, top[1]),
+            "control_net": top_cap_chamfer_control_net,
+            "uv_grid": top_cap_chamfer_grid,
+            "cad_surface": top_cap_chamfer_cad_surface,
             "display": {"color": "#91aa80", "opacity": 0.9},
             "boundary_ids": ["hub_top_cap_chamfer_a", "hub_top_cap_chamfer_b"],
         },
@@ -1277,7 +1313,9 @@ def _hub_solid_surfaces(
             "role": "hub_chamfer",
             "material_domain": "hub",
             "radius_mm": _round(params["hub_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(bore_radius, bore_radius + chamfer, top[1] - chamfer, top[1]),
+            "control_net": bore_top_chamfer_control_net,
+            "uv_grid": bore_top_chamfer_grid,
+            "cad_surface": bore_top_chamfer_cad_surface,
             "display": {"color": "#91aa80", "opacity": 0.86},
             "boundary_ids": ["mounting_bore_top_chamfer_a", "mounting_bore_top_chamfer_b"],
         },
@@ -1287,7 +1325,9 @@ def _hub_solid_surfaces(
             "role": "hub_chamfer",
             "material_domain": "hub",
             "radius_mm": _round(params["hub_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(bore_radius, bore_radius + chamfer, bottom[1], bottom[1] + chamfer),
+            "control_net": bore_bottom_chamfer_control_net,
+            "uv_grid": bore_bottom_chamfer_grid,
+            "cad_surface": bore_bottom_chamfer_cad_surface,
             "display": {"color": "#91aa80", "opacity": 0.86},
             "boundary_ids": ["mounting_bore_bottom_chamfer_a", "mounting_bore_bottom_chamfer_b"],
         },
@@ -1318,6 +1358,38 @@ def _hood_shell_surfaces(
     outlet_inner = inner_points[-1]
     inlet_outer = outer_profile["control_points"][0]
     outlet_outer = outer_profile["control_points"][-1]
+    outer_grid = _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
+    outer_control_net, outer_cad_surface = _control_net_and_cad_surface(
+        "hood_outer_surface",
+        "front_hood_outer_surface",
+        "front_hood",
+        outer_grid,
+        source="surface_graph.control_net_revolved_profile_sample",
+    )
+    inlet_cap_grid = _axial_cap_grid(inlet_inner[0], inlet_inner[1], inlet_outer[1], SURFACE_V_COUNT)
+    inlet_cap_control_net, inlet_cap_cad_surface = _control_net_and_cad_surface(
+        "hood_inlet_cap_surface",
+        "hood_cap",
+        "front_hood",
+        inlet_cap_grid,
+        source="surface_graph.control_net_axial_cap_sample",
+    )
+    outlet_cap_grid = _axial_cap_grid(outlet_inner[0], outlet_inner[1], outlet_outer[1], SURFACE_V_COUNT)
+    outlet_cap_control_net, outlet_cap_cad_surface = _control_net_and_cad_surface(
+        "hood_outlet_cap_surface",
+        "hood_cap",
+        "front_hood",
+        outlet_cap_grid,
+        source="surface_graph.control_net_axial_cap_sample",
+    )
+    outlet_chamfer_grid = _chamfer_band_grid(max(1.0, outlet_inner[0] - chamfer), outlet_inner[0], outlet_inner[1], outlet_inner[1] + chamfer)
+    outlet_chamfer_control_net, outlet_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hood_chamfer_outlet_surface",
+        "hood_chamfer",
+        "front_hood",
+        outlet_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
     surfaces = [
         {
             "id": "hood_outer_surface",
@@ -1328,8 +1400,10 @@ def _hood_shell_surfaces(
             "material_domain": "front_hood",
             "wall_thickness_mm": _round(thickness),
             "profile": outer_profile,
-            "uv_grid": _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "control_net": outer_control_net,
+            "uv_grid": outer_grid,
             "profile_samples_rz": _profile_samples_rz(outer_profile, SURFACE_U_COUNT),
+            "cad_surface": outer_cad_surface,
             "display": {"color": "#b6cbd5", "opacity": 0.68},
             "boundary_ids": ["hood_outer_inlet_circle", "hood_outer_outlet_circle"],
         },
@@ -1339,7 +1413,9 @@ def _hood_shell_surfaces(
             "role": "hood_cap",
             "material": True,
             "material_domain": "front_hood",
-            "uv_grid": _axial_cap_grid(inlet_inner[0], inlet_inner[1], inlet_outer[1], SURFACE_V_COUNT),
+            "control_net": inlet_cap_control_net,
+            "uv_grid": inlet_cap_grid,
+            "cad_surface": inlet_cap_cad_surface,
             "display": {"color": "#a7bfca", "opacity": 0.7},
             "boundary_ids": ["shroud_inlet_circle", "hood_outer_inlet_circle"],
         },
@@ -1349,7 +1425,9 @@ def _hood_shell_surfaces(
             "role": "hood_cap",
             "material": True,
             "material_domain": "front_hood",
-            "uv_grid": _axial_cap_grid(outlet_inner[0], outlet_inner[1], outlet_outer[1], SURFACE_V_COUNT),
+            "control_net": outlet_cap_control_net,
+            "uv_grid": outlet_cap_grid,
+            "cad_surface": outlet_cap_cad_surface,
             "display": {"color": "#a7bfca", "opacity": 0.7},
             "boundary_ids": ["shroud_outlet_circle", "hood_outer_outlet_circle"],
         },
@@ -1360,7 +1438,9 @@ def _hood_shell_surfaces(
             "material": True,
             "material_domain": "front_hood",
             "radius_mm": _round(params["hood_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(max(1.0, outlet_inner[0] - chamfer), outlet_inner[0], outlet_inner[1], outlet_inner[1] + chamfer),
+            "control_net": outlet_chamfer_control_net,
+            "uv_grid": outlet_chamfer_grid,
+            "cad_surface": outlet_chamfer_cad_surface,
             "display": {"color": "#c5d4da", "opacity": 0.76},
             "boundary_ids": ["hood_outlet_chamfer_a", "hood_outlet_chamfer_b"],
         },

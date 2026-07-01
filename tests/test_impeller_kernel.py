@@ -418,15 +418,27 @@ def test_v06_surface_graph_emits_cad_surface_payloads():
     from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
     from part_rule_synthesis.service import _bind_parameters, _geometry_metadata
 
-    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_6")
-    parameters = _bind_parameters(runtime, {})
-    geometry = _geometry_metadata(
-        "impeller",
-        parameters,
-        runtime["facets"],
-        dsl_context=runtime,
-    )
-    surfaces = {surface["id"]: surface for surface in geometry["surface_graph"]["surfaces"]}
+    surface_sets = {}
+    for preset_id in ["radial_open_reference_v0_6", "radial_closed_reference_v0_6"]:
+        runtime = compile_impeller_runtime_preset(preset_id)
+        parameters = _bind_parameters(runtime, {})
+        geometry = _geometry_metadata(
+            "impeller",
+            parameters,
+            runtime["facets"],
+            dsl_context=runtime,
+        )
+        surfaces = {surface["id"]: surface for surface in geometry["surface_graph"]["surfaces"]}
+        missing_payloads = [
+            surface_id
+            for surface_id, surface in surfaces.items()
+            if "cad_surface" not in surface
+        ]
+
+        assert missing_payloads == []
+        surface_sets[preset_id] = surfaces
+
+    surfaces = surface_sets["radial_open_reference_v0_6"]
 
     pressure = surfaces["blade_0_pressure_surface"]
     hub = surfaces["hub_revolve_surface"]
