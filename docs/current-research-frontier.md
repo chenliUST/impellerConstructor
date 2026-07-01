@@ -30,11 +30,12 @@ Current focus:
 - radial closed impeller preset `radial_closed_reference_v0_5`
 - sampled surface graph generation
 - surface-graph-faithful STL exports for external CAD review
-- graph-derived faceted STEP surface shells for external CAD review
+- graph-derived tessellated STEP mesh artifacts for external visual review
 - surface/feature graph identity
 - full-360 CFD patch-group manifest
 - schema-only FEA solid view
 - frontend CAD review, CFD full-360, and feature-debug views
+- V0.6 design draft for trimmed NURBS/B-Rep STEP, mesh inspection, and explicit fillet/blend design
 
 ## Claims The Repository Can Make
 
@@ -45,17 +46,21 @@ The current code can claim:
 - stable surface ids, feature ids, named boundary curves, and CFD patch group names for the tested presets
 - campaign signatures that freeze topology-level optimization shape
 - generated binary STL files derived from `manifest.geometry.surface_graph.surfaces[*].uv_grid`
-- generated STEP files as graph-derived faceted surface shells, not analytic B-Rep solids
+- generated STEP files as graph-derived tessellated mesh artifacts, not analytic B-Rep solids
 - export manifests with region provenance from exported triangles/faces to `surface_graph_id`, feature, and role
 - documented evidence that v0.4 CadQuery exports can differ from the frontend surface graph, and v0.5 corrects the source-of-truth split
+- documented V0.6 design direction for trimmed NURBS/B-Rep export and mesh inspection
 
 ## Claims The Repository Cannot Make Yet
 
 The current code cannot yet claim:
 
 - exact industrial B-Rep geometry
+- trimmed NURBS/B-Rep STEP export
 - watertight OCCT sewing or healing
 - exact variable-radius CAD fillets or chamfers
+- interactive CAD-grade blade root/edge fillet construction
+- CFD mesh-quality view backed by an external or production-grade mesher
 - certified CAD repair quality across the full parameter space
 - mesher-ready CFD volume domain
 - solver-ready CFD case generation
@@ -89,7 +94,8 @@ Use these labels consistently in docs and manifests:
 - `cadquery_sync`: synchronous CadQuery export path used by the API
 - `surface_graph_faithful_export`: v0.5 export mode where files are derived from selected `surface_graph` surfaces
 - `surface_graph_sampled_mesh`: v0.5 STL exactness label for sampled graph triangulation
-- `surface_graph_mesh_step`: v0.5 STEP exactness label for graph-derived faceted surface shells
+- `surface_graph_mesh_step`: v0.5 STEP exactness label for graph-derived tessellated mesh STEP
+- `surface_graph_trimmed_nurbs_step`: proposed v0.6 exactness label for future trimmed NURBS/B-Rep STEP; not implemented yet
 - `patch_contract_ready`: semantic CFD patch groups and instances are generated
 - `solver_adapter_missing`: no mesher or solver has been invoked
 - `schema_only`: resource shape exists but executable workflow does not

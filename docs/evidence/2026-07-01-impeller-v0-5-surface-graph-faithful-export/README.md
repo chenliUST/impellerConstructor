@@ -215,3 +215,33 @@ The same patch also updates V0.5 defaults:
 Ontology note: these are still sampled surface-graph exports. The STEP is now
 smaller and locally OCCT-readable, but it remains a tessellated STEP artifact rather
 than an exact analytic B-Rep with CAD-native chamfer operations.
+
+## 10. Follow-Up Limitation: Third-Party CAD Still Needs B-Rep
+
+After the AP242 tessellated STEP patch, the user reported that third-party STEP
+loading still has problems and clarified that the desired representation is not a
+triangle mesh in a STEP container.
+
+The requested target is:
+
+```text
+freeform surfaces as NURBS parameter surfaces
+trimmed by topological CAD edge boundaries
+exported as actual B-Rep/trimmed CAD faces
+```
+
+This feedback does not invalidate the V0.5 semantic correction. V0.5 remains the
+version that made exports faithfully project `surface_graph` instead of a CadQuery
+proxy solid. It does establish that V0.5's STEP exactness is insufficient for the
+next level of expert CAD review.
+
+The next proposed version is V0.6:
+
+- `docs/superpowers/specs/2026-07-01-impeller-v0-6-trimmed-nurbs-brep-export-design.md`
+- `docs/evidence/2026-07-01-impeller-v0-6-trimmed-nurbs-brep-export/README.md`
+
+Ontology implication:
+
+```text
+surface_graph needs a CAD construction layer, not only a sampled rendering layer.
+```

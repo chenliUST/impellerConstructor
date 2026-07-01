@@ -72,6 +72,7 @@ Each DSL version should remain loadable through tests after newer versions are a
 | `docs/current-research-frontier.md` | Canonical statement of what the current repository can and cannot claim. |
 | `docs/evidence-policy.md` | Rules for committing evidence artifacts and large generated outputs. |
 | `docs/evidence/2026-07-01-impeller-v0-5-surface-graph-faithful-export/` | User-supplied mismatch screenshots and analysis motivating implemented v0.5 export semantics. |
+| `docs/evidence/2026-07-01-impeller-v0-6-trimmed-nurbs-brep-export/` | Follow-up third-party STEP limitation evidence and V0.6 trimmed NURBS/B-Rep export motivation. |
 
 ## Scripts
 
