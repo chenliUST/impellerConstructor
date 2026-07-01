@@ -12,6 +12,7 @@ from part_rule_synthesis.impeller_cfd_manifest import build_cfd_full_360_manifes
 from part_rule_synthesis.impeller_brep_export import write_trimmed_brep_step
 from part_rule_synthesis.impeller_design_space import build_campaign_signature
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
+from part_rule_synthesis.impeller_mesh_manifest import build_surface_mesh_manifest
 from part_rule_synthesis.impeller_surface_graph_export import write_surface_graph_exports
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset, impeller_json_preset_ids
@@ -193,6 +194,11 @@ class RuleSynthesisService:
                 surface_graph,
                 cfd_view,
                 blade_count=int(bound.get("blade_count", 0)),
+            )
+        if dsl["part_family"] == "impeller" and _dsl_version(dsl) == "0.6":
+            simulation_manifests["cfd_surface_mesh"] = build_surface_mesh_manifest(
+                geometry_metadata.get("surface_graph", {}),
+                view_id="cfd_full_360",
             )
         manifest = {
             "run_id": run_id,

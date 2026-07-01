@@ -266,6 +266,7 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
     assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_trimmed_nurbs_step"
     assert manifest["export_manifests"]["mesh_step"]["export_exactness"] == "surface_graph_mesh_step"
     assert manifest["export_manifests"]["stl"]["export_exactness"] == "surface_graph_sampled_mesh"
+    assert manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
 
     step_path = Path(manifest["exports"]["step"])
     stl_path = Path(manifest["exports"]["stl"])
