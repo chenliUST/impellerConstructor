@@ -26,6 +26,11 @@ VERSION_CASES = [
         "0.5",
         ["radial_open_reference_v0_5", "radial_closed_reference_v0_5"],
     ),
+    (
+        "v0_6",
+        "0.6",
+        ["radial_open_reference_v0_6", "radial_closed_reference_v0_6"],
+    ),
 ]
 
 
@@ -52,6 +57,8 @@ def test_all_versioned_impeller_dsl_resources_remain_loadable_and_instantiable(t
             if expected_dsl_version in {"0.4", "0.5"}:
                 assert run.manifest["campaign_signature"]["dsl_version"] == expected_dsl_version
                 assert run.manifest["simulation_manifests"]["cfd_full_360"]["validity"]["status"] == "PASS"
+            elif expected_dsl_version == "0.6":
+                assert run.manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
             else:
                 assert "campaign_signature" not in run.manifest
                 assert run.manifest["simulation_manifests"] == {}

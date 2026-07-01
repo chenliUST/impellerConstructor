@@ -288,6 +288,27 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
     assert "TRIANGULATED_FACE_SET" not in step_text
 
 
+def test_impeller_v06_open_and_closed_workflows_include_brep_mesh_and_fillets(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+
+    for preset_id in ["radial_open_reference_v0_6", "radial_closed_reference_v0_6"]:
+        engine = service.synthesize("impeller", preset_id)
+        run = service.instantiate(engine.engine_id, {})
+        manifest = run.manifest
+        surfaces = {surface["id"]: surface for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+
+        assert manifest["dsl_version"] == "0.6"
+        assert manifest["parameters"]["blade_count"] == 12
+        assert manifest["export_manifests"]["step"]["export_exactness"] == "surface_graph_trimmed_nurbs_step"
+        assert manifest["export_manifests"]["mesh_step"]["export_exactness"] == "surface_graph_mesh_step"
+        assert manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
+        assert "blade_0_root_fillet_surface" in surfaces
+        assert surfaces["blade_0_root_fillet_surface"]["radius_mm"] == manifest["parameters"]["root_fillet_radius_mm"]
+        assert Path(manifest["exports"]["step"]).exists()
+        assert Path(manifest["exports"]["mesh_step"]).exists()
+        assert Path(manifest["exports"]["stl"]).exists()
+
+
 def _binary_stl_bounds(path: Path) -> dict[str, float]:
     data = path.read_bytes()
     triangle_count = struct.unpack("<I", data[80:84])[0]
