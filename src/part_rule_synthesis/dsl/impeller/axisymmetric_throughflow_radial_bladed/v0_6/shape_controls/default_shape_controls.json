@@ -22,7 +22,10 @@
       "thickness_control_points[*].thickness_mm",
       "leading_edge.sweep_mm",
       "trailing_edge.sweep_mm",
-      "root_fillet.radius_mm"
+      "root_fillet.radius_mm",
+      "leading_edge.radius_mm",
+      "trailing_edge.radius_mm",
+      "tip_edge.radius_mm"
     ],
     "campaign_signature_fields": [
       "topology_variables",
@@ -72,6 +75,24 @@
       "min": 0.0,
       "max": 80.0,
       "maps_to_parameter": "root_fillet_radius_mm"
+    },
+    "leading_edge.radius_mm": {
+      "units": "mm",
+      "min": 0.0,
+      "max": 200.0,
+      "maps_to_parameter": "leading_edge_radius_mm"
+    },
+    "trailing_edge.radius_mm": {
+      "units": "mm",
+      "min": 0.0,
+      "max": 200.0,
+      "maps_to_parameter": "trailing_edge_radius_mm"
+    },
+    "tip_edge.radius_mm": {
+      "units": "mm",
+      "min": 0.0,
+      "max": 200.0,
+      "maps_to_parameter": "tip_edge_radius_mm"
     },
     "blade_theta_control_points[*].theta_deg": {
       "units": "deg",
@@ -327,8 +348,22 @@
         "knot_policy": "clamped_uniform",
         "weights": "unit"
       },
-      "control_variables": [],
-      "semantic_handles": [],
+      "control_variables": [
+        {
+          "id": "leading_edge_radius_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [0.0, 200.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "leading_edge_radius",
+          "maps_to": ["leading_edge_radius_mm"],
+          "intent": "Control leading-edge rounded transition radius."
+        }
+      ],
       "constraints": [
         "transition_surfaces_connect_declared_input_boundaries",
         "blade_has_leading_and_trailing_edge_closures"
@@ -343,8 +378,22 @@
         "knot_policy": "clamped_uniform",
         "weights": "unit"
       },
-      "control_variables": [],
-      "semantic_handles": [],
+      "control_variables": [
+        {
+          "id": "trailing_edge_radius_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [0.0, 200.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "trailing_edge_radius",
+          "maps_to": ["trailing_edge_radius_mm"],
+          "intent": "Control trailing-edge rounded transition radius."
+        }
+      ],
       "constraints": [
         "transition_surfaces_connect_declared_input_boundaries",
         "blade_has_leading_and_trailing_edge_closures"
@@ -389,8 +438,22 @@
         "knot_policy": "clamped_uniform",
         "weights": "unit"
       },
-      "control_variables": [],
-      "semantic_handles": [],
+      "control_variables": [
+        {
+          "id": "tip_edge_radius_mm",
+          "kind": "semantic_length",
+          "editable": true,
+          "optimizable": true,
+          "bounds_mm": [0.0, 200.0]
+        }
+      ],
+      "semantic_handles": [
+        {
+          "id": "tip_edge_radius",
+          "maps_to": ["tip_edge_radius_mm"],
+          "intent": "Control blade-tip transition radius."
+        }
+      ],
       "constraints": [
         "blade_has_root_and_tip_treatment",
         "transition_surfaces_connect_declared_input_boundaries"
@@ -490,4 +553,3 @@
     "front_hood_shell"
   ]
 }
-
