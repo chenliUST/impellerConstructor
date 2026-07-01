@@ -108,8 +108,27 @@ def build_impeller_geometry(
     }
 
 
-def blade_loft_wires(parameters: dict[str, Any], facets: dict[str, str], mirror_z: bool = False) -> list[list[list[float]]]:
-    geometry = build_impeller_geometry(parameters, facets)
+def blade_loft_wires(
+    parameters: dict[str, Any],
+    facets: dict[str, str],
+    mirror_z: bool = False,
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+    display_policy: dict[str, Any] | None = None,
+    material_domain: dict[str, Any] | None = None,
+    solid_features: dict[str, Any] | None = None,
+) -> list[list[list[float]]]:
+    geometry = build_impeller_geometry(
+        parameters,
+        facets,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+        display_policy=display_policy,
+        material_domain=material_domain,
+        solid_features=solid_features,
+    )
     blades = [
         blade
         for blade in geometry["sampled_blades"]
@@ -118,8 +137,27 @@ def blade_loft_wires(parameters: dict[str, Any], facets: dict[str, str], mirror_
     return [blade["loft_wires"] for blade in blades]
 
 
-def hub_loft_sections(parameters: dict[str, Any], facets: dict[str, str], mirror_z: bool = False) -> list[tuple[float, float]]:
-    geometry = build_impeller_geometry(parameters, facets)
+def hub_loft_sections(
+    parameters: dict[str, Any],
+    facets: dict[str, str],
+    mirror_z: bool = False,
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+    display_policy: dict[str, Any] | None = None,
+    material_domain: dict[str, Any] | None = None,
+    solid_features: dict[str, Any] | None = None,
+) -> list[tuple[float, float]]:
+    geometry = build_impeller_geometry(
+        parameters,
+        facets,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+        display_policy=display_policy,
+        material_domain=material_domain,
+        solid_features=solid_features,
+    )
     hub = geometry["kernel"]["meridional_curves"]["hub"]
     sections = [(point["z_mm"], point["r_mm"]) for point in hub]
     if mirror_z:
@@ -127,8 +165,26 @@ def hub_loft_sections(parameters: dict[str, Any], facets: dict[str, str], mirror
     return sections
 
 
-def shroud_z_levels(parameters: dict[str, Any], facets: dict[str, str]) -> tuple[float, float]:
-    geometry = build_impeller_geometry(parameters, facets)
+def shroud_z_levels(
+    parameters: dict[str, Any],
+    facets: dict[str, str],
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+    display_policy: dict[str, Any] | None = None,
+    material_domain: dict[str, Any] | None = None,
+    solid_features: dict[str, Any] | None = None,
+) -> tuple[float, float]:
+    geometry = build_impeller_geometry(
+        parameters,
+        facets,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+        display_policy=display_policy,
+        material_domain=material_domain,
+        solid_features=solid_features,
+    )
     blades = geometry["sampled_blades"]
     z_values = [
         point[2]

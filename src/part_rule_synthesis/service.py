@@ -827,18 +827,6 @@ def _write_exports(
 ) -> dict[str, str]:
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
-    if part_family in {"centrifugal_impeller", "impeller"}:
-        return _write_impeller_preview_exports(
-            step,
-            stl,
-            part_family,
-            parameters,
-            facets or {},
-            profile_overrides=profile_overrides,
-            curve_overrides=curve_overrides,
-            geometry_stage=geometry_stage,
-            dsl_context=dsl_context,
-        )
     try:
         import cadquery as cq
         from cadquery import exporters
@@ -848,6 +836,7 @@ def _write_exports(
             solid = cq.Workplane("XY").circle(radius).circle(float(parameters["hub_radius_mm"]) * 0.35).extrude(8)
         elif part_family in {"centrifugal_impeller", "impeller"}:
             resolved_facets = _resolved_impeller_facets(part_family, facets or {})
+            geometry_options = _impeller_geometry_options(dsl_context)
             inlet = float(parameters["inlet_radius_mm"])
             exit_radius = float(parameters["exit_radius_mm"])
             disk_thickness = 24.0 if resolved_facets["passage_topology"] == "recessed_vortex" else 30.0
@@ -855,24 +844,65 @@ def _write_exports(
             if resolved_facets.get("suction_topology") == "double_suction":
                 disk = disk.union(cq.Workplane("XY").circle(exit_radius).extrude(-disk_thickness), clean=False)
             hub = (
-                _impeller_hub_loft(cq, parameters, resolved_facets)
+                _impeller_hub_loft(
+                    cq,
+                    parameters,
+                    resolved_facets,
+                    profile_overrides=profile_overrides,
+                    curve_overrides=curve_overrides,
+                    geometry_stage=geometry_stage,
+                    geometry_options=geometry_options,
+                )
                 if parameters.get("hub_curve_height_mm", 0.0) > 0.0
                 else cq.Workplane("XY").circle(inlet).extrude(float(parameters["inlet_blade_height_mm"]))
             )
             if resolved_facets.get("suction_topology") == "double_suction":
                 mirror_hub = (
-                    _impeller_hub_loft(cq, parameters, resolved_facets, mirror_z=True)
+                    _impeller_hub_loft(
+                        cq,
+                        parameters,
+                        resolved_facets,
+                        mirror_z=True,
+                        profile_overrides=profile_overrides,
+                        curve_overrides=curve_overrides,
+                        geometry_stage=geometry_stage,
+                        geometry_options=geometry_options,
+                    )
                     if parameters.get("hub_curve_height_mm", 0.0) > 0.0
                     else cq.Workplane("XY").circle(inlet).extrude(-float(parameters["inlet_blade_height_mm"]))
                 )
                 hub = hub.union(mirror_hub, clean=False)
             solid = disk.union(hub, clean=False)
-            for blade_wires in blade_loft_wires(parameters, resolved_facets, mirror_z=False):
+            for blade_wires in blade_loft_wires(
+                parameters,
+                resolved_facets,
+                mirror_z=False,
+                profile_overrides=profile_overrides,
+                curve_overrides=curve_overrides,
+                geometry_stage=geometry_stage,
+                **geometry_options,
+            ):
                 solid = solid.union(_impeller_blade_loft(cq, blade_wires), clean=False)
             if resolved_facets.get("suction_topology") == "double_suction":
-                for blade_wires in blade_loft_wires(parameters, resolved_facets, mirror_z=True):
+                for blade_wires in blade_loft_wires(
+                    parameters,
+                    resolved_facets,
+                    mirror_z=True,
+                    profile_overrides=profile_overrides,
+                    curve_overrides=curve_overrides,
+                    geometry_stage=geometry_stage,
+                    **geometry_options,
+                ):
                     solid = solid.union(_impeller_blade_loft(cq, blade_wires), clean=False)
-            shroud = _impeller_shroud_proxy(cq, parameters, resolved_facets)
+            shroud = _impeller_shroud_proxy(
+                cq,
+                parameters,
+                resolved_facets,
+                profile_overrides=profile_overrides,
+                curve_overrides=curve_overrides,
+                geometry_stage=geometry_stage,
+                geometry_options=geometry_options,
+            )
             if shroud is not None:
                 solid = solid.union(shroud, clean=False)
             solid = _impeller_mounting_bore_cut(cq, solid, parameters)
@@ -882,8 +912,10 @@ def _write_exports(
             solid = cq.Workplane("XY").circle(outer).circle(inner).extrude(10)
         exporters.export(solid, str(step))
         exporters.export(solid, str(stl))
-    except Exception:
-        # ponytail: keep API usable without a working CAD backend; replace with strict failure when CAD export is the benchmark.
+    except Exception as exc:
+        if part_family in {"centrifugal_impeller", "impeller"}:
+            raise RuntimeError(f"failed to generate impeller STEP/STL exports: {exc}") from exc
+        # ponytail: keep legacy API usable without a working CAD backend.
         step.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
         stl.write_text(f"solid {part_family}\nendsolid {part_family}\n", encoding="utf-8")
     return {"step": str(step), "stl": str(stl)}
@@ -892,102 +924,15 @@ def _write_exports(
 def _export_strategy(part_family: str) -> dict[str, str]:
     if part_family in {"centrifugal_impeller", "impeller"}:
         return {
-            "mode": "surface_graph_preview",
-            "cad_exports": "deferred",
-            "reason": "interactive preview avoids synchronous CadQuery boolean union",
+            "mode": "cadquery_sync",
+            "cad_exports": "completed",
+            "reason": "impeller exports are generated as analysis-review STEP/STL files",
         }
     return {
         "mode": "cadquery_sync",
         "cad_exports": "completed",
         "reason": "simple legacy solid export remains synchronous",
     }
-
-
-def _write_impeller_preview_exports(
-    step: Path,
-    stl: Path,
-    part_family: str,
-    parameters: dict[str, Any],
-    facets: dict[str, str],
-    profile_overrides: dict[str, Any] | None = None,
-    curve_overrides: dict[str, Any] | None = None,
-    geometry_stage: str = "edge_closures",
-    dsl_context: dict[str, Any] | None = None,
-) -> dict[str, str]:
-    resolved_facets = _resolved_impeller_facets(part_family, facets)
-    geometry = build_impeller_geometry(
-        parameters,
-        resolved_facets,
-        profile_overrides=profile_overrides,
-        curve_overrides=curve_overrides,
-        geometry_stage=geometry_stage,
-        **_impeller_geometry_options(dsl_context),
-    )
-    step.write_text(
-        "\n".join(
-            [
-                "ISO-10303-21;",
-                "HEADER;",
-                "FILE_DESCRIPTION(('surface graph preview; exact CAD export deferred'),'2;1');",
-                "ENDSEC;",
-                "DATA;",
-                "/* Interactive impeller generation uses sampled NURBS surface graph geometry.",
-                "   Strict STEP B-Rep sewing/healing is intentionally deferred to an async CAD export stage. */",
-                "ENDSEC;",
-                "END-ISO-10303-21;",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    _write_surface_graph_ascii_stl(stl, part_family, geometry["surface_graph"])
-    return {"step": str(step), "stl": str(stl)}
-
-
-def _write_surface_graph_ascii_stl(stl: Path, solid_name: str, surface_graph: dict[str, Any]) -> None:
-    lines = [f"solid {solid_name}_surface_graph_preview"]
-    for surface in surface_graph.get("surfaces", []):
-        grid = surface.get("uv_grid", [])
-        if len(grid) < 2 or len(grid[0]) < 2:
-            continue
-        v_count = len(grid[0])
-        for u_index in range(len(grid) - 1):
-            if len(grid[u_index + 1]) != v_count:
-                continue
-            for v_index in range(v_count - 1):
-                a = grid[u_index][v_index]
-                b = grid[u_index + 1][v_index]
-                c = grid[u_index + 1][v_index + 1]
-                d = grid[u_index][v_index + 1]
-                lines.extend(_ascii_stl_facet(a, b, d))
-                lines.extend(_ascii_stl_facet(b, c, d))
-    lines.append(f"endsolid {solid_name}_surface_graph_preview")
-    stl.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _ascii_stl_facet(first: list[float], second: list[float], third: list[float]) -> list[str]:
-    normal = _triangle_normal(first, second, third)
-    return [
-        f"  facet normal {normal[0]:.8g} {normal[1]:.8g} {normal[2]:.8g}",
-        "    outer loop",
-        f"      vertex {first[0]:.8g} {first[1]:.8g} {first[2]:.8g}",
-        f"      vertex {second[0]:.8g} {second[1]:.8g} {second[2]:.8g}",
-        f"      vertex {third[0]:.8g} {third[1]:.8g} {third[2]:.8g}",
-        "    endloop",
-        "  endfacet",
-    ]
-
-
-def _triangle_normal(first: list[float], second: list[float], third: list[float]) -> list[float]:
-    ux, uy, uz = second[0] - first[0], second[1] - first[1], second[2] - first[2]
-    vx, vy, vz = third[0] - first[0], third[1] - first[1], third[2] - first[2]
-    nx = uy * vz - uz * vy
-    ny = uz * vx - ux * vz
-    nz = ux * vy - uy * vx
-    length = math.sqrt(nx * nx + ny * ny + nz * nz)
-    if length <= 0.0:
-        return [0.0, 0.0, 0.0]
-    return [nx / length, ny / length, nz / length]
 
 
 def _resolved_impeller_facets(part_family: str, facets: dict[str, str]) -> dict[str, str]:
@@ -1256,21 +1201,53 @@ def _impeller_blade_loft(
     return cq.Solid.makeLoft(wires)
 
 
-def _impeller_hub_loft(cq: Any, parameters: dict[str, Any], facets: dict[str, str], mirror_z: bool = False) -> Any:
+def _impeller_hub_loft(
+    cq: Any,
+    parameters: dict[str, Any],
+    facets: dict[str, str],
+    mirror_z: bool = False,
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+    geometry_options: dict[str, Any] | None = None,
+) -> Any:
     wires = []
-    for z, radius in hub_loft_sections(parameters, facets, mirror_z=mirror_z):
+    for z, radius in hub_loft_sections(
+        parameters,
+        facets,
+        mirror_z=mirror_z,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+        **(geometry_options or {}),
+    ):
         wire = cq.Workplane("XY").circle(radius).val().located(cq.Location(cq.Vector(0, 0, z)))
         wires.append(wire)
-    return cq.Solid.makeLoft(wires)
+    return cq.Workplane("XY").add(cq.Solid.makeLoft(wires))
 
 
-def _impeller_shroud_proxy(cq: Any, parameters: dict[str, Any], facets: dict[str, str]) -> Any | None:
+def _impeller_shroud_proxy(
+    cq: Any,
+    parameters: dict[str, Any],
+    facets: dict[str, str],
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+    geometry_options: dict[str, Any] | None = None,
+) -> Any | None:
     topology = facets.get("shroud_topology", "open")
     if topology == "open":
         return None
     inlet = float(parameters["inlet_radius_mm"]) * 1.05
     exit_radius = float(parameters["exit_radius_mm"])
-    back_z, front_z = _impeller_shroud_z_levels(parameters, facets)
+    back_z, front_z = _impeller_shroud_z_levels(
+        parameters,
+        facets,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+        geometry_options=geometry_options,
+    )
     thickness = 8.0
     solid = _annular_disk(cq, inlet, exit_radius, front_z, thickness)
     if topology == "closed":
@@ -1307,8 +1284,22 @@ def _annular_disk(cq: Any, inner_radius: float, outer_radius: float, z: float, t
     )
 
 
-def _impeller_shroud_z_levels(parameters: dict[str, Any], facets: dict[str, str]) -> tuple[float, float]:
-    return shroud_z_levels(parameters, facets)
+def _impeller_shroud_z_levels(
+    parameters: dict[str, Any],
+    facets: dict[str, str],
+    profile_overrides: dict[str, Any] | None = None,
+    curve_overrides: dict[str, Any] | None = None,
+    geometry_stage: str = "edge_closures",
+    geometry_options: dict[str, Any] | None = None,
+) -> tuple[float, float]:
+    return shroud_z_levels(
+        parameters,
+        facets,
+        profile_overrides=profile_overrides,
+        curve_overrides=curve_overrides,
+        geometry_stage=geometry_stage,
+        **(geometry_options or {}),
+    )
 
 
 def _impeller_axial_offset_factor(facets: dict[str, str]) -> float:

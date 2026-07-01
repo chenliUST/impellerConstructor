@@ -1,5 +1,5 @@
 from pathlib import Path
-import builtins
+import struct
 
 from fastapi.testclient import TestClient
 
@@ -96,28 +96,70 @@ def test_api_first_service_exposes_synthesis_instantiation_and_feedback(tmp_path
     assert approve_response.json()["approval_status"] == "approved"
 
 
-def test_impeller_interactive_instantiation_does_not_run_cadquery_export(tmp_path: Path, monkeypatch):
-    class CadQueryImportUsed(BaseException):
-        pass
-
-    original_import = builtins.__import__
-
-    def fail_on_cadquery_import(name, *args, **kwargs):
-        if name == "cadquery" or name.startswith("cadquery."):
-            raise CadQueryImportUsed("interactive impeller preview must not import CadQuery")
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fail_on_cadquery_import)
-
+def test_impeller_interactive_instantiation_writes_real_cad_exports(tmp_path: Path):
     service = RuleSynthesisService(tmp_path)
     engine = service.synthesize("impeller", "axisymmetric_nurbs_open_throughflow_study")
     run = service.instantiate(engine.engine_id, {})
 
     assert run.manifest["export_strategy"] == {
-        "mode": "surface_graph_preview",
-        "cad_exports": "deferred",
-        "reason": "interactive preview avoids synchronous CadQuery boolean union",
+        "mode": "cadquery_sync",
+        "cad_exports": "completed",
+        "reason": "impeller exports are generated as analysis-review STEP/STL files",
     }
     assert run.manifest["geometry"]["surface_graph"]["surfaces"]
-    assert Path(run.manifest["exports"]["step"]).exists()
-    assert Path(run.manifest["exports"]["stl"]).exists()
+    step_path = Path(run.manifest["exports"]["step"])
+    stl_path = Path(run.manifest["exports"]["stl"])
+    assert step_path.stat().st_size > 4096
+    assert stl_path.stat().st_size > 4096
+    step_text = step_path.read_text(encoding="utf-8", errors="ignore")
+    stl_bytes = stl_path.read_bytes()
+    assert "CARTESIAN_POINT" in step_text
+    assert "exact CAD export deferred" not in step_text
+    triangle_count = struct.unpack("<I", stl_bytes[80:84])[0]
+    assert triangle_count > 0
+    assert len(stl_bytes) == 84 + triangle_count * 50
+
+
+def test_impeller_cad_exports_follow_profile_overrides(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", "axisymmetric_nurbs_open_throughflow_study")
+    baseline = service.instantiate(engine.engine_id, {"blade_count": 3})
+    hub = baseline.manifest["geometry_kernel"]["meridional_profiles"]["hub"]
+    tip = baseline.manifest["geometry_kernel"]["meridional_profiles"]["tip_or_shroud"]
+    edited_tip = {
+        **tip,
+        "control_points": [[point[0], point[1] + 42.0] for point in tip["control_points"]],
+    }
+
+    changed = service.instantiate(
+        engine.engine_id,
+        {"blade_count": 3},
+        profile_overrides={"hub_profile": hub, "tip_or_shroud_profile": edited_tip},
+    )
+
+    baseline_bounds = _binary_stl_bounds(Path(baseline.manifest["exports"]["stl"]))
+    changed_bounds = _binary_stl_bounds(Path(changed.manifest["exports"]["stl"]))
+    assert changed_bounds["z_max"] > baseline_bounds["z_max"] + 30.0
+
+
+def _binary_stl_bounds(path: Path) -> dict[str, float]:
+    data = path.read_bytes()
+    triangle_count = struct.unpack("<I", data[80:84])[0]
+    xs: list[float] = []
+    ys: list[float] = []
+    zs: list[float] = []
+    for triangle_index in range(triangle_count):
+        offset = 84 + triangle_index * 50 + 12
+        for vertex_index in range(3):
+            x, y, z = struct.unpack("<fff", data[offset + vertex_index * 12 : offset + vertex_index * 12 + 12])
+            xs.append(x)
+            ys.append(y)
+            zs.append(z)
+    return {
+        "x_min": min(xs),
+        "x_max": max(xs),
+        "y_min": min(ys),
+        "y_max": max(ys),
+        "z_min": min(zs),
+        "z_max": max(zs),
+    }
