@@ -2,7 +2,7 @@
   "preset_id": "radial_closed_reference_v0_6",
   "supersedes": "../../v0_5/presets/radial_closed_reference.json",
   "display_name": "Radial closed reference v0.6",
-  "summary": "Closed radial throughflow impeller with trimmed NURBS B-Rep STEP export, mesh inspection, and explicit fillet/blend controls.",
+  "summary": "Closed radial throughflow impeller with NURBS/analytic B-Rep support-face STEP export, mesh inspection, and explicit fillet/blend controls.",
   "constructor_id": "axisymmetric_throughflow_radial_bladed.closed.v0_6",
   "parameter_values": {
     "blade_count": 12,

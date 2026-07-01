@@ -372,7 +372,7 @@ In `v0_6/presets/radial_open_reference.json`, set:
   "preset_id": "radial_open_reference_v0_6",
   "supersedes": "../../v0_5/presets/radial_open_reference.json",
   "display_name": "Radial open reference v0.6",
-  "summary": "Open radial throughflow impeller with trimmed NURBS B-Rep STEP export, mesh inspection, and explicit fillet/blend controls.",
+  "summary": "Open radial throughflow impeller with NURBS/analytic B-Rep support-face STEP export, mesh inspection, and explicit fillet/blend controls.",
   "constructor_id": "axisymmetric_throughflow_radial_bladed.open.v0_6"
 }
 ```
@@ -384,7 +384,7 @@ In `v0_6/presets/radial_closed_reference.json`, set:
   "preset_id": "radial_closed_reference_v0_6",
   "supersedes": "../../v0_5/presets/radial_closed_reference.json",
   "display_name": "Radial closed reference v0.6",
-  "summary": "Closed radial throughflow impeller with trimmed NURBS B-Rep STEP export, mesh inspection, and explicit fillet/blend controls.",
+  "summary": "Closed radial throughflow impeller with NURBS/analytic B-Rep support-face STEP export, mesh inspection, and explicit fillet/blend controls.",
   "constructor_id": "axisymmetric_throughflow_radial_bladed.closed.v0_6"
 }
 ```

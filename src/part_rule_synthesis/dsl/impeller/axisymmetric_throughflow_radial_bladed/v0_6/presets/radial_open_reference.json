@@ -2,7 +2,7 @@
   "preset_id": "radial_open_reference_v0_6",
   "supersedes": "../../v0_5/presets/radial_open_reference.json",
   "display_name": "Radial open reference v0.6",
-  "summary": "Open radial throughflow impeller with trimmed NURBS B-Rep STEP export, mesh inspection, and explicit fillet/blend controls.",
+  "summary": "Open radial throughflow impeller with NURBS/analytic B-Rep support-face STEP export, mesh inspection, and explicit fillet/blend controls.",
   "constructor_id": "axisymmetric_throughflow_radial_bladed.open.v0_6",
   "parameter_values": {
     "blade_count": 12,
