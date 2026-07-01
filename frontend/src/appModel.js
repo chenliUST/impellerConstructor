@@ -136,7 +136,7 @@ export const presets = [
       trailing_edge_radius_mm: 2,
       tip_edge_radius_mm: 2,
       hub_wall_thickness_mm: 18,
-      hub_bottom_thickness_mm: 24,
+      hub_bottom_thickness_mm: 22,
       hub_top_cap_thickness_mm: 8,
       hub_chamfer_radius_mm: 3,
       hood_wall_thickness_mm: 12,

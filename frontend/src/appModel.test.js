@@ -128,6 +128,7 @@ describe("impeller frontend model", () => {
     assert.equal(closed.parameters.leading_edge_radius_mm, 3);
     assert.equal(closed.parameters.trailing_edge_radius_mm, 2);
     assert.equal(closed.parameters.tip_edge_radius_mm, 2);
+    assert.equal(closed.parameters.hub_bottom_thickness_mm, 22);
     assert.ok(open.parameters.hub_wall_thickness_mm > 0);
     assert.ok(closed.parameters.hood_wall_thickness_mm > 0);
   });
