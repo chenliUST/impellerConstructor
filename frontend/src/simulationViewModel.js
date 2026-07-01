@@ -6,17 +6,19 @@ const CFD_HIDDEN_ROLES = new Set([
   "keyway",
   "rear_hub_groove",
 ]);
+const CFD_SURFACE_VIEWS = new Set(["cfd_full_360", "mesh"]);
 
 export function viewModeOptions() {
   return [
     { id: "cad_review_360", label: "CAD review" },
     { id: "cfd_full_360", label: "CFD full 360" },
+    { id: "mesh", label: "CFD360 mesh" },
     { id: "feature_debug", label: "Feature debug" },
   ];
 }
 
 export function surfaceVisibleInView(surface, viewMode, manifest = null) {
-  if (viewMode !== "cfd_full_360") {
+  if (!CFD_SURFACE_VIEWS.has(viewMode)) {
     return true;
   }
   if ([surface?.role, surface?.cfd_role, surface?.kind, surface?.assembly_role].some((role) => CFD_HIDDEN_ROLES.has(role))) {

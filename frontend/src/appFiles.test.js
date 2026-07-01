@@ -24,8 +24,10 @@ describe("frontend application files", () => {
       "src/components/ParameterPanel.js",
       "src/components/GeometryLayerPanel.js",
       "src/components/CfdManifestPanel.js",
+      "src/components/MeshInspectionPanel.js",
       "src/components/ModelViewer.js",
       "src/components/ManifestPanel.js",
+      "src/meshViewModel.js",
       "src/simulationViewModel.js",
       "src/workspaceModel.js",
       "src/styles.css",
@@ -110,6 +112,7 @@ describe("frontend application files", () => {
     assert.match(viewerSource, /surfaceVisibleInView/);
     assert.match(viewerSource, /patchSurfaceIds/);
     assert.match(cfdPanelSource, /cfdPatchGroups/);
+    assert.match(cfdPanelSource, /MeshInspectionPanel/);
     assert.match(manifestPanelSource, /before/);
   });
 
