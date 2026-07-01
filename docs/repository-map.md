@@ -12,7 +12,7 @@ This document records the intended ownership boundaries of the repository. It is
 | `frontend/` | Browser frontend for interactive impeller inspection. |
 | `tests/` | Python acceptance/unit tests for backend DSL, kernels, manifests, and workflow. |
 | `docs/` | Research notes, design specs, plans, evidence, and generated explanatory diagrams. |
-| `scripts/` | Local research scripts, mostly for diagrams and parameter experiments. |
+| `scripts/` | Local research and verification scripts. |
 | `videos/` | Visual sweep evidence and HyperFrames video artifacts. |
 
 ## Backend Modules
@@ -67,6 +67,17 @@ Each DSL version should remain loadable through tests after newer versions are a
 | `docs/evidence/` | Screenshots and records of observed issues or visual verification. |
 | `docs/impeller_parameter_diagrams/` | Algorithm-generated diagrams explaining parameter meaning. |
 | `docs/axisymmetric-throughflow-nurbs-kernel.md` | Current kernel construction order and v0.4 graph contract. |
+| `docs/current-research-frontier.md` | Canonical statement of what the current repository can and cannot claim. |
+| `docs/evidence-policy.md` | Rules for committing evidence artifacts and large generated outputs. |
+
+## Scripts
+
+| Path | Meaning |
+| --- | --- |
+| `scripts/verify_repository.ps1` | PowerShell verification entrypoint for fast and full repository checks. |
+| `scripts/verify_version_lineage.ps1` | Verifies current DSL folders and historical git tags can synthesize and instantiate their presets. |
+| `scripts/impeller_parameter_experiment.py` | Parameter-sweep research script retained for diagnostic experiments. |
+| `scripts/render_impeller_parameter_diagrams.py` | Generates explanatory parameter diagrams under `docs/impeller_parameter_diagrams/`. |
 
 ## Working Rules
 
@@ -75,3 +86,4 @@ Each DSL version should remain loadable through tests after newer versions are a
 3. Keep frontend presets pointed at the latest interactive study version unless a legacy workflow is explicitly needed.
 4. Keep generated videos/screenshots out of routine code commits unless they are deliberate evidence artifacts.
 5. Treat exact B-Rep, meshing, CAE solver adapters, and CAM feedback as separate future integration layers.
+6. Keep `docs/current-research-frontier.md` aligned with README claims before presenting the project externally.

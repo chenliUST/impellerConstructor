@@ -8,10 +8,15 @@ The current focus is the `AxisymmetricThroughflowRadialBladedImpeller` slice: a 
 
 This repository is a research-grade CAD/CAE integration prototype, not a production CAD kernel.
 
+- Canonical workspace repository: `impellerConstructor`
 - Latest slice: `impeller.axisymmetric_throughflow_radial_bladed`
 - Latest DSL version: `v0_4`
 - Latest frontend workflow: v0.4 open/closed throughflow presets with CAD review, CFD full-360, and feature-debug views
 - Geometry exactness: sampled research surfaces with explicit metadata; exact industrial B-Rep fillets, meshing adapters, and solver adapters are future work
+
+The older sibling directory `part-rule-synthesis` is an archived baseline snapshot. Current work should happen in this repository.
+
+For the precise research boundary, see [docs/current-research-frontier.md](docs/current-research-frontier.md).
 
 ## Version Lineage
 
@@ -64,16 +69,16 @@ The frontend expects the API base shown in the UI. By default this is `http://12
 
 ## Validation Commands
 
-The current v0.4 branch was validated with:
+Use the repository-level verification helper from the repository root:
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m pytest tests -q
-python -m compileall -q src
-cd frontend
-npm.cmd test
-npm.cmd run build
+.\scripts\verify_repository.ps1 -Mode fast
+.\scripts\verify_repository.ps1 -Mode full
+.\scripts\verify_version_lineage.ps1
 ```
+
+`fast` runs compileall, focused v0.4 backend contract tests, frontend tests, and the frontend build check. `full` runs all backend tests plus the frontend checks.
+`verify_version_lineage.ps1` checks the current versioned resource folders and the historical `impeller-dsl-v0.2`, `impeller-dsl-v0.3`, and `impeller-dsl-v0.4` tags through temporary git worktrees.
 
 Expected current results:
 
@@ -85,5 +90,7 @@ Expected current results:
 
 - Keep DSL versions additive and immutable once used as research evidence.
 - Add a new version folder instead of overwriting old DSL semantics.
+- Keep historical tags available locally with `git fetch --unshallow --tags origin` when cloning shallow.
 - Preserve evidence screenshots, reports, and update plans that explain why a DSL version changed.
 - Do not treat sampled fillet/blend surfaces as exact CAD operations; use `cad_exactness` metadata to distinguish research geometry from future B-Rep output.
+- Follow [docs/evidence-policy.md](docs/evidence-policy.md) before adding generated video, sweep data, or large visual artifacts.

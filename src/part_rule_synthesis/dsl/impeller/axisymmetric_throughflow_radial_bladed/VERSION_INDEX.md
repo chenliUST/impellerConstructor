@@ -49,6 +49,24 @@ Service-level synthesis selects a preset id and receives a compiled runtime DSL 
 engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
 ```
 
+## Historical Git Tags
+
+The repository keeps local and remote tags for research rollback:
+
+```text
+impeller-dsl-v0.2
+impeller-dsl-v0.3
+impeller-dsl-v0.4
+```
+
+Use this command from the repository root to verify both the current versioned resource folders and the tagged historical checkouts:
+
+```powershell
+.\scripts\verify_version_lineage.ps1
+```
+
+The script creates temporary detached git worktrees under `.worktrees/version-lineage/`, loads each tag, synthesizes both presets for that DSL version, instantiates them, checks manifest DSL version, and removes the temporary worktrees.
+
 ## Compatibility Rule
 
 Keep old version folders reproducible. When new engineer feedback changes the meaning of a feature, add a new version or explicit patch resource instead of silently changing old semantics.

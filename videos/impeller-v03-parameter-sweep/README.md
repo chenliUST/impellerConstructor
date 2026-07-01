@@ -2,6 +2,8 @@
 
 This HyperFrames project renders a 1920x1080 MP4 for visual inspection of the current v0.3 `AxisymmetricThroughflowRadialBladedImpeller` runtime.
 
+The generated data and rendered files in this folder are retained as deliberate v0.3 research evidence. Follow `../../docs/evidence-policy.md` before adding more large generated assets.
+
 Output:
 
 - `output/impeller-v03-parameter-sweep.mp4`
