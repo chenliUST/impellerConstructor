@@ -128,6 +128,8 @@ def _validate_enabled(policy_id: str, enabled: Any) -> bool:
 
 
 def _validate_radius(policy_id: str, radius_mm: Any) -> float:
+    if type(radius_mm) is bool:
+        raise TransitionPolicyError(f"transition radius for {policy_id} must be numeric")
     try:
         radius = float(radius_mm)
     except (TypeError, ValueError) as exc:

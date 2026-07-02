@@ -640,6 +640,10 @@ def test_acceptance_impeller_v07_accepts_transition_overrides(tmp_path: Path):
             {"blade_root_to_hub.default": {"radius_mm": -1.0}},
             "negative transition radius",
         ),
+        (
+            {"blade_root_to_hub.default": {"radius_mm": True}},
+            "transition radius",
+        ),
     ],
 )
 def test_acceptance_impeller_v07_rejects_invalid_transition_overrides(

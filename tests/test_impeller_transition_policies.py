@@ -187,6 +187,20 @@ def test_resolve_transition_policies_rejects_non_finite_radius_override(radius_m
         )
 
 
+def test_resolve_transition_policies_rejects_bool_radius_override():
+    with pytest.raises(TransitionPolicyError, match="transition radius .* must be numeric"):
+        resolve_transition_policies(
+            {
+                "blade_root_to_hub": {
+                    "default_treatment": "fillet",
+                    "default_radius_parameter": "root_fillet_radius_mm",
+                }
+            },
+            {"root_fillet_radius_mm": 8.0},
+            overrides={"blade_root_to_hub.default": {"radius_mm": True}},
+        )
+
+
 def test_resolve_transition_policies_rejects_non_finite_default_radius():
     with pytest.raises(TransitionPolicyError, match="finite transition radius"):
         resolve_transition_policies(
