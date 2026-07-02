@@ -899,6 +899,51 @@ def test_v07_closed_blade_tip_to_shroud_override_is_represented():
     assert run.manifest["geometry"]["validity"]["status"] == "PASS"
 
 
+def test_v07_staged_closed_tip_shroud_transition_references_do_not_dangle():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_closed_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            geometry_stage="blade_surfaces",
+            transition_overrides={
+                "blade_tip_to_shroud.default": {
+                    "enabled": True,
+                    "treatment": "chamfer",
+                    "radius_mm": 9.0,
+                }
+            },
+        )
+
+    manifest = run.manifest
+    surface_ids = {
+        surface["id"]
+        for surface in manifest["geometry"]["surface_graph"]["surfaces"]
+    }
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    dangling_transition_ids = [
+        transition_surface_id
+        for edge in edges
+        for transition_surface_id in edge.get("transition_surface_ids", [])
+        if transition_surface_id not in surface_ids
+    ]
+    topology_checks = {
+        check["name"]: check
+        for check in manifest["geometry"]["validity"]["topology_checks"]
+    }
+
+    assert "blade_0_tip_transition_surface" not in surface_ids
+    assert dangling_transition_ids == []
+    assert topology_checks["edge_transition_surface_references_present"]["status"] == "PASS"
+    assert manifest["geometry"]["validity"]["status"] == "PASS"
+
+
 def test_v06_hub_edge_ids_preserve_legacy_topology():
     from pathlib import Path
     from tempfile import TemporaryDirectory

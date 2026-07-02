@@ -2302,7 +2302,7 @@ def _filter_by_geometry_stage(
     filtered_graph = {
         "surfaces": allowed_surfaces,
         "edges": [
-            edge
+            _scrub_missing_transition_surface_references(edge, allowed_ids)
             for edge in surface_graph["edges"]
             if all(surface_id in allowed_ids for surface_id in edge.get("surfaces", []))
         ],
@@ -2321,6 +2321,30 @@ def _filter_by_geometry_stage(
     elif geometry_stage == "blade_surfaces":
         filtered_lines["blade_edges"] = []
     return filtered_graph, filtered_lines
+
+
+def _scrub_missing_transition_surface_references(edge: dict[str, Any], surface_ids: set[str]) -> dict[str, Any]:
+    if "transition_surface_ids" not in edge:
+        return edge
+    transition_surface_ids = [
+        surface_id
+        for surface_id in edge.get("transition_surface_ids", [])
+        if surface_id in surface_ids
+    ]
+    scrubbed = {**edge}
+    if transition_surface_ids:
+        scrubbed["transition_surface_ids"] = transition_surface_ids
+        return scrubbed
+    for key in [
+        "edge_family",
+        "transition_policy_id",
+        "transition_surface_ids",
+        "declared_policy_id",
+        "policy_alias_of",
+        "policy_alias_reason",
+    ]:
+        scrubbed.pop(key, None)
+    return scrubbed
 
 
 def _surface_visible_in_stage(surface: dict[str, Any], geometry_stage: str) -> bool:
@@ -2415,7 +2439,10 @@ def _validity_report(
     material_domain: dict[str, Any] | None = None,
     transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    topology_checks = [_check_stage_completeness(surface_graph, geometry_stage)]
+    topology_checks = [
+        _check_stage_completeness(surface_graph, geometry_stage),
+        _check_edge_transition_surface_references_present(surface_graph),
+    ]
     if geometry_stage in {"blade_surfaces", "edge_closures"}:
         topology_checks.extend(
             [
@@ -2595,6 +2622,23 @@ def _check_stage_completeness(surface_graph: dict[str, Any], geometry_stage: str
         "name": "stage_completeness",
         "status": "PASS" if passed else "FAIL",
         "geometry_stage": geometry_stage,
+    }
+
+
+def _check_edge_transition_surface_references_present(surface_graph: dict[str, Any]) -> dict[str, Any]:
+    surface_ids = {surface["id"] for surface in surface_graph["surfaces"]}
+    missing = sorted(
+        {
+            transition_surface_id
+            for edge in surface_graph["edges"]
+            for transition_surface_id in edge.get("transition_surface_ids", [])
+            if transition_surface_id not in surface_ids
+        }
+    )
+    return {
+        "name": "edge_transition_surface_references_present",
+        "status": "PASS" if not missing else "FAIL",
+        "missing_transition_surface_ids": missing,
     }
 
 
