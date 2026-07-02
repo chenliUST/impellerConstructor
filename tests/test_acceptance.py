@@ -587,6 +587,39 @@ def test_acceptance_axisymmetric_nurbs_open_and_closed_presets_use_high_density_
         assert topology_checks["pressure_surface_tip_conformance"]["status"] == "PASS"
 
 
+def test_acceptance_impeller_v07_accepts_transition_overrides(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_7"},
+    ).json()
+
+    response = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={
+            "parameters": {},
+            "transition_overrides": {
+                "blade_root_to_hub.default": {
+                    "treatment": "chamfer",
+                    "radius_mm": 6.0,
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    manifest = response.json()["manifest"]
+    assert manifest["transition_overrides"] == {
+        "blade_root_to_hub.default": {
+            "treatment": "chamfer",
+            "radius_mm": 6.0,
+        }
+    }
+    policy = manifest["transition_policies"]["blade_root_to_hub.default"]
+    assert policy["treatment"] == "chamfer"
+    assert policy["radius_mm"] == 6.0
+
+
 def test_acceptance_turbine_rotor_generates_deterministic_analysis_ready_exports(tmp_path: Path):
     client = TestClient(create_app(tmp_path))
 

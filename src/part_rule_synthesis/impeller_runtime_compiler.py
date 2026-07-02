@@ -4,6 +4,7 @@ from typing import Any
 
 from part_rule_synthesis.impeller_dsl_resources import ImpellerDslBundle, load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_shape_control import normalize_shape_control_space
+from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 
 
 IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4", "v0_5", "v0_6", "v0_7")
@@ -85,7 +86,7 @@ def compile_impeller_runtime_preset(
     if dsl_version == "0.7":
         edge_families = constructor.get("edge_families", {})
         runtime["edge_families"] = edge_families
-        runtime["transition_policy_defaults"] = _transition_policy_defaults(edge_families, parameters)
+        runtime["transition_policy_defaults"] = resolve_transition_policies(edge_families, parameters)
     return runtime
 
 
@@ -151,32 +152,6 @@ def _parameter_specs(values: dict[str, float | int]) -> dict[str, dict[str, floa
         limits = IMPELLER_PARAMETER_LIMITS[name]
         specs[name] = {"default": default, "min": limits["min"], "max": limits["max"]}
     return specs
-
-
-def _transition_policy_defaults(
-    edge_families: dict[str, Any],
-    parameters: dict[str, float | int],
-) -> dict[str, dict[str, Any]]:
-    policies = {}
-    for family_id, family in edge_families.items():
-        if "default_treatment" not in family:
-            raise ValueError(f"edge family {family_id} missing default_treatment")
-        if "default_radius_parameter" not in family:
-            raise ValueError(f"edge family {family_id} missing default_radius_parameter")
-        parameter_name = family["default_radius_parameter"]
-        if parameter_name not in parameters:
-            raise ValueError(f"edge family {family_id} radius parameter not found in preset: {parameter_name}")
-        policies[f"{family_id}.default"] = {
-            "edge_family": family_id,
-            "enabled": True,
-            "treatment": family["default_treatment"],
-            "radius_mm": float(parameters[parameter_name]),
-            "continuity": "G1" if family["default_treatment"] == "fillet" else "G0",
-            "applies_to": "all_pattern_instances",
-            "maps_to_parameters": [parameter_name],
-            "overrides": [],
-        }
-    return policies
 
 
 def _features_for_constructor(constructor: dict[str, Any]) -> list[str]:

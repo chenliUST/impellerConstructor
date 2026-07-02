@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from part_rule_synthesis.impeller_taxonomy import (
     LEGACY_CENTRIFUGAL_IMPELLER_FACETS,
     ONTOLOGY,
 )
+from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 
 
 PRIMITIVES = {
@@ -126,6 +128,7 @@ class RuleSynthesisService:
         parameters: dict[str, Any],
         profile_overrides: dict[str, Any] | None = None,
         curve_overrides: dict[str, Any] | None = None,
+        transition_overrides: dict[str, Any] | None = None,
         geometry_stage: str = "full",
     ) -> ModelRun:
         dsl = self._engine(engine_id)
@@ -134,17 +137,26 @@ class RuleSynthesisService:
         normalized_geometry_stage = _normalize_geometry_stage(geometry_stage)
         normalized_profile_overrides = profile_overrides or {}
         normalized_curve_overrides = curve_overrides or {}
-        graph_hash = _stable_hash(
-            {
-                "dsl": dsl,
-                "parameters": bound,
-                "profile_overrides": normalized_profile_overrides,
-                "curve_overrides": normalized_curve_overrides,
-                "geometry_stage": normalized_geometry_stage,
-                "primitive_version": PRIMITIVES["version"],
-                "operation_graph": operation_graph,
-            }
-        )
+        normalized_transition_overrides = _normalize_transition_overrides(transition_overrides)
+        transition_policies = None
+        if dsl.get("edge_families") or normalized_transition_overrides:
+            transition_policies = resolve_transition_policies(
+                dsl.get("edge_families", {}),
+                bound,
+                normalized_transition_overrides,
+            )
+        graph_payload = {
+            "dsl": dsl,
+            "parameters": bound,
+            "profile_overrides": normalized_profile_overrides,
+            "curve_overrides": normalized_curve_overrides,
+            "geometry_stage": normalized_geometry_stage,
+            "primitive_version": PRIMITIVES["version"],
+            "operation_graph": operation_graph,
+        }
+        if transition_policies is not None:
+            graph_payload["transition_overrides"] = normalized_transition_overrides
+        graph_hash = _stable_hash(graph_payload)
         run_id = f"run-{graph_hash[:12]}"
         run_dir = self.root / "model_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -238,6 +250,9 @@ class RuleSynthesisService:
             "export_manifests": export_manifests,
             "notice": "Research geometry; inferred regions are not released for operation.",
         }
+        if transition_policies is not None:
+            manifest["transition_overrides"] = normalized_transition_overrides
+            manifest["transition_policies"] = transition_policies
         if manifest["dsl_version"] in {"0.4", "0.5"}:
             manifest["campaign_signature"] = build_campaign_signature(
                 _campaign_signature_runtime_context(dsl),
@@ -809,6 +824,14 @@ def _normalize_geometry_stage(stage: str | None) -> str:
     if normalized not in {"hub_support", "blade_surfaces", "edge_closures"}:
         raise ValueError(f"invalid geometry stage: {stage}")
     return normalized
+
+
+def _normalize_transition_overrides(overrides: dict[str, Any] | None) -> dict[str, Any]:
+    if overrides is None:
+        return {}
+    if not isinstance(overrides, Mapping):
+        raise ValueError("transition_overrides must be an object")
+    return dict(overrides)
 
 
 def _validation(part_family: str) -> dict[str, Any]:
