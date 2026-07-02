@@ -55,6 +55,9 @@ describe("frontend application files", () => {
 
     assert.match(viewerSource, /meshOverlayMode\s*=\s*"triangle_edges"/);
     assert.match(viewerSource, /WireframeGeometry/);
+    assert.match(viewerSource, /createSurfaceGraphGroup\(\s*visibleSurfaceGraph,\s*bounds\.center,\s*simulationViewMode,\s*selectedSurfaceIds,\s*meshOverlayMode,\s*manifest,\s*\)/);
+    assert.match(viewerSource, /surfaceVisibleInView\(surface,\s*simulationViewMode,\s*manifest\)/);
+    assert.doesNotMatch(viewerSource, /surfaceVisibleInView\(surface,\s*simulationViewMode\)/);
     assert.match(viewerSource, /transition_mesh_edges/);
     assert.match(viewerSource, /mesh_edges/);
     assert.match(panelSource, /transitionRegionRows/);

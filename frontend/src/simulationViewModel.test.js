@@ -43,6 +43,26 @@ describe("simulation view model", () => {
     assert.equal(surfaceVisibleInView({ id: "inner_hub_bottom_face", role: "inner_hub_bottom" }, "cfd_full_360", manifest), false);
   });
 
+  test("surfaceVisibleInView keeps transition-tagged surfaces visible in mesh view outside the cfd whitelist", () => {
+    const manifest = {
+      simulation_manifests: {
+        cfd_full_360: {
+          patch_instances: {
+            hub: { source_type: "surface", surface_graph_id: "hub_revolve_surface" },
+          },
+        },
+      },
+    };
+    const transitionSurface = {
+      id: "blade_00_root_fillet",
+      transition_policy_id: "root.fillet.default",
+      edge_family: "blade_root_to_hub",
+    };
+
+    assert.equal(surfaceVisibleInView(transitionSurface, "mesh", manifest), true);
+    assert.equal(surfaceVisibleInView(transitionSurface, "cfd_full_360", manifest), false);
+  });
+
   test("cfdPatchGroups and cfdPatchInstances return sorted arrays", () => {
     const manifest = {
       simulation_manifests: {

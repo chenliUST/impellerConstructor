@@ -24,6 +24,9 @@ export function surfaceVisibleInView(surface, viewMode, manifest = null) {
   if ([surface?.role, surface?.cfd_role, surface?.kind, surface?.assembly_role].some((role) => CFD_HIDDEN_ROLES.has(role))) {
     return false;
   }
+  if (viewMode === "mesh" && (surface?.transition_policy_id || surface?.edge_family)) {
+    return true;
+  }
   const patchSurfaceIds = cfdPatchSurfaceIds(manifest);
   if (patchSurfaceIds.size > 0) {
     return patchSurfaceIds.has(surface?.id || surface?.surface_graph_id);

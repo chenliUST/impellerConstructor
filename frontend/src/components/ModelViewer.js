@@ -127,6 +127,7 @@ export function ModelViewer({
       simulationViewMode,
       selectedSurfaceIds,
       meshOverlayMode,
+      manifest,
     );
     modelRef.current.shaded = shaded;
     sceneRef.current.add(shaded);
@@ -326,6 +327,7 @@ function createSurfaceGraphGroup(
   simulationViewMode,
   selectedSurfaceIds = new Set(),
   meshOverlayMode = "triangle_edges",
+  manifest = null,
 ) {
   const group = new THREE.Group();
   const colors = {
@@ -345,7 +347,7 @@ function createSurfaceGraphGroup(
   };
 
   for (const surface of surfaceGraph.surfaces || []) {
-    if (!surfaceVisibleInView(surface, simulationViewMode)) {
+    if (!surfaceVisibleInView(surface, simulationViewMode, manifest)) {
       continue;
     }
     const grid = surface.uv_grid || [];
