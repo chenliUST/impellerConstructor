@@ -1,6 +1,6 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-import { edgeTreatmentRows, updateTransitionRow } from "../edgeTreatmentModel.js";
+import { edgeTreatmentRows, effectiveTransitionRow, updateTransitionRow } from "../edgeTreatmentModel.js";
 
 const h = React.createElement;
 const treatments = ["none", "chamfer", "fillet"];
@@ -21,7 +21,7 @@ export function EdgeTreatmentPanel({ manifest, overrides = {}, onChange }) {
               key: row.policyId,
               row,
               override: overrides[row.policyId] || {},
-              onChange: (patch) => onChange(updateTransitionRow(overrides, row.policyId, patch)),
+              onChange: (patch) => onChange(updateTransitionRow(overrides, row.policyId, patch, row)),
             }),
           ),
         )
@@ -30,10 +30,27 @@ export function EdgeTreatmentPanel({ manifest, overrides = {}, onChange }) {
 }
 
 function EdgeTreatmentRow({ row, override, onChange }) {
-  const enabled = override.enabled ?? row.enabled;
-  const treatment = override.treatment ?? row.treatment;
-  const radiusMm = override.radius_mm ?? row.radiusMm;
-  const status = edgeStatus(enabled, treatment, Number(radiusMm));
+  const effective = effectiveTransitionRow(row, override);
+  const [radiusText, setRadiusText] = useState(() => formatRadius(effective.radiusMm));
+
+  useEffect(() => {
+    setRadiusText(formatRadius(effective.radiusMm));
+  }, [effective.radiusMm, row.policyId]);
+
+  function commitRadius() {
+    const trimmed = radiusText.trim();
+    if (!trimmed) {
+      setRadiusText(formatRadius(effective.radiusMm));
+      return;
+    }
+
+    const next = Number(trimmed);
+    if (Number.isFinite(next)) {
+      onChange({ radiusMm: next });
+    } else {
+      setRadiusText(formatRadius(effective.radiusMm));
+    }
+  }
 
   return h(
     "div",
@@ -43,7 +60,7 @@ function EdgeTreatmentRow({ row, override, onChange }) {
       { className: "edge-toggle" },
       h("input", {
         type: "checkbox",
-        checked: enabled,
+        checked: effective.enabled,
         onChange: (event) => onChange({ enabled: event.target.checked }),
       }),
       h("span", null, row.edgeFamily.replaceAll("_", " ")),
@@ -51,7 +68,7 @@ function EdgeTreatmentRow({ row, override, onChange }) {
     h(
       "select",
       {
-        value: treatment,
+        value: effective.treatment,
         onChange: (event) => onChange({ treatment: event.target.value }),
       },
       treatments.map((option) => h("option", { key: option, value: option }, option)),
@@ -60,24 +77,19 @@ function EdgeTreatmentRow({ row, override, onChange }) {
       className: "edge-radius-input",
       type: "number",
       step: "0.001",
-      value: radiusMm,
-      onChange: (event) => {
-        const next = Number(event.target.value);
-        if (Number.isFinite(next)) {
-          onChange({ radiusMm: next });
+      value: radiusText,
+      onBlur: commitRadius,
+      onChange: (event) => setRadiusText(event.target.value),
+      onKeyDown: (event) => {
+        if (event.key === "Enter") {
+          commitRadius();
         }
       },
     }),
-    h("span", { className: status === "OK" ? "edge-status" : "edge-status warning" }, status),
+    h("span", { className: effective.status === "OK" ? "edge-status" : "edge-status warning" }, effective.status),
   );
 }
 
-function edgeStatus(enabled, treatment, radiusMm) {
-  if (!enabled || treatment === "none") {
-    return "OFF";
-  }
-  if (radiusMm < 0) {
-    return "INVALID";
-  }
-  return "OK";
+function formatRadius(radiusMm) {
+  return Number.isFinite(radiusMm) ? String(radiusMm) : "";
 }

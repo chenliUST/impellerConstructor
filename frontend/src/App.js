@@ -84,8 +84,8 @@ export function App() {
         parameters,
         profileOverrides,
         curveOverrides,
-        buildTransitionOverridePayload(transitionOverrides),
         geometryStage,
+        buildTransitionOverridePayload(transitionOverrides),
       );
       setManifest(run.manifest);
       setStlUrl(modelExportUrl(apiBase, run.run_id, "stl"));

@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import {
   buildTransitionOverridePayload,
   edgeTreatmentRows,
+  effectiveTransitionRow,
   updateTransitionRow,
 } from "./edgeTreatmentModel.js";
 
@@ -73,6 +74,46 @@ describe("edge treatment model", () => {
     });
   });
 
+  test("updateTransitionRow keeps treatment and enabled semantics aligned", () => {
+    assert.deepEqual(
+      updateTransitionRow({}, "blade_tip_or_shroud.default", { treatment: "fillet" }),
+      {
+        "blade_tip_or_shroud.default": {
+          treatment: "fillet",
+          enabled: true,
+        },
+      },
+    );
+
+    assert.deepEqual(
+      updateTransitionRow(
+        { "blade_root_to_hub.default": { enabled: true, treatment: "fillet", radius_mm: 4 } },
+        "blade_root_to_hub.default",
+        { treatment: "none" },
+      ),
+      {
+        "blade_root_to_hub.default": {
+          enabled: false,
+          treatment: "none",
+          radius_mm: 4,
+        },
+      },
+    );
+  });
+
+  test("effectiveTransitionRow reflects payload semantics for checkbox and status", () => {
+    const disabledBaseRow = edgeTreatmentRows(manifest).find((row) => row.policyId === "blade_tip_or_shroud.default");
+    const enabled = effectiveTransitionRow(disabledBaseRow, { treatment: "fillet", enabled: true });
+    const disabled = effectiveTransitionRow(disabledBaseRow, { treatment: "none", enabled: false });
+
+    assert.equal(enabled.enabled, true);
+    assert.equal(enabled.treatment, "fillet");
+    assert.equal(enabled.status, "OK");
+    assert.equal(disabled.enabled, false);
+    assert.equal(disabled.treatment, "none");
+    assert.equal(disabled.status, "OFF");
+  });
+
   test("buildTransitionOverridePayload omits empty overrides but keeps explicit disabled none override", () => {
     assert.equal(buildTransitionOverridePayload({}), null);
     assert.equal(buildTransitionOverridePayload(null), null);
@@ -93,6 +134,23 @@ describe("edge treatment model", () => {
           enabled: true,
           treatment: "fillet",
           radius_mm: -1,
+          continuity: "G1",
+        },
+      },
+    });
+
+    assert.equal(rows[0].status, "INVALID");
+  });
+
+  test("edgeTreatmentRows marks non-finite radius as invalid", () => {
+    const rows = edgeTreatmentRows({
+      edge_families: { blade_root_to_hub: { scope: "blade_pattern" } },
+      transition_policies: {
+        "blade_root_to_hub.default": {
+          edge_family: "blade_root_to_hub",
+          enabled: true,
+          treatment: "fillet",
+          radius_mm: "not-a-number",
           continuity: "G1",
         },
       },
