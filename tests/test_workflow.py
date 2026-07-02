@@ -353,6 +353,36 @@ def test_impeller_v07_exports_bounded_step_and_no_default_mesh_step(tmp_path: Pa
     assert "\nf " in obj_text
 
 
+def test_impeller_v07_open_and_closed_workflows_include_transitions_bounded_step_and_obj(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+
+    for preset_id in ["radial_open_reference_v0_7", "radial_closed_reference_v0_7"]:
+        engine = service.synthesize("impeller", preset_id)
+        run = service.instantiate(engine.engine_id, {})
+        manifest = run.manifest
+
+        assert manifest["dsl_version"] == "0.7"
+        assert manifest["transition_policies"]
+        assert manifest["edge_families"]
+        assert manifest["geometry"]["transition_policies"]
+        assert manifest["geometry"]["edge_families"]
+        assert set(manifest["exports"]) == {"step", "stl", "obj", "manifest"}
+        for export_path in manifest["exports"].values():
+            assert Path(export_path).exists()
+
+        step_manifest = manifest["export_manifests"]["step"]
+        assert step_manifest["bounded_face_count"] > 0
+        assert step_manifest["reimport_bbox"]
+        assert {"name": "finite_reimport_bbox", "status": "PASS"} in step_manifest["validation_checks"]
+
+        obj_manifest = manifest["export_manifests"]["obj"]
+        assert obj_manifest["triangle_count"] > 0
+        assert obj_manifest["transition_regions"]
+
+        mesh_manifest = manifest["simulation_manifests"]["cfd_surface_mesh"]
+        assert mesh_manifest["transition_regions"]
+
+
 def test_api_default_v06_exports_copy_to_cwd_model_output(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PART_RULE_SYNTHESIS_ROOT", raising=False)

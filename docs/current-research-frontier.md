@@ -26,16 +26,21 @@ AxisymmetricThroughflowRadialBladedImpeller
 
 Current focus:
 
-- radial open impeller preset `radial_open_reference_v0_6`
-- radial closed impeller preset `radial_closed_reference_v0_6`
+- radial open impeller preset `radial_open_reference_v0_7`
+- radial closed impeller preset `radial_closed_reference_v0_7`
 - sampled surface graph generation
 - surface-graph-faithful STL exports for external CAD review
-- graph-derived tessellated STEP mesh artifacts for external visual review
-- generated STEP files as graph-derived unsewn NURBS/analytic B-Rep support faces for V0.6 presets
+- OBJ mesh artifacts with transition-region provenance for external visual review
+- generated STEP files as bounded, unsewn B-Rep faces for supported V0.7 surface-graph regions
+- edge-family transition policy metadata carried through generated geometry, OBJ exports, and CFD surface mesh manifests
 - surface/feature graph identity
 - full-360 CFD patch-group manifest and CFD surface mesh inspection manifest
 - schema-only FEA solid view
-- frontend CAD review, CFD full-360, mesh inspection, feature-debug views, export options, and fillet controls
+- frontend CAD review, CFD full-360, mesh inspection, mesh overlay inspection, feature-debug views, export options, and edge-treatment controls
+
+V0.7 advances the boundary from V0.6 support-face B-Rep evidence to bounded face
+export with transition-policy provenance. Manufacturing certification, sewn-solid
+validation, and CFD volume meshing remain outside this prototype.
 
 ## Claims The Repository Can Make
 
@@ -46,13 +51,15 @@ The current code can claim:
 - stable surface ids, feature ids, named boundary curves, and CFD patch group names for the tested presets
 - campaign signatures that freeze topology-level optimization shape
 - generated binary STL files derived from `manifest.geometry.surface_graph.surfaces[*].uv_grid`
-- generated STEP files as graph-derived unsewn NURBS/analytic B-Rep support faces for V0.6 presets
-- generated mesh STEP files as graph-derived tessellated mesh artifacts, separate from the V0.6 B-Rep STEP
+- generated STEP files as graph-derived bounded, unsewn B-Rep faces for supported V0.7 annular surface-graph regions
+- OCCT STEP reimport bounding-box checks for V0.7 bounded face exports
+- generated OBJ mesh artifacts with transition-region provenance, separate from the V0.7 B-Rep STEP
 - export manifests with region provenance from exported triangles/faces to `surface_graph_id`, feature, and role
 - `cad_surface` payloads for exportable NURBS, plane, and cylinder graph surfaces
 - CFD surface mesh manifests for mesh-quality inspection
 - documented evidence that v0.4 CadQuery exports can differ from the frontend surface graph, and v0.5 corrects the source-of-truth split
 - documented V0.6 implementation evidence for NURBS/analytic B-Rep support-face export, mesh inspection, and explicit fillet/blend controls
+- documented V0.7 implementation evidence for bounded face export with transition-policy provenance through geometry, OBJ, and mesh manifests
 
 ## Claims The Repository Cannot Make Yet
 
@@ -61,6 +68,7 @@ The current code cannot yet claim:
 - certified manufacturing CAD geometry
 - consumed trim-loop/wire STEP export from `trim_loops` or `cad_edge` data
 - watertight OCCT sewing or healing
+- sewn solid certification
 - exact variable-radius industrial CAD fillets or chamfers across all parameter values
 - universal CAD repair/import quality across the full parameter space
 - CFD mesh-quality view backed by an external production-grade mesher
@@ -97,8 +105,10 @@ Use these labels consistently in docs and manifests:
 - `surface_graph_faithful_export`: v0.5 export mode where files are derived from selected `surface_graph` surfaces
 - `surface_graph_sampled_mesh`: v0.5 STL exactness label for sampled graph triangulation
 - `surface_graph_mesh_step`: v0.5 STEP exactness label for graph-derived tessellated mesh STEP
-- `surface_graph_support_face_brep_step`: v0.6 current exactness label for graph-derived unsewn NURBS/analytic B-Rep support faces
+- `surface_graph_support_face_brep_step`: v0.6 exactness label for graph-derived unsewn NURBS/analytic B-Rep support faces
 - `surface_graph_trimmed_nurbs_step`: v0.6 target exactness label; the current writer does not yet consume trim loops or `cad_edge` wires
+- `surface_graph_bounded_unsewn_brep_step`: v0.7 diagnostic exactness label for bounded but unsewn B-Rep faces
+- `surface_graph_trimmed_brep_step`: v0.7 current target/current exactness label for supported bounded face export; this does not imply sewn-solid certification
 - `patch_contract_ready`: semantic CFD patch groups and instances are generated
 - `solver_adapter_missing`: no mesher or solver has been invoked
 - `schema_only`: resource shape exists but executable workflow does not

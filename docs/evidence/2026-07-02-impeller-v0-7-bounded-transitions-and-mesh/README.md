@@ -121,5 +121,45 @@ V0.7 should produce new evidence for:
 
 This evidence package records motivation for V0.7. It does not change V0.6 behavior.
 V0.6 remains an honest support-face B-Rep evidence line, while V0.7 is intended to
-deliver bounded/sewn CAD faces, real transition topology, and a true engineering mesh
-inspection workflow.
+deliver bounded CAD faces, transition topology, and an engineering mesh inspection
+workflow. The implemented V0.7 STEP path is bounded and unsewn; sewn-solid
+certification remains downstream work.
+
+## 7. V0.7 Implementation Evidence
+
+Local evidence was generated on 2026-07-03 with `RuleSynthesisService` using:
+
+- run root: `Model Output/_v07_evidence_runs`
+- export root: `Model Output/_v07_evidence_exports`
+- presets: `radial_open_reference_v0_7`, `radial_closed_reference_v0_7`
+
+Generated binaries and manifest copies remain local under `Model Output/` and are not
+committed.
+
+| Preset | Run ID | STEP | STL | OBJ | Manifest |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `radial_open_reference_v0_7` | `run-5f066a3ca712` | 8,486 bytes | 2,259,284 bytes | 1,594,504 bytes | 13,046,913 bytes |
+| `radial_closed_reference_v0_7` | `run-fb256fe0fa40` | 8,486 bytes | 2,534,484 bytes | 1,802,527 bytes | 13,731,052 bytes |
+
+Artifact paths:
+
+- `Model Output/_v07_evidence_exports/radial_open_reference_v0_7-run-5f066a3ca712.step`
+- `Model Output/_v07_evidence_exports/radial_open_reference_v0_7-run-5f066a3ca712.stl`
+- `Model Output/_v07_evidence_exports/radial_open_reference_v0_7-run-5f066a3ca712.obj`
+- `Model Output/_v07_evidence_exports/radial_open_reference_v0_7-run-5f066a3ca712.manifest.json`
+- `Model Output/_v07_evidence_exports/radial_closed_reference_v0_7-run-fb256fe0fa40.step`
+- `Model Output/_v07_evidence_exports/radial_closed_reference_v0_7-run-fb256fe0fa40.stl`
+- `Model Output/_v07_evidence_exports/radial_closed_reference_v0_7-run-fb256fe0fa40.obj`
+- `Model Output/_v07_evidence_exports/radial_closed_reference_v0_7-run-fb256fe0fa40.manifest.json`
+
+Recorded checks:
+
+| Preset | STEP exactness | Bounded faces | Reimport bbox span `(x, y, z)` mm | Reimport gate | OBJ triangles | OBJ transition regions | CFD mesh transition regions |
+| --- | --- | ---: | --- | --- | ---: | ---: | ---: |
+| `radial_open_reference_v0_7` | `surface_graph_trimmed_brep_step` with diagnostic `surface_graph_bounded_unsewn_brep_step` | 2 | `(1160.0000002, 1160.0000002, 400.0000002)` | `finite_reimport_bbox PASS` | 45,184 | 52 | 52 |
+| `radial_closed_reference_v0_7` | `surface_graph_trimmed_brep_step` with diagnostic `surface_graph_bounded_unsewn_brep_step` | 2 | `(1160.0000002, 1160.0000002, 400.0000002)` | `finite_reimport_bbox PASS` | 50,688 | 54 | 54 |
+
+The implementation evidence supports the V0.7 claim that default transition policies
+are present in the generated manifest, OBJ transition regions, and CFD surface mesh
+manifest. It does not claim watertight sewing, manufacturing certification, CFD volume
+meshing, or solver-ready output.

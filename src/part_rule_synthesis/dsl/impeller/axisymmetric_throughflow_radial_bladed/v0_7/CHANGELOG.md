@@ -13,5 +13,7 @@ Supersedes: `v0_6`
 
 ## Limitations
 
-- V0.7 emits bounded, unsewn surface-graph B-Rep faces for the main STEP export. STL and OBJ remain separate graph-mesh review outputs, while sewn trimmed-solid validation remains downstream work.
-- Default transition policies are constructor-level metadata and do not yet override generated geometry without downstream task support.
+- V0.7 emits bounded, unsewn surface-graph B-Rep faces for the main STEP export. The bounded writer currently covers supported annular face families and records excluded unsupported surfaces; it does not certify a sewn solid.
+- STEP export is gated by OCCT reimport bounding-box validation for finite faces, but watertight sewing, CAD healing, manufacturing certification, and broad third-party CAD repair remain downstream work.
+- Transition policies now affect generated transition geometry and are carried into STEP/OBJ/mesh manifests through edge-family and transition-region provenance. They remain predictable topology-family controls, not a freeform industrial edge-editing system.
+- STL and OBJ remain separate graph-mesh review outputs; CFD volume meshing and solver-ready case generation remain outside V0.7.

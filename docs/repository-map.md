@@ -25,7 +25,10 @@ This document records the intended ownership boundaries of the repository. It is
 | `impeller_runtime_compiler.py` | Compiling versioned impeller DSL presets into runtime dictionaries. |
 | `impeller_surface_graph_export.py` | Graph-derived STL and faceted STEP export writer with surface-region provenance. |
 | `impeller_brep_export.py` | OCP/OCCT writer for V0.6 graph-derived unsewn NURBS/analytic B-Rep support faces. |
+| `impeller_bounded_brep_export.py` | OCP/OCCT writer for V0.7 bounded, unsewn B-Rep faces and STEP reimport bbox validation. |
 | `impeller_cad_payload.py` | CAD payload helpers for exportable graph surfaces and edges. |
+| `impeller_mesh_export.py` | OBJ surface-graph mesh writer with transition-region provenance. |
+| `impeller_mesh_manifest.py` | CFD surface mesh inspection manifest and transition-region summaries. |
 | `impeller_shape_control.py` | Shape control normalization and compatibility helpers. |
 | `impeller_design_space.py` | v0.4 campaign signatures, topology freezing, and design vector contracts. |
 | `impeller_graph_contract.py` | Surface graph utility contracts, wetted-surface filtering, and area estimation. |
@@ -43,6 +46,7 @@ This document records the intended ownership boundaries of the repository. It is
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_4` | Optimization-ready surface/feature graph and CFD full-360 view. |
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_5` | Surface-graph-faithful export contract and export-region provenance. |
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_6` | NURBS/analytic B-Rep support-face STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls; trim-loop/wire export remains future work. |
+| `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_7` | Bounded B-Rep face export, edge-family transition policies, OBJ mesh artifacts, and mesh overlay inspection contract. |
 | `src/part_rule_synthesis/ontology/impeller/v0_2` | Ontology resources aligned with v0.2. |
 | `src/part_rule_synthesis/ontology/impeller/v0_3` | v0.3 ontology slice marker. |
 | `src/part_rule_synthesis/ontology/impeller/v0_4` | Ontology resources aligned with v0.4. |
@@ -58,10 +62,13 @@ Each DSL version should remain loadable through tests after newer versions are a
 | `src/apiClient.js` | HTTP client for synthesis, instantiation, and export URLs. |
 | `src/workspaceModel.js` | Geometry layer schema and layer classification. |
 | `src/simulationViewModel.js` | CAD/CFD/feature-debug simulation views and CFD patch selection helpers. |
+| `src/edgeTreatmentModel.js` | V0.7 edge-family treatment defaults, transition override payloads, and UI-facing summaries. |
+| `src/meshOverlayModel.js` | Mesh overlay state and transition-region highlighting helpers for OBJ/mesh inspection. |
 | `src/profileEditorModel.js` | 2D meridional profile editor math. |
 | `src/bladeCurveEditorModel.js` | Blade intrinsic curve editor math. |
 | `src/components/ModelViewer.js` | Three.js model viewer, surface graph rendering, construction lines, and CFD highlighting. |
 | `src/components/CfdManifestPanel.js` | CFD patch group summary and patch selection UI. |
+| `src/components/MeshInspectionPanel.js` | Mesh quality and transition-region inspection panel. |
 
 ## Evidence And Research Docs
 
@@ -76,6 +83,7 @@ Each DSL version should remain loadable through tests after newer versions are a
 | `docs/evidence-policy.md` | Rules for committing evidence artifacts and large generated outputs. |
 | `docs/evidence/2026-07-01-impeller-v0-5-surface-graph-faithful-export/` | User-supplied mismatch screenshots and analysis motivating implemented v0.5 export semantics. |
 | `docs/evidence/2026-07-01-impeller-v0-6-trimmed-nurbs-brep-export/` | Follow-up third-party STEP limitation evidence plus V0.6 NURBS/analytic B-Rep support-face implementation evidence and remaining trim-loop/wire and manual CAD import gaps. |
+| `docs/evidence/2026-07-02-impeller-v0-7-bounded-transitions-and-mesh/` | V0.7 bounded face, edge transition policy, OBJ mesh artifact, mesh overlay, and OCCT reimport bbox evidence. |
 
 ## Scripts
 

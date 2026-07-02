@@ -75,7 +75,7 @@ def test_representative_versioned_impeller_presets_remain_instantiable(tmp_path)
         if expected_dsl_version == "0.4":
             assert run.manifest["campaign_signature"]["dsl_version"] == expected_dsl_version
             assert run.manifest["simulation_manifests"]["cfd_full_360"]["validity"]["status"] == "PASS"
-        elif expected_dsl_version == "0.6":
+        elif expected_dsl_version in {"0.6", "0.7"}:
             assert run.manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
         else:
             assert "campaign_signature" not in run.manifest

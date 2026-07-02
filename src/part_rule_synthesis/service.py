@@ -220,7 +220,7 @@ class RuleSynthesisService:
                 cfd_view,
                 blade_count=int(bound.get("blade_count", 0)),
             )
-        if dsl["part_family"] == "impeller" and _dsl_version(dsl) == "0.6":
+        if dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.6", "0.7"}:
             simulation_manifests["cfd_surface_mesh"] = build_surface_mesh_manifest(
                 geometry_metadata.get("surface_graph", {}),
                 view_id="cfd_full_360",
