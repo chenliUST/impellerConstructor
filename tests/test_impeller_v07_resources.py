@@ -24,6 +24,9 @@ def test_v07_bundle_loads_schema_and_transition_resources():
     assert export_contract["target_step_exactness"] == "surface_graph_trimmed_brep_step"
     assert export_contract["diagnostic_step_exactness"] == "surface_graph_bounded_unsewn_brep_step"
     assert export_contract["bounded_brep_status"] == "bounded_faces_unsewn"
+    assert export_contract["coverage_status"] == "partial_supported_surfaces"
+    assert export_contract["cad_export_scope"] == "supported_bounded_brep_surfaces"
+    assert export_contract["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
     assert export_contract["mesh_exports"] == ["stl", "obj"]
     assert export_contract["target_mesh_exports"] == ["mesh_manifest"]
     assert export_contract["experimental_exports"] == []
@@ -262,6 +265,11 @@ def test_v07_bounded_export_routes_step_to_bounded_brep_and_hides_mesh_step(tmp_
     assert export_manifests["step"]["bounded_brep_status"] == "bounded_faces_unsewn"
     assert export_manifests["step"]["included_surface_ids"] == ["bottom_cap"]
     assert export_manifests["step"]["excluded_surface_ids"] == ["blade_surface"]
+    assert export_manifests["step"]["coverage_status"] == "partial_supported_surfaces"
+    assert export_manifests["step"]["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
+    assert export_manifests["step"]["total_surface_count"] == 2
+    assert export_manifests["step"]["supported_surface_count"] == 1
+    assert export_manifests["step"]["unsupported_surface_count"] == 1
     assert export_manifests["stl"]["export_exactness"] == "surface_graph_sampled_mesh"
     assert export_manifests["obj"]["export_exactness"] == "surface_graph_obj_mesh"
 
@@ -275,6 +283,9 @@ def test_v07_bounded_export_routes_step_to_bounded_brep_and_hides_mesh_step(tmp_
     assert strategy["target_step_exactness"] == "surface_graph_trimmed_brep_step"
     assert strategy["bounded_brep_status"] == "bounded_faces_unsewn"
     assert strategy["sewing_status"] == "not_attempted"
+    assert strategy["coverage_status"] == "partial_supported_surfaces"
+    assert strategy["cad_export_scope"] == "supported_bounded_brep_surfaces"
+    assert strategy["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
     assert strategy["step_exactness"] != strategy["target_step_exactness"]
 
 
@@ -294,12 +305,18 @@ def test_v07_service_instantiates_bounded_brep_step_and_mesh_review_outputs(tmp_
     assert manifest["export_strategy"]["step_exactness"] != manifest["export_strategy"]["target_step_exactness"]
     assert manifest["export_strategy"]["bounded_brep_status"] == "bounded_faces_unsewn"
     assert manifest["export_strategy"]["sewing_status"] == "not_attempted"
+    assert manifest["export_strategy"]["coverage_status"] == "partial_supported_surfaces"
+    assert manifest["export_strategy"]["cad_export_scope"] == "supported_bounded_brep_surfaces"
+    assert manifest["export_strategy"]["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
 
     export_contract = manifest["export_strategy"]["export_contract"]
     assert export_contract["step_exactness"] == "surface_graph_bounded_unsewn_brep_step"
     assert export_contract["target_step_exactness"] == "surface_graph_trimmed_brep_step"
     assert export_contract["bounded_brep_status"] == "bounded_faces_unsewn"
     assert export_contract["sewing_status"] == "not_attempted"
+    assert export_contract["coverage_status"] == "partial_supported_surfaces"
+    assert export_contract["cad_export_scope"] == "supported_bounded_brep_surfaces"
+    assert export_contract["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
 
     step_manifest = manifest["export_manifests"]["step"]
     assert step_manifest["export_exactness"] == "surface_graph_bounded_unsewn_brep_step"
@@ -307,6 +324,13 @@ def test_v07_service_instantiates_bounded_brep_step_and_mesh_review_outputs(tmp_
     assert step_manifest["target_exactness"] == "surface_graph_trimmed_brep_step"
     assert step_manifest["bounded_face_count"] > 0
     assert step_manifest["sewing_status"] == "not_attempted"
+    assert step_manifest["coverage_status"] == "partial_supported_surfaces"
+    assert step_manifest["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
+    assert step_manifest["total_surface_count"] > step_manifest["supported_surface_count"]
+    assert step_manifest["supported_surface_count"] == step_manifest["bounded_face_count"]
+    assert step_manifest["unsupported_surface_count"] == (
+        step_manifest["total_surface_count"] - step_manifest["supported_surface_count"]
+    )
 
     step_path = Path(manifest["exports"]["step"])
     stl_path = Path(manifest["exports"]["stl"])

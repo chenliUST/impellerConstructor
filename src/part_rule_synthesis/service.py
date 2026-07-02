@@ -14,8 +14,9 @@ from part_rule_synthesis.impeller_bounded_brep_export import write_bounded_brep_
 from part_rule_synthesis.impeller_brep_export import write_trimmed_brep_step
 from part_rule_synthesis.impeller_design_space import build_campaign_signature
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
+from part_rule_synthesis.impeller_mesh_export import write_surface_graph_obj
 from part_rule_synthesis.impeller_mesh_manifest import build_surface_mesh_manifest
-from part_rule_synthesis.impeller_surface_graph_export import write_surface_graph_exports, write_surface_graph_obj
+from part_rule_synthesis.impeller_surface_graph_export import write_surface_graph_exports
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset, impeller_json_preset_ids
 from part_rule_synthesis.impeller_taxonomy import (
@@ -910,10 +911,15 @@ def _write_exports(
         brep_manifest = {
             **brep_manifest,
             "bounded_brep_status": "bounded_faces_unsewn",
+            "coverage_status": bounded_surface_graph["coverage_status"],
+            "cad_export_scope": "supported_bounded_brep_surfaces",
+            "unsupported_surface_policy": "excluded_with_manifest_accounting",
+            "total_surface_count": bounded_surface_graph["total_surface_count"],
+            "supported_surface_count": bounded_surface_graph["supported_surface_count"],
             "surface_count": len(bounded_surface_graph["included_surface_ids"]),
             "included_surface_ids": bounded_surface_graph["included_surface_ids"],
             "excluded_surface_ids": bounded_surface_graph["excluded_surface_ids"],
-            "unsupported_surface_count": len(bounded_surface_graph["excluded_surface_ids"]),
+            "unsupported_surface_count": bounded_surface_graph["unsupported_surface_count"],
             "unsupported_surface_kinds": bounded_surface_graph["excluded_surface_kinds"],
             "diagnostic_step_exactness": export_contract.get(
                 "diagnostic_step_exactness",
@@ -1076,6 +1082,7 @@ def _bounded_brep_supported_surface_graph(surface_graph: dict[str, Any]) -> dict
     included_surface_ids: list[str] = []
     excluded_surface_ids: list[str] = []
     excluded_surface_kinds: dict[str, int] = {}
+    total_surface_count = len(surface_graph.get("surfaces", []))
     for surface_index, surface in enumerate(surface_graph.get("surfaces", [])):
         surface_id = str(surface.get("id") or surface.get("surface_graph_id") or f"surface_{surface_index}")
         kind = str(surface.get("kind") or "")
@@ -1091,6 +1098,12 @@ def _bounded_brep_supported_surface_graph(surface_graph: dict[str, Any]) -> dict
         limitations.append("unsupported_surface_kinds_excluded_from_bounded_brep_step")
     return {
         "surface_graph": {**surface_graph, "surfaces": included_surfaces},
+        "coverage_status": (
+            "partial_supported_surfaces" if excluded_surface_ids else "complete_supported_surfaces"
+        ),
+        "total_surface_count": total_surface_count,
+        "supported_surface_count": len(included_surfaces),
+        "unsupported_surface_count": len(excluded_surface_ids),
         "included_surface_ids": included_surface_ids,
         "excluded_surface_ids": excluded_surface_ids,
         "excluded_surface_kinds": dict(sorted(excluded_surface_kinds.items())),
@@ -1126,6 +1139,9 @@ def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None
             "diagnostic_step_exactness": diagnostic_step_exactness,
             "bounded_brep_status": "bounded_faces_unsewn",
             "sewing_status": "not_attempted",
+            "coverage_status": "partial_supported_surfaces",
+            "cad_export_scope": "supported_bounded_brep_surfaces",
+            "unsupported_surface_policy": "excluded_with_manifest_accounting",
             "export_contract": {
                 "mode": "surface_graph_bounded_brep",
                 "step_exactness": step_exactness,
@@ -1133,8 +1149,14 @@ def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None
                 "diagnostic_step_exactness": diagnostic_step_exactness,
                 "bounded_brep_status": "bounded_faces_unsewn",
                 "sewing_status": "not_attempted",
+                "coverage_status": "partial_supported_surfaces",
+                "cad_export_scope": "supported_bounded_brep_surfaces",
+                "unsupported_surface_policy": "excluded_with_manifest_accounting",
             },
-            "reason": "bounded STEP is generated from bounded surface_graph B-Rep faces; mesh artifacts are separate review outputs",
+            "reason": (
+                "bounded STEP is completed for supported annular bounded surface_graph B-Rep faces; "
+                "unsupported surfaces and mesh artifacts are separate review outputs"
+            ),
         }
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
         return {

@@ -304,13 +304,24 @@ def test_impeller_v07_exports_bounded_step_and_no_default_mesh_step(tmp_path: Pa
 
     assert manifest["dsl_version"] == "0.7"
     assert manifest["export_strategy"]["mode"] == "surface_graph_bounded_brep"
+    assert manifest["export_strategy"]["cad_exports"] == "completed"
+    assert manifest["export_strategy"]["coverage_status"] == "partial_supported_surfaces"
+    assert manifest["export_strategy"]["cad_export_scope"] == "supported_bounded_brep_surfaces"
+    assert manifest["export_strategy"]["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
     step_manifest = manifest["export_manifests"]["step"]
     assert step_manifest["target_exactness"] == "surface_graph_trimmed_brep_step"
+    surface_count = len(manifest["geometry"]["surface_graph"]["surfaces"])
     annular_plane_surfaces = [
         surface
         for surface in manifest["geometry"]["surface_graph"]["surfaces"]
         if surface.get("kind") == "annular_plane_surface"
     ]
+    assert step_manifest["coverage_status"] == "partial_supported_surfaces"
+    assert step_manifest["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
+    assert step_manifest["total_surface_count"] == surface_count
+    assert step_manifest["supported_surface_count"] == len(annular_plane_surfaces)
+    assert step_manifest["unsupported_surface_count"] == surface_count - len(annular_plane_surfaces)
+    assert step_manifest["bounded_face_count"] == step_manifest["supported_surface_count"]
     if len(annular_plane_surfaces) >= 2:
         assert step_manifest["bounded_face_count"] >= 2
     else:

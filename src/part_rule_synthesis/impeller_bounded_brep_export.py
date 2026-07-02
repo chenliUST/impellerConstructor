@@ -89,7 +89,7 @@ def write_bounded_brep_step(
     faces: list[Any] = []
     face_regions: list[dict[str, Any]] = []
     for surface_index, surface in enumerate(surface_graph.get("surfaces", [])):
-        surface_id = str(surface.get("id", f"surface_{surface_index}"))
+        surface_id = str(surface.get("id") or surface.get("surface_graph_id") or f"surface_{surface_index}")
         kind = surface.get("kind")
         if kind != "annular_plane_surface":
             raise ValueError(f"unsupported bounded brep surface kind: {kind}")

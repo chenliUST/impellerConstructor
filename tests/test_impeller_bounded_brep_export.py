@@ -106,6 +106,15 @@ def test_write_bounded_brep_step_reimported_bounds_stay_near_outer_radius(tmp_pa
     assert max(abs(xmin), abs(ymin), abs(xmax), abs(ymax)) < 1000.0
 
 
+def test_write_bounded_brep_step_uses_surface_graph_id_when_id_is_missing(tmp_path: Path):
+    surface = _annular_surface(surface_graph_id="fallback_annular_face")
+    del surface["id"]
+
+    manifest = write_bounded_brep_step(tmp_path / "bounded_annular.step", "impeller", _surface_graph(surface))
+
+    assert manifest["face_regions"][0]["surface_graph_id"] == "fallback_annular_face"
+
+
 def test_bounded_step_marker_check_rejects_scientific_notation_huge_plane_marker(tmp_path: Path):
     step_path = tmp_path / "legacy_unbounded.step"
     step_path.write_text(
