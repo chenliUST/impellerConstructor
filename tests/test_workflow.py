@@ -377,10 +377,15 @@ def test_impeller_v07_open_and_closed_workflows_include_transitions_bounded_step
 
         obj_manifest = manifest["export_manifests"]["obj"]
         assert obj_manifest["triangle_count"] > 0
-        assert obj_manifest["transition_regions"]
 
         mesh_manifest = manifest["simulation_manifests"]["cfd_surface_mesh"]
-        assert mesh_manifest["transition_regions"]
+        obj_transition_regions = obj_manifest["transition_regions"]
+        mesh_transition_regions = mesh_manifest["transition_regions"]
+        assert obj_transition_regions
+        assert len(obj_transition_regions) == len(mesh_transition_regions)
+        assert {region["surface_graph_id"] for region in obj_transition_regions} == {
+            region["surface_graph_id"] for region in mesh_transition_regions
+        }
 
 
 def test_api_default_v06_exports_copy_to_cwd_model_output(tmp_path: Path, monkeypatch):

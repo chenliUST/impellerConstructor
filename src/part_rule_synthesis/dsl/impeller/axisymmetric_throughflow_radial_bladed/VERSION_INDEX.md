@@ -55,7 +55,7 @@ src/part_rule_synthesis/impeller_runtime_compiler.py
 Service-level synthesis selects a preset id and receives a compiled runtime DSL dictionary:
 
 ```python
-engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_6")
+engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_7")
 ```
 
 Legacy v0.4 studies remain loadable:
