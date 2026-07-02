@@ -830,8 +830,8 @@ def test_v07_closed_blade_tip_to_shroud_override_is_represented():
             transition_overrides={
                 "blade_tip_to_shroud.default": {
                     "enabled": True,
-                    "treatment": "fillet",
-                    "radius_mm": 2.5,
+                    "treatment": "chamfer",
+                    "radius_mm": 9.0,
                 }
             },
         )
@@ -852,26 +852,49 @@ def test_v07_closed_blade_tip_to_shroud_override_is_represented():
         edge
         for edge in edges
         if edge.get("edge_family") == "blade_tip_or_shroud"
+        and "blade_0_tip_transition_surface" in edge.get("transition_surface_ids", [])
     ]
+    tip_surface = surfaces["blade_0_tip_transition_surface"]
+    tip_surface_policy_id = tip_surface["transition_policy_id"]
 
     assert policy["enabled"] is True
-    assert policy["treatment"] == "fillet"
-    assert policy["radius_mm"] == 2.5
+    assert policy["treatment"] == "chamfer"
+    assert policy["radius_mm"] == 9.0
+    assert tip_surface["edge_family"] == "blade_tip_to_shroud"
+    assert tip_surface_policy_id == "blade_tip_to_shroud.default"
+    assert tip_surface["treatment"] == "chamfer"
+    assert tip_surface["radius_mm"] == 9.0
     assert tip_to_shroud_edges
     assert legacy_tip_edges
     assert all(
         edge["transition_policy_id"] == "blade_tip_to_shroud.default"
         for edge in tip_to_shroud_edges
     )
+    assert all("policy_alias_of" not in edge for edge in tip_to_shroud_edges)
     assert all(
-        edge.get("policy_alias_of") == "blade_tip_or_shroud.default"
-        for edge in tip_to_shroud_edges
+        edge["transition_policy_id"] == tip_surface_policy_id
+        for edge in legacy_tip_edges
+    )
+    assert all(
+        edge.get("declared_policy_id") == "blade_tip_or_shroud.default"
+        for edge in legacy_tip_edges
+    )
+    assert all(
+        edge.get("policy_alias_of") == tip_surface_policy_id
+        for edge in legacy_tip_edges
     )
     assert all(edge.get("transition_surface_ids") for edge in tip_to_shroud_edges)
     assert all(
         transition_surface_id in surfaces
         for edge in tip_to_shroud_edges
         for transition_surface_id in edge["transition_surface_ids"]
+    )
+    assert all(
+        edge["transition_policy_id"] == surfaces[transition_surface_id]["transition_policy_id"]
+        for edge in edges
+        for transition_surface_id in edge.get("transition_surface_ids", [])
+        if transition_surface_id in surfaces
+        and surfaces[transition_surface_id].get("transition_policy_id")
     )
     assert run.manifest["geometry"]["validity"]["status"] == "PASS"
 

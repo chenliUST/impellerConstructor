@@ -970,8 +970,14 @@ def _surface_graph(
             and facets["shroud_topology"] == "closed"
             and _policy_transition_enabled(policy_driven_blade_transitions, tip_to_shroud_policy)
         )
-        tip_surface_policy = tip_policy if tip_policy_enabled else tip_to_shroud_policy
-        tip_surface_edge_family = "blade_tip_or_shroud" if tip_policy_enabled else "blade_tip_to_shroud"
+        tip_to_shroud_owns_tip_surface = tip_to_shroud_policy_enabled
+        tip_surface_policy = tip_to_shroud_policy if tip_to_shroud_owns_tip_surface else tip_policy
+        tip_surface_edge_family = "blade_tip_to_shroud" if tip_to_shroud_owns_tip_surface else "blade_tip_or_shroud"
+        tip_surface_policy_id = (
+            str(tip_surface_policy["policy_id"])
+            if isinstance(tip_surface_policy, dict) and tip_surface_policy.get("policy_id")
+            else None
+        )
         leading_surface_id = (
             f"{prefix}_leading_transition_surface"
             if policy_driven_blade_transitions
@@ -992,6 +998,16 @@ def _surface_graph(
             if policy_driven_blade_transitions
             else f"{prefix}_tip_edge_fillet_surface" if explicit_fillets else f"{prefix}_tip_closure_surface"
         )
+        legacy_tip_alias_metadata = {}
+        if tip_to_shroud_owns_tip_surface and tip_policy_enabled and tip_surface_policy_id:
+            legacy_tip_alias_metadata = {
+                "edge_family": "blade_tip_or_shroud",
+                "declared_policy_id": "blade_tip_or_shroud.default",
+                "transition_policy_id": tip_surface_policy_id,
+                "transition_surface_ids": [tip_closure_surface_id],
+                "policy_alias_of": tip_surface_policy_id,
+                "policy_alias_reason": "closed_tip_to_shroud_owns_shared_tip_transition_geometry",
+            }
         edge_surface_kind = "transition_surface" if policy_driven_blade_transitions else ("blend_surface" if explicit_fillets else "edge_closure_surface")
         leading_role = (
             _transition_role(leading_policy, "blade_leading_edge_fillet", "blade_leading_edge_chamfer")
@@ -1303,16 +1319,19 @@ def _surface_graph(
                         "id": f"{prefix}_pressure_tip_closure_edge",
                         "surfaces": [f"{prefix}_pressure_surface", tip_closure_surface_id],
                         "relation": "closed_blade_tip_edge",
+                        **legacy_tip_alias_metadata,
                     },
                     {
                         "id": f"{prefix}_suction_tip_closure_edge",
                         "surfaces": [f"{prefix}_suction_surface", tip_closure_surface_id],
                         "relation": "closed_blade_tip_edge",
+                        **legacy_tip_alias_metadata,
                     },
                     {
                         "id": f"{prefix}_tip_conformal_edge",
                         "surfaces": [tip_surface_id, tip_closure_surface_id],
                         "relation": "conformal_tip_boundary",
+                        **legacy_tip_alias_metadata,
                     },
                 ]
             )
@@ -1322,15 +1341,19 @@ def _surface_graph(
                 "surfaces": [tip_surface_id, tip_closure_surface_id],
                 "relation": "closed_blade_tip_to_shroud_boundary",
                 "edge_family": "blade_tip_to_shroud",
-                "transition_policy_id": "blade_tip_to_shroud.default",
+                "transition_policy_id": tip_surface_policy_id or "blade_tip_to_shroud.default",
                 "transition_surface_ids": [tip_closure_surface_id],
             }
-            if tip_policy_enabled:
-                tip_to_shroud_edge["policy_alias_of"] = "blade_tip_or_shroud.default"
             blade_edges.append(tip_to_shroud_edge)
         edges.extend(blade_edges)
         for side in ["pressure", "suction"]:
             blade_surface = f"{prefix}_{side}_surface"
+            tip_edge = {
+                "id": f"{prefix}_{side}_tip_edge",
+                "surfaces": [tip_surface_id, blade_surface],
+                "relation": "conformal_tip_boundary",
+                **legacy_tip_alias_metadata,
+            }
             edges.extend(
                 [
                     {
@@ -1338,11 +1361,7 @@ def _surface_graph(
                         "surfaces": ["hub_revolve_surface", blade_surface],
                         "relation": "conformal_hub_boundary",
                     },
-                    {
-                        "id": f"{prefix}_{side}_tip_edge",
-                        "surfaces": [tip_surface_id, blade_surface],
-                        "relation": "conformal_tip_boundary",
-                    },
+                    tip_edge,
                 ]
             )
     surface_graph = {
@@ -1513,6 +1532,9 @@ def _annotate_transition_edge_metadata(
     surface_ids = {surface["id"] for surface in surface_graph.get("surfaces", [])}
     annotated_edges = []
     for edge in surface_graph.get("edges", []):
+        if edge.get("edge_family") and edge.get("transition_policy_id") and edge.get("transition_surface_ids"):
+            annotated_edges.append(edge)
+            continue
         annotation = _transition_edge_annotation(edge, surface_ids)
         if annotation is None:
             annotated_edges.append(edge)
