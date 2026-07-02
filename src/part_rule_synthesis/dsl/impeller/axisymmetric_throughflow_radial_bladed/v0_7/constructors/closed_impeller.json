@@ -230,7 +230,7 @@
     "blade_tip_to_shroud": {
       "scope": "blade_pattern",
       "adjacent_roles": ["blade_pressure", "blade_suction", "front_shroud_inner_surface"],
-      "default_treatment": "fillet",
+      "default_treatment": "none",
       "default_radius_parameter": "tip_edge_radius_mm",
       "cfd_patch_group": "tip_fillet_wall"
     },

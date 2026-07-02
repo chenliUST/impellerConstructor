@@ -669,7 +669,7 @@ def test_v07_hub_edge_treatments_are_policy_linked():
         assert surface["transition_policy_id"] == policy_id
         assert surface["treatment"] == policy["treatment"] == treatment
         assert surface["radius_mm"] == policy["radius_mm"]
-        assert surface["role"] == f"{edge_family}_{treatment}"
+        assert surface["role"] == f"{edge_family}_sampled_{treatment}_transition"
         assert surface["cad_surface"]["feature_id"] == surface["feature_id"]
         assert surface["cad_surface"]["source"] == "surface_graph.control_net_transition_surface"
         assert surface["display"]["edge_highlight"] is True
@@ -707,6 +707,135 @@ def test_v07_closed_hood_outlet_chamfer_surface_is_policy_linked_without_renamin
     assert surface["treatment"] == policy["treatment"] == "fillet"
     assert surface["radius_mm"] == policy["radius_mm"]
     assert surface["cfd_patch_group"] == "solid_context"
+
+
+def test_v07_hub_policy_override_radius_changes_transition_geometry():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        baseline = service.instantiate(engine.engine_id, {})
+        overridden = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "hub_bottom_outer.default": {
+                    "enabled": True,
+                    "treatment": "fillet",
+                    "radius_mm": 12.0,
+                }
+            },
+        )
+
+    baseline_surface = {
+        surface["id"]: surface
+        for surface in baseline.manifest["geometry"]["surface_graph"]["surfaces"]
+    }["hub_bottom_outer_transition_surface"]
+    overridden_surface = {
+        surface["id"]: surface
+        for surface in overridden.manifest["geometry"]["surface_graph"]["surfaces"]
+    }["hub_bottom_outer_transition_surface"]
+
+    assert baseline_surface["radius_mm"] == 3.0
+    assert overridden_surface["radius_mm"] == 12.0
+    assert overridden_surface["uv_grid"] != baseline_surface["uv_grid"]
+    assert overridden_surface["control_net"] != baseline_surface["control_net"]
+
+
+def test_v07_disabled_hub_policy_omits_transition_surface_and_keeps_validity_pass():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "hub_bottom_outer.default": {
+                    "enabled": False,
+                    "treatment": "none",
+                    "radius_mm": 0.0,
+                }
+            },
+        )
+
+    surfaces = {surface["id"] for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    hub_bottom_edges = [
+        edge
+        for edge in run.manifest["geometry"]["surface_graph"]["edges"]
+        if edge.get("edge_family") == "hub_bottom_outer"
+    ]
+
+    assert "hub_bottom_outer_transition_surface" not in surfaces
+    assert hub_bottom_edges == []
+    assert run.manifest["geometry"]["validity"]["status"] == "PASS"
+    assert run.manifest["geometry_validity"]["status"] == "PASS"
+
+
+def test_v07_closed_enabled_transition_policies_have_surface_or_edge_provenance():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_closed_reference_v0_7")
+        run = service.instantiate(engine.engine_id, {})
+
+    manifest = run.manifest
+    surfaces = manifest["geometry"]["surface_graph"]["surfaces"]
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    represented_families = {
+        surface["edge_family"]
+        for surface in surfaces
+        if surface.get("edge_family")
+    } | {
+        edge["edge_family"]
+        for edge in edges
+        if edge.get("edge_family") and edge.get("transition_surface_ids")
+    }
+
+    assert manifest["transition_policies"]["blade_tip_to_shroud.default"]["enabled"] is False
+    assert manifest["transition_policies"]["blade_tip_to_shroud.default"]["treatment"] == "none"
+    assert "hood_inlet_lip" in represented_families
+    assert "hood_outlet_lip" in represented_families
+    assert [
+        policy_id
+        for policy_id, policy in manifest["transition_policies"].items()
+        if policy["enabled"] and policy["edge_family"] not in represented_families
+    ] == []
+
+
+def test_v06_hub_edge_ids_preserve_legacy_topology():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        runs = []
+        for preset_id in ["radial_open_reference_v0_6", "radial_closed_reference_v0_6"]:
+            engine = service.synthesize("impeller", preset_id)
+            runs.append(service.instantiate(engine.engine_id, {}))
+
+    for run in runs:
+        edge_ids = {edge["id"] for edge in run.manifest["geometry"]["surface_graph"]["edges"]}
+        surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+
+        assert "hub_top_cap_outer_edge" not in edge_ids
+        assert "mounting_bore_top_edge" not in edge_ids
+        assert surfaces["hub_chamfer_top_cap_surface"]["role"] == "hub_chamfer"
+        assert surfaces["hub_chamfer_bore_top_surface"]["role"] == "hub_chamfer"
 
 
 def test_v07_disabled_root_transition_ignores_oversized_legacy_root_fillet_radius():

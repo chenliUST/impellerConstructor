@@ -51,7 +51,12 @@ def test_v07_runtime_exposes_edge_families_and_default_policies():
         assert policy["edge_family"] == edge_family_id
         assert policy["treatment"] == edge_family["default_treatment"]
         assert policy["maps_to_parameters"] == [radius_parameter]
-        assert policy["radius_mm"] == float(preset["parameter_values"][radius_parameter])
+        expected_radius = (
+            0.0
+            if edge_family["default_treatment"] == "none"
+            else float(preset["parameter_values"][radius_parameter])
+        )
+        assert policy["radius_mm"] == expected_radius
 
 
 def test_pre_v07_runtime_does_not_emit_transition_policy_fields():

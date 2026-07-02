@@ -913,16 +913,6 @@ def _surface_graph(
             "relation": "closed_hub_solid_boundary",
         },
         {
-            "id": "hub_top_cap_outer_edge",
-            "surfaces": ["outer_hub_shell_surface", "hub_top_cap_face"],
-            "relation": "closed_hub_solid_boundary",
-        },
-        {
-            "id": "mounting_bore_top_edge",
-            "surfaces": ["mounting_bore_cylinder", "hub_top_cap_face"],
-            "relation": "closed_mounting_bore_boundary",
-        },
-        {
             "id": "mounting_bore_bottom_edge",
             "surfaces": ["mounting_bore_cylinder", "inner_hub_bottom_face"],
             "relation": "closed_mounting_bore_boundary",
@@ -933,6 +923,36 @@ def _surface_graph(
             "relation": "shared_hub_shell_definition",
         },
     ]
+    if policy_driven_blade_transitions:
+        edges.extend(
+            [
+                {
+                    "id": "hub_top_cap_outer_edge",
+                    "surfaces": ["outer_hub_shell_surface", "hub_top_cap_face"],
+                    "relation": "closed_hub_solid_boundary",
+                },
+                {
+                    "id": "mounting_bore_top_edge",
+                    "surfaces": ["mounting_bore_cylinder", "hub_top_cap_face"],
+                    "relation": "closed_mounting_bore_boundary",
+                },
+            ]
+        )
+        if facets["shroud_topology"] == "closed":
+            edges.extend(
+                [
+                    {
+                        "id": "hood_inlet_lip_edge",
+                        "surfaces": ["shroud_surface", "hood_inlet_cap_surface"],
+                        "relation": "closed_hood_shell_boundary",
+                    },
+                    {
+                        "id": "hood_outlet_lip_edge",
+                        "surfaces": ["shroud_surface", "hood_outlet_cap_surface"],
+                        "relation": "closed_hood_shell_boundary",
+                    },
+                ]
+            )
     boundary_curves: dict[str, Any] = {}
     named_boundary_curves: list[dict[str, Any]] = []
     for blade in sampled_blades:
@@ -1387,6 +1407,44 @@ def _policy_transition_surface_record(
     return record
 
 
+def _sampled_transition_band_surface(
+    *,
+    surface_id: str,
+    role: str,
+    feature_id: str,
+    material_domain: str,
+    radius_mm: float,
+    grid: list[list[list[float]]],
+    display: dict[str, Any],
+    boundary_ids: list[str],
+    material: bool | None = None,
+) -> dict[str, Any]:
+    control_net, cad_surface = _control_net_and_cad_surface(
+        surface_id,
+        role,
+        feature_id,
+        grid,
+        source="surface_graph.control_net_sampled_transition_band",
+    )
+    surface = {
+        "id": surface_id,
+        "kind": "sampled_transition_band",
+        "role": role,
+        "feature_id": feature_id,
+        "material_domain": material_domain,
+        "radius_mm": _round(radius_mm),
+        "transition_geometry": "sampled_band_approximation",
+        "control_net": control_net,
+        "uv_grid": grid,
+        "cad_surface": cad_surface,
+        "display": display,
+        "boundary_ids": boundary_ids,
+    }
+    if material is not None:
+        surface["material"] = material
+    return surface
+
+
 def _edge_family_cfd_patch_group(edge_families: dict[str, Any] | None, edge_family: str) -> str | None:
     family = (edge_families or {}).get(edge_family)
     if not isinstance(family, dict):
@@ -1486,6 +1544,18 @@ def _transition_edge_annotation(
         return _annotation_with_existing_surface(
             "mounting_bore_bottom",
             ["mounting_bore_bottom_transition_surface", "hub_chamfer_bore_bottom_surface"],
+            surface_ids,
+        )
+    if edge_id == "hood_inlet_lip_edge":
+        return _annotation_with_existing_surface(
+            "hood_inlet_lip",
+            ["hood_chamfer_inlet_surface"],
+            surface_ids,
+        )
+    if edge_id == "hood_outlet_lip_edge":
+        return _annotation_with_existing_surface(
+            "hood_outlet_lip",
+            ["hood_chamfer_outlet_surface"],
             surface_ids,
         )
 
@@ -1761,23 +1831,61 @@ def _hub_solid_surfaces(
     ]
     if transition_policies is not None:
         transition_specs = [
-            (legacy_transition_surfaces[0], "hub_bottom_outer", "hub_bottom_outer_transition_surface"),
-            (legacy_transition_surfaces[1], "hub_top_outer", "hub_top_outer_transition_surface"),
-            (legacy_transition_surfaces[2], "mounting_bore_top", "mounting_bore_top_transition_surface"),
-            (legacy_transition_surfaces[3], "mounting_bore_bottom", "mounting_bore_bottom_transition_surface"),
+            (
+                "hub_bottom_outer",
+                "hub_bottom_outer_transition_surface",
+                lambda radius: _chamfer_band_grid(max(bore_radius, bottom[0] - radius), bottom[0], bottom[1], bottom[1] + radius),
+                ["hub_bottom_outer_chamfer_a", "hub_bottom_outer_chamfer_b"],
+                {"color": "#91aa80", "opacity": 0.9},
+            ),
+            (
+                "hub_top_outer",
+                "hub_top_outer_transition_surface",
+                lambda radius: _chamfer_band_grid(max(bore_radius, top[0] - radius), top[0], top[1] - radius, top[1]),
+                ["hub_top_cap_chamfer_a", "hub_top_cap_chamfer_b"],
+                {"color": "#91aa80", "opacity": 0.9},
+            ),
+            (
+                "mounting_bore_top",
+                "mounting_bore_top_transition_surface",
+                lambda radius: _chamfer_band_grid(bore_radius, bore_radius + radius, top[1] - radius, top[1]),
+                ["mounting_bore_top_chamfer_a", "mounting_bore_top_chamfer_b"],
+                {"color": "#91aa80", "opacity": 0.86},
+            ),
+            (
+                "mounting_bore_bottom",
+                "mounting_bore_bottom_transition_surface",
+                lambda radius: _chamfer_band_grid(bore_radius, bore_radius + radius, bottom[1], bottom[1] + radius),
+                ["mounting_bore_bottom_chamfer_a", "mounting_bore_bottom_chamfer_b"],
+                {"color": "#91aa80", "opacity": 0.86},
+            ),
         ]
-        for legacy_surface, edge_family, surface_id in transition_specs:
+        for edge_family, surface_id, grid_factory, boundary_ids, display in transition_specs:
             policy = _transition_policy_for_family(transition_policies, edge_family)
             if policy is None:
                 continue
+            if not _policy_transition_enabled(True, policy):
+                continue
             treatment = str(policy["treatment"])
+            radius = max(0.001, float(policy["radius_mm"]))
+            feature_id = f"hub.{edge_family}_transition.{treatment}"
+            base_surface = _sampled_transition_band_surface(
+                surface_id=surface_id,
+                role=f"{edge_family}_sampled_{treatment}_transition",
+                feature_id=feature_id,
+                material_domain="hub",
+                radius_mm=float(policy["radius_mm"]),
+                grid=grid_factory(radius),
+                display=display,
+                boundary_ids=boundary_ids,
+            )
             transition_surface = _policy_transition_surface_record(
-                legacy_surface,
+                base_surface,
                 edge_family,
                 policy,
                 surface_id=surface_id,
-                role=f"{edge_family}_{treatment}",
-                feature_id=f"hub.{edge_family}_transition.{treatment}",
+                role=f"{edge_family}_sampled_{treatment}_transition",
+                feature_id=feature_id,
                 cfd_patch_group=_edge_family_cfd_patch_group(edge_families, edge_family),
                 include_cfd_role=False,
             )
@@ -1903,16 +2011,48 @@ def _hood_shell_surfaces(
         },
     ]
     if transition_policies is not None:
-        policy = _transition_policy_for_family(transition_policies, "hood_outlet_lip")
-        if policy is not None:
-            treatment = str(policy["treatment"])
-            transition_surface = _policy_transition_surface_record(
-                legacy_transition_surfaces[0],
+        transition_specs = [
+            (
+                "hood_inlet_lip",
+                "hood_chamfer_inlet_surface",
+                lambda radius: _chamfer_band_grid(max(1.0, inlet_inner[0] - radius), inlet_inner[0], inlet_inner[1], inlet_inner[1] + radius),
+                ["hood_inlet_chamfer_a", "hood_inlet_chamfer_b"],
+            ),
+            (
                 "hood_outlet_lip",
+                "hood_chamfer_outlet_surface",
+                lambda radius: _chamfer_band_grid(max(1.0, outlet_inner[0] - radius), outlet_inner[0], outlet_inner[1], outlet_inner[1] + radius),
+                ["hood_outlet_chamfer_a", "hood_outlet_chamfer_b"],
+            ),
+        ]
+        for edge_family, surface_id, grid_factory, boundary_ids in transition_specs:
+            policy = _transition_policy_for_family(transition_policies, edge_family)
+            if policy is None:
+                continue
+            if not _policy_transition_enabled(True, policy):
+                continue
+            treatment = str(policy["treatment"])
+            radius = max(0.001, float(policy["radius_mm"]))
+            feature_id = f"front_hood.{edge_family}_transition.{treatment}"
+            base_surface = _sampled_transition_band_surface(
+                surface_id=surface_id,
+                role=f"{edge_family}_sampled_{treatment}_transition",
+                feature_id=feature_id,
+                material_domain="front_hood",
+                radius_mm=float(policy["radius_mm"]),
+                grid=grid_factory(radius),
+                display={"color": "#c5d4da", "opacity": 0.76},
+                boundary_ids=boundary_ids,
+                material=True,
+            )
+            transition_surface = _policy_transition_surface_record(
+                base_surface,
+                edge_family,
                 policy,
-                surface_id="hood_chamfer_outlet_surface",
-                feature_id=f"front_hood.hood_outlet_lip_transition.{treatment}",
-                cfd_patch_group=_edge_family_cfd_patch_group(edge_families, "hood_outlet_lip"),
+                surface_id=surface_id,
+                role=f"{edge_family}_sampled_{treatment}_transition",
+                feature_id=feature_id,
+                cfd_patch_group=_edge_family_cfd_patch_group(edge_families, edge_family),
                 include_cfd_role=False,
             )
             if transition_surface is not None:
