@@ -847,6 +847,31 @@ def _write_exports(
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
     export_contract = (dsl_context or {}).get("export_contract", {})
+    if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_bounded_brep":
+        surface_graph = (geometry_metadata or {}).get("surface_graph")
+        if not surface_graph:
+            raise RuntimeError("surface_graph_bounded_brep export requires geometry.surface_graph")
+        output_dir = _model_output_dir_for_run(run_dir, model_output_root)
+        stem = _safe_export_stem((dsl_context or {}).get("preset_id"), run_dir.name)
+        step = output_dir / f"{stem}.step"
+        stl = output_dir / f"{stem}.stl"
+        manifest_copy = output_dir / f"{stem}.manifest.json"
+        export_manifests = write_surface_graph_exports(
+            step,
+            stl,
+            part_family,
+            surface_graph,
+            view_id=export_contract.get("default_view", "cad_review_360"),
+        )
+        export_manifests["step"] = {
+            **export_manifests["step"],
+            "bounded_brep_status": "deferred",
+            "limitations": [
+                "bounded_brep_construction_deferred_to_task_5",
+                "step_is_surface_graph_mesh_not_trimmed_brep",
+            ],
+        }
+        return {"step": str(step), "stl": str(stl), "manifest": str(manifest_copy)}, export_manifests
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
         surface_graph = (geometry_metadata or {}).get("surface_graph")
         if not surface_graph:
@@ -1001,6 +1026,15 @@ def _model_output_dir_for_run(run_dir: Path, model_output_root: Path | None = No
 
 def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None) -> dict[str, str]:
     export_contract = (dsl_context or {}).get("export_contract", {})
+    if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_bounded_brep":
+        return {
+            "mode": "surface_graph_bounded_brep",
+            "cad_exports": "deferred",
+            "source": "geometry.surface_graph",
+            "view": export_contract.get("default_view", "cad_review_360"),
+            "step_exactness": "surface_graph_mesh_step",
+            "reason": "Task 2 writes graph-derived mesh STEP/STL review outputs; bounded BREP construction is deferred",
+        }
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
         return {
             "mode": "surface_graph_brep",

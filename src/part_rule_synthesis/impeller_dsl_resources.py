@@ -180,6 +180,35 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
             raise ValueError(f"preset id mismatch: {preset_id}")
         if preset["constructor_id"] not in bundle.constructors:
             raise ValueError(f"preset {preset_id} references unknown constructor")
+    if bundle.schema["dsl_version"] == "0.7":
+        _validate_v07_edge_family_contracts(bundle)
+
+
+def _validate_v07_edge_family_contracts(bundle: ImpellerDslBundle) -> None:
+    for constructor_id, constructor in bundle.constructors.items():
+        edge_families = constructor.get("edge_families")
+        if not edge_families:
+            raise ValueError(f"constructor {constructor_id} missing required V0.7 edge_families")
+        if not isinstance(edge_families, dict):
+            raise ValueError(f"constructor {constructor_id} V0.7 edge_families must be an object")
+        for edge_family_id, edge_family in edge_families.items():
+            if not isinstance(edge_family, dict):
+                raise ValueError(f"constructor {constructor_id} edge family {edge_family_id} must be an object")
+            for field_name in ["default_treatment", "default_radius_parameter"]:
+                if field_name not in edge_family:
+                    raise ValueError(f"constructor {constructor_id} edge family {edge_family_id} missing {field_name}")
+
+    for preset_id, preset in bundle.presets.items():
+        constructor_id = preset["constructor_id"]
+        constructor = bundle.constructors[constructor_id]
+        parameter_values = preset.get("parameter_values", {})
+        for edge_family_id, edge_family in constructor["edge_families"].items():
+            radius_parameter = edge_family["default_radius_parameter"]
+            if radius_parameter not in parameter_values:
+                raise ValueError(
+                    f"preset {preset_id} missing edge-family radius parameter {radius_parameter} "
+                    f"for constructor {constructor_id} edge family {edge_family_id}"
+                )
 
 
 def _validate_shape_control_policies(bundle: ImpellerDslBundle) -> None:

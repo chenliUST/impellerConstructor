@@ -54,7 +54,7 @@ def compile_impeller_runtime_preset(
     simulation_views = _simulation_views_for_constructor(bundle, constructor)
     export_contract = _export_contract_for_constructor(bundle, constructor)
     dsl_version = str(bundle.schema["dsl_version"])
-    return {
+    runtime = {
         "version": f"{dsl_version}.0",
         "part_family": "impeller",
         "preset_id": resolved_preset_id,
@@ -75,11 +75,6 @@ def compile_impeller_runtime_preset(
         "solid_features": constructor.get("solid_features", {}),
         "profile_defaults": constructor.get("profile_defaults", {}),
         "feature_graph": constructor.get("feature_graph", {}),
-        "edge_families": constructor.get("edge_families", {}),
-        "transition_policy_defaults": _transition_policy_defaults(
-            constructor.get("edge_families", {}),
-            parameters,
-        ),
         "simulation_views": simulation_views,
         "export_contract": export_contract,
         "shape_control": shape_control,
@@ -87,6 +82,11 @@ def compile_impeller_runtime_preset(
         "loss_schema": bundle.loss_schema,
         "source_refs": preset.get("source_refs", []),
     }
+    if dsl_version == "0.7":
+        edge_families = constructor.get("edge_families", {})
+        runtime["edge_families"] = edge_families
+        runtime["transition_policy_defaults"] = _transition_policy_defaults(edge_families, parameters)
+    return runtime
 
 
 def compiled_impeller_presets() -> dict[str, dict[str, Any]]:
@@ -159,7 +159,13 @@ def _transition_policy_defaults(
 ) -> dict[str, dict[str, Any]]:
     policies = {}
     for family_id, family in edge_families.items():
+        if "default_treatment" not in family:
+            raise ValueError(f"edge family {family_id} missing default_treatment")
+        if "default_radius_parameter" not in family:
+            raise ValueError(f"edge family {family_id} missing default_radius_parameter")
         parameter_name = family["default_radius_parameter"]
+        if parameter_name not in parameters:
+            raise ValueError(f"edge family {family_id} radius parameter not found in preset: {parameter_name}")
         policies[f"{family_id}.default"] = {
             "edge_family": family_id,
             "enabled": True,
