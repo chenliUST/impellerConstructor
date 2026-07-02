@@ -49,6 +49,10 @@ def resolve_transition_policies(
 
         policy = dict(policies[policy_id])
         applied_overrides = []
+        enabled_overridden = "enabled" in override
+        if enabled_overridden:
+            policy["enabled"] = bool(override["enabled"])
+            applied_overrides.append("enabled")
         if "treatment" in override:
             policy["treatment"] = _validate_treatment(policy_id, override["treatment"])
             applied_overrides.append("treatment")
@@ -56,7 +60,7 @@ def resolve_transition_policies(
             policy["radius_mm"] = _validate_radius(policy_id, override["radius_mm"])
             applied_overrides.append("radius_mm")
         policy["overrides"] = applied_overrides
-        _apply_treatment(policy)
+        _apply_treatment(policy, enabled_overridden=enabled_overridden)
         policies[policy_id] = policy
 
     return policies
@@ -94,12 +98,14 @@ def _policy(
     return policy
 
 
-def _apply_treatment(policy: dict[str, Any]) -> None:
+def _apply_treatment(policy: dict[str, Any], enabled_overridden: bool = False) -> None:
     treatment = policy["treatment"]
-    policy["enabled"] = treatment != "none"
     policy["continuity"] = "G1" if treatment == "fillet" else "G0"
     if treatment == "none":
+        policy["enabled"] = False
         policy["radius_mm"] = 0.0
+    elif not enabled_overridden:
+        policy["enabled"] = True
 
 
 def _validate_treatment(policy_id: str, treatment: Any) -> str:

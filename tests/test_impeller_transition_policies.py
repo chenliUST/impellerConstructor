@@ -76,6 +76,43 @@ def test_resolve_transition_policies_applies_treatment_and_radius_override():
     assert policy["overrides"] == ["treatment", "radius_mm"]
 
 
+def test_resolve_transition_policies_applies_enabled_override_without_changing_fillet_shape():
+    policies = resolve_transition_policies(
+        {
+            "blade_root_to_hub": {
+                "default_treatment": "fillet",
+                "default_radius_parameter": "root_fillet_radius_mm",
+            },
+            "blade_tip_or_shroud": {
+                "default_treatment": "fillet",
+                "default_radius_parameter": "tip_edge_radius_mm",
+            },
+        },
+        {"root_fillet_radius_mm": 8.0, "tip_edge_radius_mm": 2.0},
+        overrides={
+            "blade_root_to_hub.default": {"enabled": False},
+            "blade_tip_or_shroud.default": {
+                "enabled": True,
+                "treatment": "none",
+                "radius_mm": 6.0,
+            },
+        },
+    )
+
+    disabled_fillet = policies["blade_root_to_hub.default"]
+    assert disabled_fillet["enabled"] is False
+    assert disabled_fillet["treatment"] == "fillet"
+    assert disabled_fillet["radius_mm"] == 8.0
+    assert disabled_fillet["continuity"] == "G1"
+    assert disabled_fillet["overrides"] == ["enabled"]
+
+    none_policy = policies["blade_tip_or_shroud.default"]
+    assert none_policy["enabled"] is False
+    assert none_policy["treatment"] == "none"
+    assert none_policy["radius_mm"] == 0.0
+    assert none_policy["continuity"] == "G0"
+
+
 def test_resolve_transition_policies_rejects_unknown_policy_override():
     with pytest.raises(TransitionPolicyError, match="unknown transition policy"):
         resolve_transition_policies(
