@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
 
 SUPPORTED_TREATMENTS = {"none", "chamfer", "fillet"}
+SUPPORTED_OVERRIDE_KEYS = {"enabled", "treatment", "radius_mm"}
 
 
 class TransitionPolicyError(ValueError):
@@ -46,12 +48,17 @@ def resolve_transition_policies(
             raise TransitionPolicyError(f"unknown transition policy: {policy_id}")
         if not isinstance(override, Mapping):
             raise TransitionPolicyError(f"transition policy {policy_id} override must be an object")
+        unknown_keys = sorted(set(override) - SUPPORTED_OVERRIDE_KEYS)
+        if unknown_keys:
+            raise TransitionPolicyError(
+                f"unknown transition override field for {policy_id}: {', '.join(unknown_keys)}"
+            )
 
         policy = dict(policies[policy_id])
         applied_overrides = []
         enabled_overridden = "enabled" in override
         if enabled_overridden:
-            policy["enabled"] = bool(override["enabled"])
+            policy["enabled"] = _validate_enabled(policy_id, override["enabled"])
             applied_overrides.append("enabled")
         if "treatment" in override:
             policy["treatment"] = _validate_treatment(policy_id, override["treatment"])
@@ -114,11 +121,19 @@ def _validate_treatment(policy_id: str, treatment: Any) -> str:
     return str(treatment)
 
 
+def _validate_enabled(policy_id: str, enabled: Any) -> bool:
+    if type(enabled) is not bool:
+        raise TransitionPolicyError(f"enabled override must be a boolean for {policy_id}")
+    return enabled
+
+
 def _validate_radius(policy_id: str, radius_mm: Any) -> float:
     try:
         radius = float(radius_mm)
     except (TypeError, ValueError) as exc:
         raise TransitionPolicyError(f"transition radius for {policy_id} must be numeric") from exc
+    if not math.isfinite(radius):
+        raise TransitionPolicyError(f"finite transition radius required for {policy_id}: {radius}")
     if radius < 0.0:
         raise TransitionPolicyError(f"negative transition radius for {policy_id}: {radius}")
     return radius

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from part_rule_synthesis.impeller_transition_policies import (
@@ -138,6 +140,63 @@ def test_resolve_transition_policies_rejects_non_object_override():
             },
             {"root_fillet_radius_mm": 8.0},
             overrides={"blade_root_to_hub.default": "chamfer"},
+        )
+
+
+def test_resolve_transition_policies_rejects_unknown_override_key():
+    with pytest.raises(TransitionPolicyError, match="unknown transition override field"):
+        resolve_transition_policies(
+            {
+                "blade_root_to_hub": {
+                    "default_treatment": "fillet",
+                    "default_radius_parameter": "root_fillet_radius_mm",
+                }
+            },
+            {"root_fillet_radius_mm": 8.0},
+            overrides={"blade_root_to_hub.default": {"radius": 6.0}},
+        )
+
+
+@pytest.mark.parametrize("enabled", ["false", 0, 1, None])
+def test_resolve_transition_policies_rejects_non_bool_enabled_override(enabled):
+    with pytest.raises(TransitionPolicyError, match="enabled override must be a boolean"):
+        resolve_transition_policies(
+            {
+                "blade_root_to_hub": {
+                    "default_treatment": "fillet",
+                    "default_radius_parameter": "root_fillet_radius_mm",
+                }
+            },
+            {"root_fillet_radius_mm": 8.0},
+            overrides={"blade_root_to_hub.default": {"enabled": enabled}},
+        )
+
+
+@pytest.mark.parametrize("radius_mm", [math.nan, math.inf, -math.inf])
+def test_resolve_transition_policies_rejects_non_finite_radius_override(radius_mm):
+    with pytest.raises(TransitionPolicyError, match="finite transition radius"):
+        resolve_transition_policies(
+            {
+                "blade_root_to_hub": {
+                    "default_treatment": "fillet",
+                    "default_radius_parameter": "root_fillet_radius_mm",
+                }
+            },
+            {"root_fillet_radius_mm": 8.0},
+            overrides={"blade_root_to_hub.default": {"radius_mm": radius_mm}},
+        )
+
+
+def test_resolve_transition_policies_rejects_non_finite_default_radius():
+    with pytest.raises(TransitionPolicyError, match="finite transition radius"):
+        resolve_transition_policies(
+            {
+                "blade_root_to_hub": {
+                    "default_treatment": "fillet",
+                    "default_radius_parameter": "root_fillet_radius_mm",
+                }
+            },
+            {"root_fillet_radius_mm": math.inf},
         )
 
 

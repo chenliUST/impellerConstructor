@@ -139,9 +139,12 @@ class RuleSynthesisService:
         normalized_curve_overrides = curve_overrides or {}
         normalized_transition_overrides = _normalize_transition_overrides(transition_overrides)
         transition_policies = None
-        if dsl.get("edge_families") or normalized_transition_overrides:
+        edge_families = dsl.get("edge_families", {})
+        if normalized_transition_overrides and not edge_families:
+            raise ValueError("transition_overrides require edge_families")
+        if edge_families:
             transition_policies = resolve_transition_policies(
-                dsl.get("edge_families", {}),
+                edge_families,
                 bound,
                 normalized_transition_overrides,
             )
