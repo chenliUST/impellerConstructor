@@ -651,6 +651,7 @@ def test_v07_hub_edge_treatments_are_policy_linked():
 
     manifest = run.manifest
     surfaces = {surface["id"]: surface for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+    edges = manifest["geometry"]["surface_graph"]["edges"]
     expected = {
         "hub_bottom_outer_transition_surface": ("hub_bottom_outer", "fillet"),
         "hub_top_outer_transition_surface": ("hub_top_outer", "fillet"),
@@ -672,6 +673,40 @@ def test_v07_hub_edge_treatments_are_policy_linked():
         assert surface["cad_surface"]["feature_id"] == surface["feature_id"]
         assert surface["cad_surface"]["source"] == "surface_graph.control_net_transition_surface"
         assert surface["display"]["edge_highlight"] is True
+
+    edge_surfaces_by_family = {
+        edge["edge_family"]: edge["transition_surface_ids"]
+        for edge in edges
+        if edge.get("edge_family") in {"hub_top_outer", "mounting_bore_top"}
+    }
+
+    assert edge_surfaces_by_family["hub_top_outer"] == ["hub_top_outer_transition_surface"]
+    assert edge_surfaces_by_family["mounting_bore_top"] == ["mounting_bore_top_transition_surface"]
+
+
+def test_v07_closed_hood_outlet_chamfer_surface_is_policy_linked_without_renaming():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_closed_reference_v0_7")
+        run = service.instantiate(engine.engine_id, {})
+
+    manifest = run.manifest
+    surfaces = {surface["id"]: surface for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+    surface = surfaces["hood_chamfer_outlet_surface"]
+    policy = manifest["transition_policies"]["hood_outlet_lip.default"]
+
+    assert "hood_outlet_lip_transition_surface" not in surfaces
+    assert surface["kind"] == "transition_surface"
+    assert surface["edge_family"] == "hood_outlet_lip"
+    assert surface["transition_policy_id"] == "hood_outlet_lip.default"
+    assert surface["treatment"] == policy["treatment"] == "fillet"
+    assert surface["radius_mm"] == policy["radius_mm"]
+    assert surface["cfd_patch_group"] == "solid_context"
 
 
 def test_v07_disabled_root_transition_ignores_oversized_legacy_root_fillet_radius():
@@ -730,9 +765,13 @@ def test_v07_surface_graph_edges_include_family_and_policy_metadata():
 
     assert "blade_root_to_hub.default" in policies
     root_edges = [edge for edge in edges if edge.get("edge_family") == "blade_root_to_hub"]
+    hub_top_edges = [edge for edge in edges if edge.get("edge_family") == "hub_top_outer"]
+    bore_top_edges = [edge for edge in edges if edge.get("edge_family") == "mounting_bore_top"]
     assert root_edges
-    assert "hub_top_cap_outer_edge" not in edge_ids
-    assert "mounting_bore_top_edge" not in edge_ids
+    assert "hub_top_cap_outer_edge" in edge_ids
+    assert "mounting_bore_top_edge" in edge_ids
+    assert [edge["transition_surface_ids"] for edge in hub_top_edges] == [["hub_top_outer_transition_surface"]]
+    assert [edge["transition_surface_ids"] for edge in bore_top_edges] == [["mounting_bore_top_transition_surface"]]
     assert all(edge["transition_policy_id"] == "blade_root_to_hub.default" for edge in root_edges)
     assert all(edge["transition_surface_ids"] for edge in root_edges)
     assert manifest["edge_families"]["blade_root_to_hub"] == manifest["geometry"]["edge_families"]["blade_root_to_hub"]

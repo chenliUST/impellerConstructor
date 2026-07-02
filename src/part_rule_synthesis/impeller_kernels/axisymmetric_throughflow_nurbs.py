@@ -913,6 +913,16 @@ def _surface_graph(
             "relation": "closed_hub_solid_boundary",
         },
         {
+            "id": "hub_top_cap_outer_edge",
+            "surfaces": ["outer_hub_shell_surface", "hub_top_cap_face"],
+            "relation": "closed_hub_solid_boundary",
+        },
+        {
+            "id": "mounting_bore_top_edge",
+            "surfaces": ["mounting_bore_cylinder", "hub_top_cap_face"],
+            "relation": "closed_mounting_bore_boundary",
+        },
+        {
             "id": "mounting_bore_bottom_edge",
             "surfaces": ["mounting_bore_cylinder", "inner_hub_bottom_face"],
             "relation": "closed_mounting_bore_boundary",
@@ -1900,8 +1910,7 @@ def _hood_shell_surfaces(
                 legacy_transition_surfaces[0],
                 "hood_outlet_lip",
                 policy,
-                surface_id="hood_outlet_lip_transition_surface",
-                role=f"hood_outlet_lip_{treatment}",
+                surface_id="hood_chamfer_outlet_surface",
                 feature_id=f"front_hood.hood_outlet_lip_transition.{treatment}",
                 cfd_patch_group=_edge_family_cfd_patch_group(edge_families, "hood_outlet_lip"),
                 include_cfd_role=False,
