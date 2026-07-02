@@ -262,6 +262,10 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
     manifest = run.manifest
 
     assert manifest["dsl_version"] == "0.6"
+    assert "edge_families" not in manifest["geometry"]
+    assert "transition_policies" not in manifest["geometry"]
+    assert "edge_families" not in manifest["geometry_kernel"]
+    assert "transition_policies" not in manifest["geometry_kernel"]
     assert manifest["export_strategy"]["mode"] == "surface_graph_brep"
     step_manifest = manifest["export_manifests"]["step"]
     assert step_manifest["export_exactness"] == "surface_graph_support_face_brep_step"

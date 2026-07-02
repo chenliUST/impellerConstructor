@@ -542,6 +542,7 @@ def test_v07_surface_graph_edges_include_family_and_policy_metadata():
     manifest = run.manifest
     edges = manifest["geometry"]["surface_graph"]["edges"]
     edge_ids = {edge["id"] for edge in edges}
+    surface_ids = {surface["id"] for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
     policies = manifest["transition_policies"]
     geometry_kernel = manifest["geometry_kernel"]
     staged_edges = staged_run.manifest["geometry"]["surface_graph"]["edges"]
@@ -555,6 +556,11 @@ def test_v07_surface_graph_edges_include_family_and_policy_metadata():
     assert all(edge["transition_surface_ids"] for edge in root_edges)
     assert manifest["edge_families"]["blade_root_to_hub"] == manifest["geometry"]["edge_families"]["blade_root_to_hub"]
     assert manifest["geometry"]["transition_policies"]["blade_root_to_hub.default"] == policies["blade_root_to_hub.default"]
+    assert all(
+        transition_surface_id in surface_ids
+        for edge in edges
+        for transition_surface_id in edge.get("transition_surface_ids", [])
+    )
     assert "blade_root_to_hub" in geometry_kernel["edge_families"]
     kernel_policy = geometry_kernel["transition_policies"]["blade_root_to_hub.default"]
     assert kernel_policy["treatment"] == policies["blade_root_to_hub.default"]["treatment"]

@@ -699,7 +699,7 @@ def _geometry_metadata(
     )
     blade_surface = impeller_geometry.get("blade_surface", {}) if is_impeller else {}
     curved_hub = is_impeller and parameters.get("hub_curve_height_mm", 0.0) > 0.0
-    return {
+    metadata = {
         "part_family": part_family,
         "authority": "research",
         "airfoil": _shared_airfoil() if is_impeller else _dsl_template(part_family)["airfoil"],
@@ -711,8 +711,6 @@ def _geometry_metadata(
         "sampled_blades": impeller_geometry.get("sampled_blades", []) if is_impeller else [],
         "surface_graph": impeller_geometry.get("surface_graph", {}) if is_impeller else {},
         "validity": impeller_geometry.get("validity", {}) if is_impeller else {},
-        "edge_families": impeller_geometry.get("edge_families", {}) if is_impeller else {},
-        "transition_policies": impeller_geometry.get("transition_policies", {}) if is_impeller else {},
         "named_regions": (
             ["hub.outer_surface", "blade_root", "blade_airfoil"]
             if part_family == "turbine_rotor"
@@ -724,6 +722,11 @@ def _geometry_metadata(
         ),
         "parameters": parameters,
     }
+    if is_impeller and impeller_geometry.get("edge_families"):
+        metadata["edge_families"] = impeller_geometry["edge_families"]
+    if is_impeller and impeller_geometry.get("transition_policies"):
+        metadata["transition_policies"] = impeller_geometry["transition_policies"]
+    return metadata
 
 
 def _geometry_kernel_metadata(
