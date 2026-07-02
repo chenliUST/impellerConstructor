@@ -95,7 +95,6 @@ describe("edge treatment model", () => {
         "blade_root_to_hub.default": {
           enabled: false,
           treatment: "none",
-          radius_mm: 4,
         },
       },
     );
@@ -123,6 +122,56 @@ describe("edge treatment model", () => {
     };
 
     assert.deepEqual(buildTransitionOverridePayload(overrides), overrides);
+  });
+
+  test("buildTransitionOverridePayload removes stale invalid radius when disabling a treatment", () => {
+    const row = edgeTreatmentRows(manifest).find((item) => item.policyId === "blade_root_to_hub.default");
+    const overrides = updateTransitionRow(
+      {
+        "blade_root_to_hub.default": {
+          enabled: true,
+          treatment: "fillet",
+          radius_mm: -1,
+        },
+      },
+      "blade_root_to_hub.default",
+      { enabled: false },
+      row,
+    );
+    const effective = effectiveTransitionRow(row, overrides["blade_root_to_hub.default"]);
+
+    assert.equal(effective.status, "OFF");
+    assert.deepEqual(buildTransitionOverridePayload(overrides), {
+      "blade_root_to_hub.default": {
+        enabled: false,
+        treatment: "fillet",
+      },
+    });
+  });
+
+  test("buildTransitionOverridePayload removes stale invalid radius when selecting none", () => {
+    const row = edgeTreatmentRows(manifest).find((item) => item.policyId === "blade_root_to_hub.default");
+    const overrides = updateTransitionRow(
+      {
+        "blade_root_to_hub.default": {
+          enabled: true,
+          treatment: "fillet",
+          radius_mm: -1,
+        },
+      },
+      "blade_root_to_hub.default",
+      { treatment: "none" },
+      row,
+    );
+    const effective = effectiveTransitionRow(row, overrides["blade_root_to_hub.default"]);
+
+    assert.equal(effective.status, "OFF");
+    assert.deepEqual(buildTransitionOverridePayload(overrides), {
+      "blade_root_to_hub.default": {
+        enabled: false,
+        treatment: "none",
+      },
+    });
   });
 
   test("edgeTreatmentRows marks negative radius as invalid", () => {

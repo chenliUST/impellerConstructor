@@ -36,12 +36,17 @@ export function updateTransitionRow(currentOverrides, policyId, patch, baseRow =
   if (Object.hasOwn(patch, "treatment")) {
     row.treatment = patch.treatment;
     row.enabled = patch.treatment !== "none";
+    if (patch.treatment === "none") {
+      delete row.radius_mm;
+    }
   }
   if (Object.hasOwn(patch, "enabled")) {
     row.enabled = patch.enabled;
     const currentTreatment = row.treatment ?? baseRow?.treatment ?? "none";
     if (patch.enabled && currentTreatment === "none") {
       row.treatment = "fillet";
+    } else if (!patch.enabled) {
+      delete row.radius_mm;
     }
   }
   if (Object.hasOwn(patch, "radiusMm")) {
@@ -90,7 +95,8 @@ export function buildTransitionOverridePayload(overrides) {
     if (Object.hasOwn(override, "treatment")) {
       row.treatment = override.treatment;
     }
-    if (Object.hasOwn(override, "radius_mm") && Number.isFinite(Number(override.radius_mm))) {
+    const active = row.enabled !== false && row.treatment !== "none";
+    if (active && Object.hasOwn(override, "radius_mm") && Number.isFinite(Number(override.radius_mm))) {
       row.radius_mm = Number(override.radius_mm);
     }
     if (Object.keys(row).length) {

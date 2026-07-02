@@ -76,6 +76,7 @@ function EdgeTreatmentRow({ row, override, onChange }) {
     h("input", {
       className: "edge-radius-input",
       type: "number",
+      min: "0",
       step: "0.001",
       value: radiusText,
       onBlur: commitRadius,
