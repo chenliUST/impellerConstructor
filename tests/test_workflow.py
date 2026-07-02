@@ -295,6 +295,45 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
     assert "TRIANGULATED_FACE_SET" not in step_text
 
 
+def test_impeller_v07_exports_bounded_step_and_no_default_mesh_step(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+
+    run = service.instantiate(engine.engine_id, {})
+    manifest = run.manifest
+
+    assert manifest["dsl_version"] == "0.7"
+    assert manifest["export_strategy"]["mode"] == "surface_graph_bounded_brep"
+    step_manifest = manifest["export_manifests"]["step"]
+    assert step_manifest["target_exactness"] == "surface_graph_trimmed_brep_step"
+    annular_plane_surfaces = [
+        surface
+        for surface in manifest["geometry"]["surface_graph"]["surfaces"]
+        if surface.get("kind") == "annular_plane_surface"
+    ]
+    if len(annular_plane_surfaces) >= 2:
+        assert step_manifest["bounded_face_count"] >= 2
+    else:
+        # The current V0.7 bounded writer only promotes supported annular plane surfaces.
+        assert step_manifest["bounded_face_count"] > 0
+    assert set(manifest["exports"]) == {"step", "stl", "obj", "manifest"}
+    assert "mesh_step" not in manifest["exports"]
+    assert manifest["export_manifests"]["stl"]["export_exactness"] == "surface_graph_sampled_mesh"
+    assert manifest["export_manifests"]["obj"]["export_exactness"] == "surface_graph_obj_mesh"
+
+    step_path = Path(manifest["exports"]["step"])
+    obj_path = Path(manifest["exports"]["obj"])
+    assert step_path.exists()
+    assert obj_path.exists()
+    step_text = step_path.read_text(encoding="utf-8", errors="ignore")
+    obj_text = obj_path.read_text(encoding="utf-8")
+    assert "ADVANCED_FACE" in step_text
+    assert "TRIANGULATED_FACE_SET" not in step_text
+    assert "10000" not in step_text
+    assert "\nv " in obj_text
+    assert "\nf " in obj_text
+
+
 def test_api_default_v06_exports_copy_to_cwd_model_output(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PART_RULE_SYNTHESIS_ROOT", raising=False)

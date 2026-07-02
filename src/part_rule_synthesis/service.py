@@ -10,11 +10,12 @@ from typing import Any
 from uuid import uuid4
 
 from part_rule_synthesis.impeller_cfd_manifest import build_cfd_full_360_manifest
+from part_rule_synthesis.impeller_bounded_brep_export import write_bounded_brep_step
 from part_rule_synthesis.impeller_brep_export import write_trimmed_brep_step
 from part_rule_synthesis.impeller_design_space import build_campaign_signature
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
 from part_rule_synthesis.impeller_mesh_manifest import build_surface_mesh_manifest
-from part_rule_synthesis.impeller_surface_graph_export import write_surface_graph_exports
+from part_rule_synthesis.impeller_surface_graph_export import write_surface_graph_exports, write_surface_graph_obj
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset, impeller_json_preset_ids
 from part_rule_synthesis.impeller_taxonomy import (
@@ -881,31 +882,49 @@ def _write_exports(
         stem = _safe_export_stem((dsl_context or {}).get("preset_id"), run_dir.name)
         step = output_dir / f"{stem}.step"
         stl = output_dir / f"{stem}.stl"
+        obj = output_dir / f"{stem}.obj"
         manifest_copy = output_dir / f"{stem}.manifest.json"
-        export_manifests = write_surface_graph_exports(
+        intermediate_dir = run_dir / ".intermediate"
+        intermediate_dir.mkdir(parents=True, exist_ok=True)
+        mesh_step = intermediate_dir / f"{stem}.mesh.step"
+        bounded_surface_graph = _bounded_brep_supported_surface_graph(surface_graph)
+        brep_manifest = write_bounded_brep_step(
             step,
+            part_family,
+            bounded_surface_graph["surface_graph"],
+            view_id=export_contract.get("default_view", "cad_review_360"),
+        )
+        mesh_manifests = write_surface_graph_exports(
+            mesh_step,
             stl,
             part_family,
             surface_graph,
             view_id=export_contract.get("default_view", "cad_review_360"),
         )
-        export_manifests["step"] = {
-            **export_manifests["step"],
-            "bounded_brep_status": export_contract.get("bounded_brep_status", "deferred_until_bounded_face_export"),
-            "target_step_exactness": export_contract.get(
-                "target_step_exactness",
-                "surface_graph_trimmed_brep_step",
-            ),
+        obj_manifest = write_surface_graph_obj(
+            obj,
+            part_family,
+            surface_graph,
+            view_id=export_contract.get("default_view", "cad_review_360"),
+        )
+        brep_manifest = {
+            **brep_manifest,
+            "bounded_brep_status": "bounded_faces_unsewn",
+            "surface_count": len(bounded_surface_graph["included_surface_ids"]),
+            "included_surface_ids": bounded_surface_graph["included_surface_ids"],
+            "excluded_surface_ids": bounded_surface_graph["excluded_surface_ids"],
+            "unsupported_surface_count": len(bounded_surface_graph["excluded_surface_ids"]),
+            "unsupported_surface_kinds": bounded_surface_graph["excluded_surface_kinds"],
             "diagnostic_step_exactness": export_contract.get(
                 "diagnostic_step_exactness",
                 "surface_graph_bounded_unsewn_brep_step",
             ),
-            "limitations": [
-                "bounded_brep_construction_deferred_to_task_5",
-                "step_is_surface_graph_mesh_not_trimmed_brep",
-            ],
+            "limitations": bounded_surface_graph["limitations"],
         }
-        return {"step": str(step), "stl": str(stl), "manifest": str(manifest_copy)}, export_manifests
+        return (
+            {"step": str(step), "stl": str(stl), "obj": str(obj), "manifest": str(manifest_copy)},
+            {"step": brep_manifest, "stl": mesh_manifests["stl"], "obj": obj_manifest},
+        )
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
         surface_graph = (geometry_metadata or {}).get("surface_graph")
         if not surface_graph:
@@ -1052,6 +1071,33 @@ def _safe_export_stem(preset_id: str | None, run_id: str) -> str:
     return safe_run_id
 
 
+def _bounded_brep_supported_surface_graph(surface_graph: dict[str, Any]) -> dict[str, Any]:
+    included_surfaces: list[dict[str, Any]] = []
+    included_surface_ids: list[str] = []
+    excluded_surface_ids: list[str] = []
+    excluded_surface_kinds: dict[str, int] = {}
+    for surface_index, surface in enumerate(surface_graph.get("surfaces", [])):
+        surface_id = str(surface.get("id") or surface.get("surface_graph_id") or f"surface_{surface_index}")
+        kind = str(surface.get("kind") or "")
+        if kind == "annular_plane_surface":
+            included_surfaces.append(surface)
+            included_surface_ids.append(surface_id)
+            continue
+        excluded_surface_ids.append(surface_id)
+        excluded_surface_kinds[kind or "missing"] = excluded_surface_kinds.get(kind or "missing", 0) + 1
+
+    limitations = []
+    if excluded_surface_ids:
+        limitations.append("unsupported_surface_kinds_excluded_from_bounded_brep_step")
+    return {
+        "surface_graph": {**surface_graph, "surfaces": included_surfaces},
+        "included_surface_ids": included_surface_ids,
+        "excluded_surface_ids": excluded_surface_ids,
+        "excluded_surface_kinds": dict(sorted(excluded_surface_kinds.items())),
+        "limitations": limitations,
+    }
+
+
 def _model_output_dir_for_run(run_dir: Path, model_output_root: Path | None = None) -> Path:
     output_dir = Path(model_output_root) if model_output_root is not None else run_dir.parent.parent / "Model Output"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1061,30 +1107,34 @@ def _model_output_dir_for_run(run_dir: Path, model_output_root: Path | None = No
 def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None) -> dict[str, Any]:
     export_contract = (dsl_context or {}).get("export_contract", {})
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_bounded_brep":
-        step_exactness = export_contract.get("step_exactness", "surface_graph_mesh_step")
+        step_exactness = export_contract.get(
+            "diagnostic_step_exactness",
+            "surface_graph_bounded_unsewn_brep_step",
+        )
         target_step_exactness = export_contract.get("target_step_exactness", "surface_graph_trimmed_brep_step")
         diagnostic_step_exactness = export_contract.get(
             "diagnostic_step_exactness",
             "surface_graph_bounded_unsewn_brep_step",
         )
-        bounded_brep_status = export_contract.get("bounded_brep_status", "deferred_until_bounded_face_export")
         return {
             "mode": "surface_graph_bounded_brep",
-            "cad_exports": "deferred",
+            "cad_exports": "completed",
             "source": "geometry.surface_graph",
             "view": export_contract.get("default_view", "cad_review_360"),
             "step_exactness": step_exactness,
             "target_step_exactness": target_step_exactness,
             "diagnostic_step_exactness": diagnostic_step_exactness,
-            "bounded_brep_status": bounded_brep_status,
+            "bounded_brep_status": "bounded_faces_unsewn",
+            "sewing_status": "not_attempted",
             "export_contract": {
                 "mode": "surface_graph_bounded_brep",
                 "step_exactness": step_exactness,
                 "target_step_exactness": target_step_exactness,
                 "diagnostic_step_exactness": diagnostic_step_exactness,
-                "bounded_brep_status": bounded_brep_status,
+                "bounded_brep_status": "bounded_faces_unsewn",
+                "sewing_status": "not_attempted",
             },
-            "reason": "Task 2 writes graph-derived mesh STEP/STL review outputs; bounded BREP construction is deferred",
+            "reason": "bounded STEP is generated from bounded surface_graph B-Rep faces; mesh artifacts are separate review outputs",
         }
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
         return {

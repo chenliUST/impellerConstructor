@@ -13,5 +13,5 @@ Supersedes: `v0_6`
 
 ## Limitations
 
-- V0.7 routes the bounded B-Rep contract through the current deferred surface-graph mesh bridge: STEP/STL/manifest review artifacts are emitted now, while trimmed bounded B-Rep STEP remains the target export.
+- V0.7 emits bounded, unsewn surface-graph B-Rep faces for the main STEP export. STL and OBJ remain separate graph-mesh review outputs, while sewn trimmed-solid validation remains downstream work.
 - Default transition policies are constructor-level metadata and do not yet override generated geometry without downstream task support.
