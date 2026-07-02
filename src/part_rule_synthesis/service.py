@@ -173,6 +173,8 @@ class RuleSynthesisService:
             curve_overrides=normalized_curve_overrides,
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
+            edge_families=edge_families,
+            transition_policies=transition_policies,
         )
         geometry_metadata = _geometry_metadata(
             dsl["part_family"],
@@ -767,17 +769,24 @@ def _geometry_validity_metadata(
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
     dsl_context: dict[str, Any] | None = None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if part_family not in {"centrifugal_impeller", "impeller"}:
         return {}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {})
+    impeller_geometry_options = _impeller_geometry_options(dsl_context)
+    if edge_families:
+        impeller_geometry_options["edge_families"] = edge_families
+    if transition_policies is not None:
+        impeller_geometry_options["transition_policies"] = transition_policies
     geometry = build_impeller_geometry(
         parameters,
         resolved_facets,
         profile_overrides=profile_overrides,
         curve_overrides=curve_overrides,
         geometry_stage=geometry_stage,
-        **_impeller_geometry_options(dsl_context),
+        **impeller_geometry_options,
     )
     return geometry["validity"]
 

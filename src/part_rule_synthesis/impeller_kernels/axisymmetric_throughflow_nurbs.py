@@ -1317,15 +1317,17 @@ def _policy_transition_surface_record(
         return None
     assert policy is not None
     treatment = str(policy["treatment"])
+    feature_id = _transition_feature_id(surface["feature_id"], edge_family, treatment)
     cad_surface = {
         **surface["cad_surface"],
         "role": surface["role"],
-        "feature_id": surface["feature_id"],
+        "feature_id": feature_id,
         "source": "surface_graph.control_net_transition_surface",
     }
     return {
         **surface,
         "kind": "transition_surface",
+        "feature_id": feature_id,
         "edge_family": edge_family,
         "transition_policy_id": str(policy.get("policy_id", f"{edge_family}.default")),
         "treatment": treatment,
@@ -1339,6 +1341,17 @@ def _policy_transition_surface_record(
             "edge_highlight": True,
         },
     }
+
+
+def _transition_feature_id(existing_feature_id: str, edge_family: str, treatment: str) -> str:
+    blade_feature_id = str(existing_feature_id).split(".", 1)[0]
+    transition_name = {
+        "blade_leading_edge": "leading_transition",
+        "blade_trailing_edge": "trailing_transition",
+        "blade_root_to_hub": "root_transition",
+        "blade_tip_or_shroud": "tip_transition",
+    }.get(edge_family, "transition")
+    return f"{blade_feature_id}.{transition_name}.{treatment}"
 
 
 def _cfd_role_for_edge_family(edge_family: str) -> str:
@@ -2160,8 +2173,8 @@ def _validity_report(
             "blade_v_count": BLADE_V_COUNT,
         },
     ]
-    if _uses_explicit_fillet_surfaces(params):
-        geometry_checks.append(_check_fillet_radius_feasible(params))
+    if transition_policies is not None or _uses_explicit_fillet_surfaces(params):
+        geometry_checks.append(_check_fillet_radius_feasible(params, transition_policies))
     engineering_checks = [
         {
             "name": "engineering_rules",
@@ -2203,13 +2216,20 @@ def _check_material_domain_positive_thickness(
     }
 
 
-def _check_fillet_radius_feasible(params: dict[str, float]) -> dict[str, Any]:
+def _check_fillet_radius_feasible(
+    params: dict[str, float],
+    transition_policies: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     limit = max(params["blade_thickness_mm"] * 0.75, 1.0)
-    requested = max(
-        params.get("root_fillet_radius_mm", 0.0),
-        params.get("leading_edge_radius_mm", 0.0),
-        params.get("trailing_edge_radius_mm", 0.0),
-        params.get("tip_edge_radius_mm", 0.0),
+    requested = (
+        _max_enabled_transition_policy_radius(transition_policies)
+        if transition_policies is not None
+        else max(
+            params.get("root_fillet_radius_mm", 0.0),
+            params.get("leading_edge_radius_mm", 0.0),
+            params.get("trailing_edge_radius_mm", 0.0),
+            params.get("tip_edge_radius_mm", 0.0),
+        )
     )
     return {
         "name": "fillet_radius_within_local_thickness_bounds",
@@ -2217,6 +2237,17 @@ def _check_fillet_radius_feasible(params: dict[str, float]) -> dict[str, Any]:
         "limit_mm": _round(limit),
         "requested_max_mm": _round(requested),
     }
+
+
+def _max_enabled_transition_policy_radius(transition_policies: dict[str, Any]) -> float:
+    radii = [
+        float(policy.get("radius_mm", 0.0))
+        for policy in transition_policies.values()
+        if isinstance(policy, dict)
+        and policy.get("enabled")
+        and policy.get("treatment") != "none"
+    ]
+    return max(radii, default=0.0)
 
 
 def _check_hub_solid_has_caps_and_bore(surface_graph: dict[str, Any]) -> dict[str, str]:

@@ -555,6 +555,8 @@ def test_v07_transition_override_changes_blade_root_surface_role_and_radius():
     assert root["treatment"] == "chamfer"
     assert root["radius_mm"] == 6.0
     assert root["transition_policy_id"] == "blade_root_to_hub.default"
+    assert "fillet" not in root["feature_id"]
+    assert root["cad_surface"]["feature_id"] == root["feature_id"]
 
 
 def test_v07_disabled_transition_removes_blade_root_transition_surfaces():
@@ -594,6 +596,80 @@ def test_v07_disabled_transition_removes_blade_root_transition_surfaces():
     assert geometry_topology_checks["blade_edge_surfaces_present"] == "PASS"
     assert geometry_topology_checks["blade_surface_closure_candidate"] == "PASS"
     assert all(status != "FAIL" for status in manifest_topology_checks.values())
+
+
+def test_v07_enabled_root_transition_policy_radius_fails_feasibility_when_oversized():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": True,
+                    "treatment": "fillet",
+                    "radius_mm": 100.0,
+                }
+            },
+        )
+
+    surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_checks = {
+        check["name"]: check
+        for check in run.manifest["geometry"]["validity"]["geometry_checks"]
+    }
+    manifest_geometry_checks = {
+        check["name"]: check
+        for check in run.manifest["geometry_validity"]["geometry_checks"]
+    }
+
+    assert surfaces["blade_0_root_transition_surface"]["radius_mm"] == 100.0
+    assert run.manifest["transition_policies"]["blade_root_to_hub.default"]["radius_mm"] == 100.0
+    assert run.manifest["geometry"]["validity"]["status"] == "FAIL"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["status"] == "FAIL"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
+    assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["status"] == "FAIL"
+    assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
+
+
+def test_v07_disabled_root_transition_ignores_oversized_legacy_root_fillet_radius():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {"root_fillet_radius_mm": 100.0},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": False,
+                    "treatment": "none",
+                    "radius_mm": 0.0,
+                }
+            },
+        )
+
+    surface_ids = {surface["id"] for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_checks = {
+        check["name"]: check
+        for check in run.manifest["geometry"]["validity"]["geometry_checks"]
+    }
+
+    assert "blade_0_root_transition_surface" not in surface_ids
+    assert run.manifest["geometry"]["validity"]["status"] == "PASS"
+    assert run.manifest["geometry_validity"]["status"] == "PASS"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["status"] == "PASS"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] < 100.0
 
 
 def test_v07_surface_graph_edges_include_family_and_policy_metadata():
