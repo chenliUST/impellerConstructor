@@ -47,7 +47,7 @@ validation, and CFD volume meshing remain outside this prototype.
 The current code can claim:
 
 - deterministic runtime compilation from versioned JSON DSL resources
-- deterministic sampled impeller surface graph for the v0.6 open and closed presets
+- deterministic sampled impeller surface graph for the v0.7 open and closed presets
 - stable surface ids, feature ids, named boundary curves, and CFD patch group names for the tested presets
 - campaign signatures that freeze topology-level optimization shape
 - generated binary STL files derived from `manifest.geometry.surface_graph.surfaces[*].uv_grid`

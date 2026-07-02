@@ -55,16 +55,17 @@ export const exportFileOptions = [
   { id: "step", label: "STEP B-Rep", extension: ".step" },
   { id: "stl", label: "STL Mesh", extension: ".stl" },
   { id: "mesh_step", label: "STEP Mesh", extension: ".mesh.step" },
+  { id: "obj", label: "OBJ Mesh", extension: ".obj" },
   { id: "manifest", label: "Manifest", extension: ".manifest.json" },
 ];
 
 export const presets = [
   {
     id: "axisymmetric-nurbs-open-throughflow",
-    presetId: "radial_open_reference_v0_6",
-    name: "B-Rep open throughflow v0.6",
-    summary: "Open impeller: B-Rep edge treatment, mesh inspection, CFD full-360 manifest, and STEP/STL exports.",
-    tags: ["open", "B-Rep", "v0.6", "mesh inspection", "export"],
+    presetId: "radial_open_reference_v0_7",
+    name: "B-Rep open throughflow v0.7",
+    summary: "Open impeller: bounded transition topology, mesh inspection, CFD full-360 manifest, and STEP/STL/OBJ exports.",
+    tags: ["open", "B-Rep", "v0.7", "mesh inspection", "export"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -103,10 +104,10 @@ export const presets = [
   },
   {
     id: "axisymmetric-nurbs-closed-throughflow",
-    presetId: "radial_closed_reference_v0_6",
-    name: "B-Rep closed throughflow v0.6",
-    summary: "Closed impeller: B-Rep edge treatment, mesh inspection, CFD full-360 manifest, and STEP/STL exports.",
-    tags: ["closed", "B-Rep", "v0.6", "mesh inspection", "export"],
+    presetId: "radial_closed_reference_v0_7",
+    name: "B-Rep closed throughflow v0.7",
+    summary: "Closed impeller: bounded transition topology, mesh inspection, CFD full-360 manifest, and STEP/STL/OBJ exports.",
+    tags: ["closed", "B-Rep", "v0.7", "mesh inspection", "export"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",

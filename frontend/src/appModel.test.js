@@ -99,8 +99,8 @@ describe("impeller frontend model", () => {
   });
 
   test("presets include focused open and closed B-Rep throughflow studies", () => {
-    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_6");
-    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_6");
+    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_7");
+    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_7");
 
     assert.ok(open);
     assert.ok(closed);
@@ -158,7 +158,7 @@ describe("impeller frontend model", () => {
     assert.equal(parameterSchema.hub_base_radius_mm.controlKind, "semantic_handle");
   });
 
-  test("v0.6 exposes interactive fillet and edge radius controls", () => {
+  test("v0.7 exposes interactive fillet and edge radius controls", () => {
     assert.equal(parameterSchema.root_fillet_radius_mm.group, "edge_treatment");
     assert.equal(parameterSchema.leading_edge_radius_mm.group, "edge_treatment");
     assert.equal(parameterSchema.trailing_edge_radius_mm.group, "edge_treatment");
@@ -269,14 +269,16 @@ describe("impeller frontend model", () => {
   });
 
   test("exportFileOptions exposes brep mesh and manifest downloads", () => {
-    assert.deepEqual(exportFileOptions.map((option) => option.id), ["step", "stl", "mesh_step", "manifest"]);
+    assert.deepEqual(exportFileOptions.map((option) => option.id), ["step", "stl", "mesh_step", "obj", "manifest"]);
     assert.equal(exportFileOptions.find((option) => option.id === "step").label, "STEP B-Rep");
     assert.equal(exportFileOptions.find((option) => option.id === "mesh_step").extension, ".mesh.step");
+    assert.equal(exportFileOptions.find((option) => option.id === "obj").extension, ".obj");
   });
 
   test("exportFilename uses preset run id and correct extension", () => {
-    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "step"), "radial_open_reference_v0_6_run-abc.step");
-    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "mesh_step"), "radial_open_reference_v0_6_run-abc.mesh.step");
-    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "manifest"), "radial_open_reference_v0_6_run-abc.manifest.json");
+    assert.equal(exportFilename("radial_open_reference_v0_7", "run-abc", "step"), "radial_open_reference_v0_7_run-abc.step");
+    assert.equal(exportFilename("radial_open_reference_v0_7", "run-abc", "mesh_step"), "radial_open_reference_v0_7_run-abc.mesh.step");
+    assert.equal(exportFilename("radial_open_reference_v0_7", "run-abc", "obj"), "radial_open_reference_v0_7_run-abc.obj");
+    assert.equal(exportFilename("radial_open_reference_v0_7", "run-abc", "manifest"), "radial_open_reference_v0_7_run-abc.manifest.json");
   });
 });
