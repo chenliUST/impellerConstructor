@@ -815,6 +815,67 @@ def test_v07_closed_enabled_transition_policies_have_surface_or_edge_provenance(
     ] == []
 
 
+def test_v07_closed_blade_tip_to_shroud_override_is_represented():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_closed_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_tip_to_shroud.default": {
+                    "enabled": True,
+                    "treatment": "fillet",
+                    "radius_mm": 2.5,
+                }
+            },
+        )
+
+    manifest = run.manifest
+    surfaces = {
+        surface["id"]: surface
+        for surface in manifest["geometry"]["surface_graph"]["surfaces"]
+    }
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    policy = manifest["transition_policies"]["blade_tip_to_shroud.default"]
+    tip_to_shroud_edges = [
+        edge
+        for edge in edges
+        if edge.get("edge_family") == "blade_tip_to_shroud"
+    ]
+    legacy_tip_edges = [
+        edge
+        for edge in edges
+        if edge.get("edge_family") == "blade_tip_or_shroud"
+    ]
+
+    assert policy["enabled"] is True
+    assert policy["treatment"] == "fillet"
+    assert policy["radius_mm"] == 2.5
+    assert tip_to_shroud_edges
+    assert legacy_tip_edges
+    assert all(
+        edge["transition_policy_id"] == "blade_tip_to_shroud.default"
+        for edge in tip_to_shroud_edges
+    )
+    assert all(
+        edge.get("policy_alias_of") == "blade_tip_or_shroud.default"
+        for edge in tip_to_shroud_edges
+    )
+    assert all(edge.get("transition_surface_ids") for edge in tip_to_shroud_edges)
+    assert all(
+        transition_surface_id in surfaces
+        for edge in tip_to_shroud_edges
+        for transition_surface_id in edge["transition_surface_ids"]
+    )
+    assert run.manifest["geometry"]["validity"]["status"] == "PASS"
+
+
 def test_v06_hub_edge_ids_preserve_legacy_topology():
     from pathlib import Path
     from tempfile import TemporaryDirectory

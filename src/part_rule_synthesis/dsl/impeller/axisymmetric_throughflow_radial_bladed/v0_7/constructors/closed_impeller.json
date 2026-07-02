@@ -298,9 +298,8 @@
       "kind": "chamfer_or_fillet_feature_set",
       "radius_parameter": "hood_chamfer_radius_mm",
       "applies_to": [
-        "hood_inlet_eye_edge",
-        "hood_outer_shell_inlet_edge",
-        "hood_outer_shell_outlet_edge"
+        "hood_inlet_lip_edge",
+        "hood_outlet_lip_edge"
       ]
     }
   },

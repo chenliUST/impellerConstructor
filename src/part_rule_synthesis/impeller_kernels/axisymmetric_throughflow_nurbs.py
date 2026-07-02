@@ -963,6 +963,15 @@ def _surface_graph(
         trailing_policy = _transition_policy_for_family(transition_policies, "blade_trailing_edge")
         root_policy = _transition_policy_for_family(transition_policies, "blade_root_to_hub")
         tip_policy = _transition_policy_for_family(transition_policies, "blade_tip_or_shroud")
+        tip_to_shroud_policy = _transition_policy_for_family(transition_policies, "blade_tip_to_shroud")
+        tip_policy_enabled = _policy_transition_enabled(policy_driven_blade_transitions, tip_policy)
+        tip_to_shroud_policy_enabled = (
+            policy_driven_blade_transitions
+            and facets["shroud_topology"] == "closed"
+            and _policy_transition_enabled(policy_driven_blade_transitions, tip_to_shroud_policy)
+        )
+        tip_surface_policy = tip_policy if tip_policy_enabled else tip_to_shroud_policy
+        tip_surface_edge_family = "blade_tip_or_shroud" if tip_policy_enabled else "blade_tip_to_shroud"
         leading_surface_id = (
             f"{prefix}_leading_transition_surface"
             if policy_driven_blade_transitions
@@ -1000,7 +1009,7 @@ def _surface_graph(
             else "blade_root_fillet" if explicit_fillets else "blade_root_hub_closure"
         )
         tip_role = (
-            _transition_role(tip_policy, "blade_tip_edge_fillet", "blade_tip_edge_chamfer")
+            _transition_role(tip_surface_policy, "blade_tip_edge_fillet", "blade_tip_edge_chamfer")
             if policy_driven_blade_transitions
             else "blade_tip_edge_fillet" if explicit_fillets else "blade_tip_closure"
         )
@@ -1223,8 +1232,8 @@ def _surface_graph(
                         ),
                         _policy_transition_surface_record(
                             blade_surfaces[5],
-                            "blade_tip_or_shroud",
-                            tip_policy,
+                            tip_surface_edge_family,
+                            tip_surface_policy,
                         ),
                     ]
                     if surface is not None
@@ -1287,7 +1296,7 @@ def _surface_graph(
                     },
                 ]
             )
-        if _policy_transition_enabled(policy_driven_blade_transitions, tip_policy):
+        if tip_policy_enabled:
             blade_edges.extend(
                 [
                     {
@@ -1307,6 +1316,18 @@ def _surface_graph(
                     },
                 ]
             )
+        if tip_to_shroud_policy_enabled:
+            tip_to_shroud_edge = {
+                "id": f"{prefix}_tip_to_shroud_policy_edge",
+                "surfaces": [tip_surface_id, tip_closure_surface_id],
+                "relation": "closed_blade_tip_to_shroud_boundary",
+                "edge_family": "blade_tip_to_shroud",
+                "transition_policy_id": "blade_tip_to_shroud.default",
+                "transition_surface_ids": [tip_closure_surface_id],
+            }
+            if tip_policy_enabled:
+                tip_to_shroud_edge["policy_alias_of"] = "blade_tip_or_shroud.default"
+            blade_edges.append(tip_to_shroud_edge)
         edges.extend(blade_edges)
         for side in ["pressure", "suction"]:
             blade_surface = f"{prefix}_{side}_surface"
@@ -1460,6 +1481,7 @@ def _transition_feature_id(existing_feature_id: str, edge_family: str, treatment
         "blade_trailing_edge": "trailing_transition",
         "blade_root_to_hub": "root_transition",
         "blade_tip_or_shroud": "tip_transition",
+        "blade_tip_to_shroud": "tip_transition",
     }.get(edge_family, "transition")
     return f"{blade_feature_id}.{transition_name}.{treatment}"
 
@@ -1470,6 +1492,7 @@ def _cfd_role_for_edge_family(edge_family: str) -> str:
         "blade_trailing_edge": "trailing_edge_transition",
         "blade_root_to_hub": "root_transition",
         "blade_tip_or_shroud": "tip_transition",
+        "blade_tip_to_shroud": "tip_transition",
     }.get(edge_family, "transition")
 
 
@@ -1499,9 +1522,11 @@ def _annotate_transition_edge_metadata(
             annotated_edges.append(edge)
             continue
         policy_id = f"{edge_family}.default"
-        if transition_policies is not None and policy_id not in transition_policies:
-            annotated_edges.append(edge)
-            continue
+        if transition_policies is not None:
+            policy = transition_policies.get(policy_id)
+            if not _policy_transition_enabled(True, policy if isinstance(policy, dict) else None):
+                annotated_edges.append(edge)
+                continue
         if not transition_surface_ids:
             annotated_edges.append(edge)
             continue
