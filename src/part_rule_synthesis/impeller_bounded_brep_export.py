@@ -8,6 +8,7 @@ from typing import Any
 
 BOUNDED_STEP_EXACTNESS = "surface_graph_trimmed_brep_step"
 DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS = "surface_graph_bounded_unsewn_brep_step"
+FINITE_REIMPORT_BBOX_MAX_SPAN_MM = 5000.0
 _STEP_NUMBER_PATTERN = re.compile(
     r"(?<![#A-Za-z0-9_.])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?(?![A-Za-z0-9_.])"
 )
@@ -134,17 +135,63 @@ def write_bounded_brep_step(
     finally:
         Interface_Static.SetCVal_s(schema_key, previous_schema)
 
+    bbox = reimport_step_bbox(step_path)
+    finite_bbox = (
+        max(bbox["x_span_mm"], bbox["y_span_mm"], bbox["z_span_mm"])
+        < FINITE_REIMPORT_BBOX_MAX_SPAN_MM
+    )
+    export_exactness = (
+        BOUNDED_STEP_EXACTNESS
+        if finite_bbox and face_regions
+        else DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS
+    )
+
     return {
         "source": "surface_graph",
         "view": view_id,
         "solid_name": solid_name,
-        "export_exactness": DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS,
+        "export_exactness": export_exactness,
         "target_exactness": BOUNDED_STEP_EXACTNESS,
         "step_writer": "occt_stepcontrol_writer",
         "bounded_face_count": len(faces),
         "sewing_status": "not_attempted",
         "open_edge_count": None,
+        "reimport_bbox": bbox,
+        "validation_checks": [
+            {
+                "name": "finite_reimport_bbox",
+                "status": "PASS" if finite_bbox else "FAIL",
+            }
+        ],
         "face_regions": face_regions,
+    }
+
+
+def reimport_step_bbox(path: Path) -> dict[str, float]:
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.IFSelect import IFSelect_RetDone
+    from OCP.STEPControl import STEPControl_Reader
+
+    reader = STEPControl_Reader()
+    read_status = reader.ReadFile(str(path))
+    if read_status != IFSelect_RetDone:
+        raise RuntimeError(f"OCCT STEP read failed with status {read_status}")
+
+    reader.TransferRoots()
+    box = Bnd_Box()
+    BRepBndLib.Add_s(reader.OneShape(), box)
+    x_min, y_min, z_min, x_max, y_max, z_max = box.Get()
+    return {
+        "x_min": x_min,
+        "x_max": x_max,
+        "y_min": y_min,
+        "y_max": y_max,
+        "z_min": z_min,
+        "z_max": z_max,
+        "x_span_mm": x_max - x_min,
+        "y_span_mm": y_max - y_min,
+        "z_span_mm": z_max - z_min,
     }
 
 

@@ -5,9 +5,9 @@ import pytest
 
 from part_rule_synthesis.impeller_bounded_brep_export import (
     BOUNDED_STEP_EXACTNESS,
-    DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS,
     bounded_step_contains_no_unbounded_plane_marker,
     make_annular_plane_face,
+    reimport_step_bbox,
     write_bounded_brep_step,
 )
 
@@ -79,11 +79,15 @@ def test_write_bounded_brep_step_exports_annular_plane_without_unbounded_marker(
     assert manifest["source"] == "surface_graph"
     assert manifest["view"] == "cad_review_360"
     assert manifest["solid_name"] == "impeller"
-    assert manifest["export_exactness"] == DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS
+    assert manifest["export_exactness"] == BOUNDED_STEP_EXACTNESS
     assert manifest["target_exactness"] == BOUNDED_STEP_EXACTNESS
     assert manifest["bounded_face_count"] == 1
     assert manifest["sewing_status"] == "not_attempted"
     assert manifest["open_edge_count"] is None
+    assert manifest["reimport_bbox"]["x_span_mm"] == pytest.approx(100.0, abs=1.0e-3)
+    assert manifest["reimport_bbox"]["y_span_mm"] == pytest.approx(100.0, abs=1.0e-3)
+    assert manifest["reimport_bbox"]["z_span_mm"] <= 1.0
+    assert {"name": "finite_reimport_bbox", "status": "PASS"} in manifest["validation_checks"]
     assert manifest["face_regions"][0]["surface_graph_id"] == "inner_hub_bottom_face"
     assert "ADVANCED_FACE" in text
     assert "PLANE" in text
@@ -95,15 +99,17 @@ def test_write_bounded_brep_step_reimported_bounds_stay_near_outer_radius(tmp_pa
 
     write_bounded_brep_step(step_path, "impeller", _surface_graph(_annular_surface()))
 
-    xmin, ymin, zmin, xmax, ymax, zmax = _read_step_bounding_box(step_path)
-    assert xmin == pytest.approx(-50.0, abs=1.0e-3)
-    assert ymin == pytest.approx(-50.0, abs=1.0e-3)
-    assert zmin == pytest.approx(3.0, abs=1.0e-3)
-    assert xmax == pytest.approx(50.0, abs=1.0e-3)
-    assert ymax == pytest.approx(50.0, abs=1.0e-3)
-    assert zmax == pytest.approx(3.0, abs=1.0e-3)
-    assert max(abs(xmin), abs(ymin), abs(xmax), abs(ymax)) < 51.0
-    assert max(abs(xmin), abs(ymin), abs(xmax), abs(ymax)) < 1000.0
+    bbox = reimport_step_bbox(step_path)
+    assert bbox["x_min"] == pytest.approx(-50.0, abs=1.0e-3)
+    assert bbox["y_min"] == pytest.approx(-50.0, abs=1.0e-3)
+    assert bbox["z_min"] == pytest.approx(3.0, abs=1.0e-3)
+    assert bbox["x_max"] == pytest.approx(50.0, abs=1.0e-3)
+    assert bbox["y_max"] == pytest.approx(50.0, abs=1.0e-3)
+    assert bbox["z_max"] == pytest.approx(3.0, abs=1.0e-3)
+    assert bbox["x_span_mm"] <= 310.0
+    assert bbox["y_span_mm"] <= 310.0
+    assert bbox["z_span_mm"] <= 1.0
+    assert all(math.isfinite(value) for value in bbox.values())
 
 
 def test_write_bounded_brep_step_uses_surface_graph_id_when_id_is_missing(tmp_path: Path):
@@ -151,6 +157,14 @@ def test_write_bounded_brep_step_rejects_empty_surface_graph(tmp_path: Path):
         write_bounded_brep_step(tmp_path / "empty.step", "impeller", {"surfaces": [], "edges": []})
 
 
+def test_reimport_step_bbox_rejects_unreadable_step_file(tmp_path: Path):
+    step_path = tmp_path / "not_step.step"
+    step_path.write_text("not a STEP file", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="OCCT STEP read failed"):
+        reimport_step_bbox(step_path)
+
+
 def _annular_surface(**overrides):
     surface = {
         "id": "inner_hub_bottom_face",
@@ -188,19 +202,3 @@ def _surface_area(shape):
     properties = GProp_GProps()
     BRepGProp.SurfaceProperties_s(shape, properties)
     return properties.Mass()
-
-
-def _read_step_bounding_box(path: Path):
-    from OCP.Bnd import Bnd_Box
-    from OCP.BRepBndLib import BRepBndLib
-    from OCP.IFSelect import IFSelect_RetDone
-    from OCP.STEPControl import STEPControl_Reader
-
-    reader = STEPControl_Reader()
-    read_status = reader.ReadFile(str(path))
-    if read_status != IFSelect_RetDone:
-        raise RuntimeError(f"OCCT STEP read failed with status {read_status}")
-    reader.TransferRoots()
-    box = Bnd_Box()
-    BRepBndLib.Add_s(reader.OneShape(), box)
-    return box.Get()

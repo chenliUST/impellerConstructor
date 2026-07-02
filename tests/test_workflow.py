@@ -326,6 +326,10 @@ def test_impeller_v07_exports_bounded_step_and_no_default_mesh_step(tmp_path: Pa
     assert step_manifest["supported_surface_count"] == len(annular_plane_surfaces)
     assert step_manifest["unsupported_surface_count"] == surface_count - len(annular_plane_surfaces)
     assert step_manifest["bounded_face_count"] == step_manifest["supported_surface_count"]
+    reimport_bbox = step_manifest["reimport_bbox"]
+    assert max(reimport_bbox["x_span_mm"], reimport_bbox["y_span_mm"], reimport_bbox["z_span_mm"]) < 5000.0
+    assert {"name": "finite_reimport_bbox", "status": "PASS"} in step_manifest["validation_checks"]
+    assert step_manifest["export_exactness"] == "surface_graph_trimmed_brep_step"
     if len(annular_plane_surfaces) >= 2:
         assert step_manifest["bounded_face_count"] >= 2
     else:
