@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import math
+import re
 from pathlib import Path
 from typing import Any
 
 
 BOUNDED_STEP_EXACTNESS = "surface_graph_trimmed_brep_step"
 DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS = "surface_graph_bounded_unsewn_brep_step"
+_STEP_NUMBER_PATTERN = re.compile(
+    r"(?<![#A-Za-z0-9_.])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?(?![A-Za-z0-9_.])"
+)
 
 
 def make_annular_plane_face(surface: dict[str, Any]):
@@ -17,9 +22,13 @@ def make_annular_plane_face(surface: dict[str, Any]):
     from OCP.Geom import Geom_Plane
     from OCP.gp import gp_Ax2, gp_Ax3, gp_Circ, gp_Dir, gp_Pnt
 
-    outer_radius = float(surface["outer_radius_mm"])
+    outer_radius = _finite_radius(surface["outer_radius_mm"], "outer_radius_mm")
     inner_radius_value = surface.get("inner_radius_mm")
-    inner_radius = None if inner_radius_value is None else float(inner_radius_value)
+    inner_radius = (
+        None
+        if inner_radius_value is None
+        else _finite_radius(inner_radius_value, "inner_radius_mm")
+    )
     z = float(surface.get("z_mm", 0.0))
 
     if outer_radius <= 0.0:
@@ -141,4 +150,14 @@ def write_bounded_brep_step(
 
 def bounded_step_contains_no_unbounded_plane_marker(path: Path) -> bool:
     text = path.read_text(encoding="utf-8", errors="ignore")
-    return "-10000." not in text and "10000." not in text
+    for match in _STEP_NUMBER_PATTERN.finditer(text):
+        if abs(float(match.group(0))) == 10000.0:
+            return False
+    return True
+
+
+def _finite_radius(value: Any, field_name: str) -> float:
+    radius = float(value)
+    if not math.isfinite(radius):
+        raise ValueError(f"annular plane {field_name} must be finite")
+    return radius
