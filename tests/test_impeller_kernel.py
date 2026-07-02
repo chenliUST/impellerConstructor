@@ -541,6 +541,7 @@ def test_v07_surface_graph_edges_include_family_and_policy_metadata():
     manifest = run.manifest
     edges = manifest["geometry"]["surface_graph"]["edges"]
     policies = manifest["transition_policies"]
+    geometry_kernel = manifest["geometry_kernel"]
 
     assert "blade_root_to_hub.default" in policies
     root_edges = [edge for edge in edges if edge.get("edge_family") == "blade_root_to_hub"]
@@ -549,6 +550,10 @@ def test_v07_surface_graph_edges_include_family_and_policy_metadata():
     assert all(edge["transition_surface_ids"] for edge in root_edges)
     assert manifest["edge_families"]["blade_root_to_hub"] == manifest["geometry"]["edge_families"]["blade_root_to_hub"]
     assert manifest["geometry"]["transition_policies"]["blade_root_to_hub.default"] == policies["blade_root_to_hub.default"]
+    assert "blade_root_to_hub" in geometry_kernel["edge_families"]
+    kernel_policy = geometry_kernel["transition_policies"]["blade_root_to_hub.default"]
+    assert kernel_policy["treatment"] == policies["blade_root_to_hub.default"]["treatment"]
+    assert kernel_policy["radius_mm"] == policies["blade_root_to_hub.default"]["radius_mm"]
 
 
 def test_axisymmetric_nurbs_blade_edges_are_visible_construction_lines_from_closure_surfaces():

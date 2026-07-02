@@ -122,6 +122,8 @@ def build_axisymmetric_throughflow_nurbs_geometry(
             "geometry_stage": stage,
             "material_domains": material_domains,
             "solid_features": _solid_feature_metadata(params, resolved_facets, solid_features),
+            "edge_families": edge_families or {},
+            "transition_policies": transition_policies or {},
         },
         "passage_model": passage_model,
         "shape_control": shape_control
