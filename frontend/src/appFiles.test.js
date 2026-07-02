@@ -125,14 +125,19 @@ describe("frontend application files", () => {
       "src/components/ProfileCurveEditor.js",
       "src/components/BladeCurveEditor.js",
       "src/components/GenerationStagePanel.js",
+      "src/components/EdgeTreatmentPanel.js",
+      "src/edgeTreatmentModel.js",
+      "src/edgeTreatmentModel.test.js",
     ]) {
       assert.equal(existsSync(resolve(root, file)), true, `${file} should exist`);
     }
 
     assert.match(appSource, /profileOverrides/);
     assert.match(appSource, /curveOverrides/);
+    assert.match(appSource, /transitionOverrides/);
     assert.match(appSource, /geometryStage/);
     assert.match(appSource, /GenerationStagePanel/);
+    assert.match(appSource, /EdgeTreatmentPanel/);
   });
 
   test("curve editors expose engineering-unit numeric control-point inputs", () => {

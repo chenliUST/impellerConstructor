@@ -191,7 +191,7 @@ describe("impeller frontend model", () => {
     assert.equal(payload.parameters.trailing_edge_sweep_mm, -30);
   });
 
-  test("buildInstantiatePayload serializes profile curve overrides and generation stage", () => {
+  test("buildInstantiatePayload serializes profile curve transition overrides and generation stage", () => {
     const profileOverrides = {
       hub_profile: {
         kind: "nurbs_curve",
@@ -210,17 +210,25 @@ describe("impeller frontend model", () => {
         },
       },
     };
+    const transitionOverrides = {
+      "blade_root_to_hub.default": {
+        treatment: "chamfer",
+        radius_mm: 6,
+      },
+    };
 
     const payload = buildInstantiatePayload(
       presets[0].parameters,
       profileOverrides,
       curveOverrides,
+      transitionOverrides,
       "blade_surfaces",
     );
 
     assert.equal(payload.geometry_stage, "blade_surfaces");
     assert.deepEqual(payload.profile_overrides, profileOverrides);
     assert.deepEqual(payload.curve_overrides, curveOverrides);
+    assert.deepEqual(payload.transition_overrides, transitionOverrides);
   });
 
   test("changing hub profile driver clears stale profile overrides", () => {

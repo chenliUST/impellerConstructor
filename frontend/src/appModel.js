@@ -149,6 +149,7 @@ export function buildInstantiatePayload(
   inputParameters,
   profileOverrides = null,
   curveOverrides = null,
+  transitionOverrides = null,
   geometryStage = "edge_closures",
 ) {
   const parameters = {};
@@ -166,6 +167,9 @@ export function buildInstantiatePayload(
   }
   if (curveOverrides) {
     payload.curve_overrides = curveOverrides;
+  }
+  if (transitionOverrides) {
+    payload.transition_overrides = transitionOverrides;
   }
   return payload;
 }

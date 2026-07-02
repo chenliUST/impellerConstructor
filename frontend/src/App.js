@@ -9,10 +9,12 @@ import {
   presets,
   selectedPreset,
 } from "./appModel.js";
+import { buildTransitionOverridePayload } from "./edgeTreatmentModel.js";
 import { viewModeOptions } from "./simulationViewModel.js";
 import { defaultVisibleLayers } from "./workspaceModel.js";
 import { BladeCurveEditor } from "./components/BladeCurveEditor.js";
 import { CfdManifestPanel } from "./components/CfdManifestPanel.js";
+import { EdgeTreatmentPanel } from "./components/EdgeTreatmentPanel.js";
 import { GenerationStagePanel } from "./components/GenerationStagePanel.js";
 import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js";
 import { ManifestPanel } from "./components/ManifestPanel.js";
@@ -39,6 +41,7 @@ export function App() {
   const [visibleLayers, setVisibleLayers] = useState(defaultVisibleLayers);
   const [profileOverrides, setProfileOverrides] = useState(null);
   const [curveOverrides, setCurveOverrides] = useState(null);
+  const [transitionOverrides, setTransitionOverrides] = useState({});
   const [geometryStage, setGeometryStage] = useState("edge_closures");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -81,6 +84,7 @@ export function App() {
         parameters,
         profileOverrides,
         curveOverrides,
+        buildTransitionOverridePayload(transitionOverrides),
         geometryStage,
       );
       setManifest(run.manifest);
@@ -103,6 +107,7 @@ export function App() {
     setSelectedPatch(null);
     setProfileOverrides(null);
     setCurveOverrides(null);
+    setTransitionOverrides({});
     setGeometryStage("edge_closures");
   }
 
@@ -160,6 +165,7 @@ export function App() {
           setFacets({ ...activePreset.facets });
           setProfileOverrides(null);
           setCurveOverrides(null);
+          setTransitionOverrides({});
           setGeometryStage("edge_closures");
         },
         loading,
@@ -167,6 +173,11 @@ export function App() {
       h(GenerationStagePanel, {
         geometryStage,
         onChange: setGeometryStage,
+      }),
+      h(EdgeTreatmentPanel, {
+        manifest,
+        overrides: transitionOverrides,
+        onChange: setTransitionOverrides,
       }),
       h(ProfileCurveEditor, {
         manifest,
