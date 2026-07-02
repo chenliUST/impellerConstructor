@@ -13,5 +13,5 @@ Supersedes: `v0_6`
 
 ## Limitations
 
-- V0.7 declares the bounded B-Rep resource contract; bounded export routing and geometry-region annotation are separate implementation tasks.
+- V0.7 routes the bounded B-Rep contract through the current deferred surface-graph mesh bridge: STEP/STL/manifest review artifacts are emitted now, while trimmed bounded B-Rep STEP remains the target export.
 - Default transition policies are constructor-level metadata and do not yet override generated geometry without downstream task support.

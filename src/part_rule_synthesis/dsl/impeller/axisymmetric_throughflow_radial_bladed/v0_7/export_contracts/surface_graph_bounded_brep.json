@@ -7,8 +7,9 @@
   "target_step_exactness": "surface_graph_trimmed_brep_step",
   "diagnostic_step_exactness": "surface_graph_bounded_unsewn_brep_step",
   "bounded_brep_status": "deferred_until_bounded_face_export",
-  "mesh_exports": ["stl", "obj", "mesh_manifest"],
-  "experimental_exports": ["experimental_mesh_step"],
+  "mesh_exports": ["stl"],
+  "target_mesh_exports": ["obj", "mesh_manifest"],
+  "experimental_exports": [],
   "requires": [
     "bounded_faces",
     "finite_bounding_box",

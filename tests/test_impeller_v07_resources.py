@@ -11,6 +11,7 @@ from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runti
 
 def test_v07_bundle_loads_schema_and_transition_resources():
     bundle = load_impeller_dsl_bundle("v0_7")
+    export_contract = bundle.export_contracts["surface_graph_bounded_brep"]
 
     assert bundle.schema["dsl_version"] == "0.7"
     assert bundle.shape_controls["shape_control_version"] == "0.7"
@@ -18,20 +19,14 @@ def test_v07_bundle_loads_schema_and_transition_resources():
         "radial_open_reference_v0_7",
         "radial_closed_reference_v0_7",
     }
-    assert bundle.export_contracts["surface_graph_bounded_brep"]["mode"] == "surface_graph_bounded_brep"
-    assert bundle.export_contracts["surface_graph_bounded_brep"]["step_exactness"] == "surface_graph_mesh_step"
-    assert (
-        bundle.export_contracts["surface_graph_bounded_brep"]["target_step_exactness"]
-        == "surface_graph_trimmed_brep_step"
-    )
-    assert (
-        bundle.export_contracts["surface_graph_bounded_brep"]["diagnostic_step_exactness"]
-        == "surface_graph_bounded_unsewn_brep_step"
-    )
-    assert (
-        bundle.export_contracts["surface_graph_bounded_brep"]["bounded_brep_status"]
-        == "deferred_until_bounded_face_export"
-    )
+    assert export_contract["mode"] == "surface_graph_bounded_brep"
+    assert export_contract["step_exactness"] == "surface_graph_mesh_step"
+    assert export_contract["target_step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert export_contract["diagnostic_step_exactness"] == "surface_graph_bounded_unsewn_brep_step"
+    assert export_contract["bounded_brep_status"] == "deferred_until_bounded_face_export"
+    assert export_contract["mesh_exports"] == ["stl"]
+    assert export_contract["target_mesh_exports"] == ["obj", "mesh_manifest"]
+    assert export_contract["experimental_exports"] == []
 
 
 def test_v07_runtime_exposes_edge_families_and_default_policies():
@@ -110,6 +105,56 @@ def test_v07_validation_requires_preset_radius_parameters_for_edge_families():
             "preset radial_open_reference_v0_7 missing edge-family radius parameter "
             "root_fillet_radius_mm for constructor "
             "axisymmetric_throughflow_radial_bladed.open.v0_7 edge family blade_root_to_hub"
+        ),
+    ):
+        dsl_resources._validate_bundle(bundle)
+
+
+def test_v07_validation_requires_default_radius_parameter_to_be_string():
+    bundle = copy.deepcopy(load_impeller_dsl_bundle("v0_7"))
+    constructor_id = bundle.presets["radial_open_reference_v0_7"]["constructor_id"]
+    bundle.constructors[constructor_id]["edge_families"]["blade_root_to_hub"]["default_radius_parameter"] = [
+        "root_fillet_radius_mm"
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            f"constructor {constructor_id} edge family blade_root_to_hub "
+            "default_radius_parameter must be a string"
+        ),
+    ):
+        dsl_resources._validate_bundle(bundle)
+
+
+def test_v07_validation_rejects_nonnumeric_preset_radius_parameter_value():
+    bundle = copy.deepcopy(load_impeller_dsl_bundle("v0_7"))
+    bundle.presets["radial_open_reference_v0_7"]["parameter_values"]["root_fillet_radius_mm"] = "large"
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "preset radial_open_reference_v0_7 edge-family radius parameter "
+            "root_fillet_radius_mm for constructor "
+            "axisymmetric_throughflow_radial_bladed.open.v0_7 edge family blade_root_to_hub "
+            "must be numeric"
+        ),
+    ):
+        dsl_resources._validate_bundle(bundle)
+
+
+def test_v07_validation_rejects_non_radius_default_radius_parameter():
+    bundle = copy.deepcopy(load_impeller_dsl_bundle("v0_7"))
+    constructor_id = bundle.presets["radial_open_reference_v0_7"]["constructor_id"]
+    bundle.constructors[constructor_id]["edge_families"]["blade_root_to_hub"][
+        "default_radius_parameter"
+    ] = "blade_count"
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            f"constructor {constructor_id} edge family blade_root_to_hub "
+            "default_radius_parameter blade_count is not an allowed V0.7 transition-radius parameter"
         ),
     ):
         dsl_resources._validate_bundle(bundle)

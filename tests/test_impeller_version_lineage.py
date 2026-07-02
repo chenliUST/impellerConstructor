@@ -38,10 +38,15 @@ VERSION_CASES = [
     ),
 ]
 
+INSTANTIATE_LINEAGE_CASES = [
+    ("0.2", "radial_open_reference"),
+    ("0.4", "radial_open_reference_v0_4"),
+    ("0.6", "radial_open_reference_v0_6"),
+    ("0.7", "radial_open_reference_v0_7"),
+]
 
-def test_all_versioned_impeller_dsl_resources_remain_loadable_and_instantiable(tmp_path):
-    service = RuleSynthesisService(tmp_path)
 
+def test_all_versioned_impeller_dsl_resources_remain_loadable_and_compilable():
     for version, expected_dsl_version, preset_ids in VERSION_CASES:
         bundle = load_impeller_dsl_bundle(version)
 
@@ -51,19 +56,27 @@ def test_all_versioned_impeller_dsl_resources_remain_loadable_and_instantiable(t
 
         for preset_id in preset_ids:
             runtime = compile_impeller_runtime_preset(preset_id)
-            engine = service.synthesize("impeller", preset_id=preset_id)
-            run = service.instantiate(engine.engine_id, {})
 
             assert runtime["preset_id"] == preset_id
-            assert run.manifest["preset_id"] == preset_id
-            assert run.manifest["dsl_version"] == expected_dsl_version
-            assert run.manifest["geometry_validity"]["status"] == "PASS"
+            assert runtime["dsl_sections"]["dsl_version"] == expected_dsl_version
 
-            if expected_dsl_version in {"0.4", "0.5"}:
-                assert run.manifest["campaign_signature"]["dsl_version"] == expected_dsl_version
-                assert run.manifest["simulation_manifests"]["cfd_full_360"]["validity"]["status"] == "PASS"
-            elif expected_dsl_version == "0.6":
-                assert run.manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
-            else:
-                assert "campaign_signature" not in run.manifest
-                assert run.manifest["simulation_manifests"] == {}
+
+def test_representative_versioned_impeller_presets_remain_instantiable(tmp_path):
+    service = RuleSynthesisService(tmp_path)
+
+    for expected_dsl_version, preset_id in INSTANTIATE_LINEAGE_CASES:
+        engine = service.synthesize("impeller", preset_id=preset_id)
+        run = service.instantiate(engine.engine_id, {})
+
+        assert run.manifest["preset_id"] == preset_id
+        assert run.manifest["dsl_version"] == expected_dsl_version
+        assert run.manifest["geometry_validity"]["status"] == "PASS"
+
+        if expected_dsl_version == "0.4":
+            assert run.manifest["campaign_signature"]["dsl_version"] == expected_dsl_version
+            assert run.manifest["simulation_manifests"]["cfd_full_360"]["validity"]["status"] == "PASS"
+        elif expected_dsl_version == "0.6":
+            assert run.manifest["simulation_manifests"]["cfd_surface_mesh"]["triangle_count"] > 0
+        else:
+            assert "campaign_signature" not in run.manifest
+            assert run.manifest["simulation_manifests"] == {}

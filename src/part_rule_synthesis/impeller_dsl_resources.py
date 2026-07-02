@@ -11,6 +11,13 @@ ONTOLOGY_BASE = PACKAGE_ROOT / "ontology" / "impeller"
 DSL_BASE = PACKAGE_ROOT / "dsl" / "impeller" / "axisymmetric_throughflow_radial_bladed"
 DEFAULT_DSL_VERSION = "v0_2"
 SUPPORTED_V07_DEFAULT_TREATMENTS = {"none", "chamfer", "fillet"}
+V07_TRANSITION_RADIUS_PARAMETERS = {
+    "leading_edge_radius_mm",
+    "trailing_edge_radius_mm",
+    "root_fillet_radius_mm",
+    "tip_edge_radius_mm",
+    "hub_chamfer_radius_mm",
+}
 
 
 @dataclass(frozen=True)
@@ -204,6 +211,18 @@ def _validate_v07_edge_family_contracts(bundle: ImpellerDslBundle) -> None:
                     f"constructor {constructor_id} edge family {edge_family_id} "
                     f"has unsupported default_treatment {default_treatment}"
                 )
+            radius_parameter = edge_family["default_radius_parameter"]
+            if not isinstance(radius_parameter, str):
+                raise ValueError(
+                    f"constructor {constructor_id} edge family {edge_family_id} "
+                    "default_radius_parameter must be a string"
+                )
+            if radius_parameter not in V07_TRANSITION_RADIUS_PARAMETERS:
+                raise ValueError(
+                    f"constructor {constructor_id} edge family {edge_family_id} "
+                    f"default_radius_parameter {radius_parameter} "
+                    "is not an allowed V0.7 transition-radius parameter"
+                )
 
     for preset_id, preset in bundle.presets.items():
         constructor_id = preset["constructor_id"]
@@ -216,6 +235,16 @@ def _validate_v07_edge_family_contracts(bundle: ImpellerDslBundle) -> None:
                     f"preset {preset_id} missing edge-family radius parameter {radius_parameter} "
                     f"for constructor {constructor_id} edge family {edge_family_id}"
                 )
+            if not _is_numeric_radius_value(parameter_values[radius_parameter]):
+                raise ValueError(
+                    f"preset {preset_id} edge-family radius parameter {radius_parameter} "
+                    f"for constructor {constructor_id} edge family {edge_family_id} "
+                    "must be numeric"
+                )
+
+
+def _is_numeric_radius_value(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _validate_shape_control_policies(bundle: ImpellerDslBundle) -> None:
