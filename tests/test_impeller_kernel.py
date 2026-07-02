@@ -527,6 +527,61 @@ def test_v06_tip_fillet_radius_participates_in_feasibility_check():
     assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
 
 
+def test_v07_transition_override_changes_blade_root_surface_role_and_radius():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": True,
+                    "treatment": "chamfer",
+                    "radius_mm": 6.0,
+                }
+            },
+        )
+
+    surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    root = surfaces["blade_0_root_transition_surface"]
+
+    assert root["role"] == "blade_root_chamfer"
+    assert root["treatment"] == "chamfer"
+    assert root["radius_mm"] == 6.0
+    assert root["transition_policy_id"] == "blade_root_to_hub.default"
+
+
+def test_v07_disabled_transition_removes_blade_root_transition_surfaces():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": False,
+                    "treatment": "none",
+                    "radius_mm": 0.0,
+                }
+            },
+        )
+
+    surface_ids = {surface["id"] for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    assert "blade_0_root_transition_surface" not in surface_ids
+
+
 def test_v07_surface_graph_edges_include_family_and_policy_metadata():
     from pathlib import Path
     from tempfile import TemporaryDirectory

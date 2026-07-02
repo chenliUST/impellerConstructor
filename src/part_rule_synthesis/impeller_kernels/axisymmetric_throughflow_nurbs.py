@@ -59,6 +59,8 @@ def build_axisymmetric_throughflow_nurbs_geometry(
         display_policy=display_policy,
         material_domain=material_domain,
         solid_features=solid_features,
+        edge_families=edge_families,
+        transition_policies=transition_policies,
     )
     construction_lines = _construction_lines(surface_graph, sampled_blades)
     surface_graph, construction_lines = _filter_by_geometry_stage(surface_graph, construction_lines, stage)
@@ -809,7 +811,10 @@ def _surface_graph(
     display_policy: dict[str, Any] | None = None,
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    policy_driven_blade_transitions = bool(edge_families and transition_policies)
     hub_grid = _revolve_grid(hub_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
     hub_control_net, hub_cad_surface = _control_net_and_cad_surface(
         "hub_revolve_surface",
@@ -906,16 +911,54 @@ def _surface_graph(
         prefix = f"blade_{blade['index']}"
         blade_feature_id = f"blade_{blade['index']:02d}"
         explicit_fillets = _uses_explicit_fillet_surfaces(params)
-        leading_surface_id = f"{prefix}_leading_edge_fillet_surface" if explicit_fillets else f"{prefix}_leading_edge_surface"
-        trailing_surface_id = f"{prefix}_trailing_edge_fillet_surface" if explicit_fillets else f"{prefix}_trailing_edge_surface"
-        root_surface_id = f"{prefix}_root_fillet_surface" if explicit_fillets else f"{prefix}_root_closure_surface"
-        tip_closure_surface_id = f"{prefix}_tip_edge_fillet_surface" if explicit_fillets else f"{prefix}_tip_closure_surface"
-        edge_surface_kind = "blend_surface" if explicit_fillets else "edge_closure_surface"
-        leading_role = "blade_leading_edge_fillet" if explicit_fillets else "blade_leading_edge_closure"
-        trailing_role = "blade_trailing_edge_fillet" if explicit_fillets else "blade_trailing_edge_closure"
-        root_role = "blade_root_fillet" if explicit_fillets else "blade_root_hub_closure"
-        tip_role = "blade_tip_edge_fillet" if explicit_fillets else "blade_tip_closure"
+        leading_policy = _transition_policy_for_family(transition_policies, "blade_leading_edge")
+        trailing_policy = _transition_policy_for_family(transition_policies, "blade_trailing_edge")
+        root_policy = _transition_policy_for_family(transition_policies, "blade_root_to_hub")
+        tip_policy = _transition_policy_for_family(transition_policies, "blade_tip_or_shroud")
+        leading_surface_id = (
+            f"{prefix}_leading_transition_surface"
+            if policy_driven_blade_transitions
+            else f"{prefix}_leading_edge_fillet_surface" if explicit_fillets else f"{prefix}_leading_edge_surface"
+        )
+        trailing_surface_id = (
+            f"{prefix}_trailing_transition_surface"
+            if policy_driven_blade_transitions
+            else f"{prefix}_trailing_edge_fillet_surface" if explicit_fillets else f"{prefix}_trailing_edge_surface"
+        )
+        root_surface_id = (
+            f"{prefix}_root_transition_surface"
+            if policy_driven_blade_transitions
+            else f"{prefix}_root_fillet_surface" if explicit_fillets else f"{prefix}_root_closure_surface"
+        )
+        tip_closure_surface_id = (
+            f"{prefix}_tip_transition_surface"
+            if policy_driven_blade_transitions
+            else f"{prefix}_tip_edge_fillet_surface" if explicit_fillets else f"{prefix}_tip_closure_surface"
+        )
+        edge_surface_kind = "transition_surface" if policy_driven_blade_transitions else ("blend_surface" if explicit_fillets else "edge_closure_surface")
+        leading_role = (
+            _transition_role(leading_policy, "blade_leading_edge_fillet", "blade_leading_edge_chamfer")
+            if policy_driven_blade_transitions
+            else "blade_leading_edge_fillet" if explicit_fillets else "blade_leading_edge_closure"
+        )
+        trailing_role = (
+            _transition_role(trailing_policy, "blade_trailing_edge_fillet", "blade_trailing_edge_chamfer")
+            if policy_driven_blade_transitions
+            else "blade_trailing_edge_fillet" if explicit_fillets else "blade_trailing_edge_closure"
+        )
+        root_role = (
+            _transition_role(root_policy, "blade_root_fillet", "blade_root_chamfer")
+            if policy_driven_blade_transitions
+            else "blade_root_fillet" if explicit_fillets else "blade_root_hub_closure"
+        )
+        tip_role = (
+            _transition_role(tip_policy, "blade_tip_edge_fillet", "blade_tip_edge_chamfer")
+            if policy_driven_blade_transitions
+            else "blade_tip_edge_fillet" if explicit_fillets else "blade_tip_closure"
+        )
         tip_feature_id = f"{blade_feature_id}.tip_edge_round" if explicit_fillets else f"{blade_feature_id}.tip_transition"
+        if policy_driven_blade_transitions:
+            tip_feature_id = f"{blade_feature_id}.tip_transition"
         boundary_curves[f"{prefix}_pressure_hub_boundary"] = blade["pressure_hub_boundary"]
         boundary_curves[f"{prefix}_suction_hub_boundary"] = blade["suction_hub_boundary"]
         boundary_curves[f"{prefix}_pressure_tip_boundary"] = blade["pressure_tip_boundary"]
@@ -1108,66 +1151,115 @@ def _surface_graph(
                     ],
                 },
         ]
-        if explicit_fillets:
+        if policy_driven_blade_transitions:
+            blade_surfaces = [
+                blade_surfaces[0],
+                blade_surfaces[1],
+                *[
+                    surface
+                    for surface in [
+                        _policy_transition_surface_record(
+                            blade_surfaces[2],
+                            "blade_leading_edge",
+                            leading_policy,
+                        ),
+                        _policy_transition_surface_record(
+                            blade_surfaces[3],
+                            "blade_trailing_edge",
+                            trailing_policy,
+                        ),
+                        _policy_transition_surface_record(
+                            blade_surfaces[4],
+                            "blade_root_to_hub",
+                            root_policy,
+                        ),
+                        _policy_transition_surface_record(
+                            blade_surfaces[5],
+                            "blade_tip_or_shroud",
+                            tip_policy,
+                        ),
+                    ]
+                    if surface is not None
+                ],
+            ]
+        elif explicit_fillets:
             blade_surfaces[2]["radius_mm"] = _round(params["leading_edge_radius_mm"])
             blade_surfaces[3]["radius_mm"] = _round(params["trailing_edge_radius_mm"])
             blade_surfaces[4]["radius_mm"] = _round(params["root_fillet_radius_mm"])
             blade_surfaces[5]["radius_mm"] = _round(params["tip_edge_radius_mm"])
         surfaces.extend(blade_surfaces)
-        edges.extend(
-            [
-                {
-                    "id": f"{prefix}_pressure_leading_edge",
-                    "surfaces": [f"{prefix}_pressure_surface", leading_surface_id],
-                    "relation": "closed_blade_edge",
-                },
-                {
-                    "id": f"{prefix}_suction_leading_edge",
-                    "surfaces": [f"{prefix}_suction_surface", leading_surface_id],
-                    "relation": "closed_blade_edge",
-                },
-                {
-                    "id": f"{prefix}_pressure_trailing_edge",
-                    "surfaces": [f"{prefix}_pressure_surface", trailing_surface_id],
-                    "relation": "closed_blade_edge",
-                },
-                {
-                    "id": f"{prefix}_suction_trailing_edge",
-                    "surfaces": [f"{prefix}_suction_surface", trailing_surface_id],
-                    "relation": "closed_blade_edge",
-                },
-                {
-                    "id": f"{prefix}_pressure_root_closure_edge",
-                    "surfaces": [f"{prefix}_pressure_surface", root_surface_id],
-                    "relation": "closed_blade_root_edge",
-                },
-                {
-                    "id": f"{prefix}_suction_root_closure_edge",
-                    "surfaces": [f"{prefix}_suction_surface", root_surface_id],
-                    "relation": "closed_blade_root_edge",
-                },
-                {
-                    "id": f"{prefix}_pressure_tip_closure_edge",
-                    "surfaces": [f"{prefix}_pressure_surface", tip_closure_surface_id],
-                    "relation": "closed_blade_tip_edge",
-                },
-                {
-                    "id": f"{prefix}_suction_tip_closure_edge",
-                    "surfaces": [f"{prefix}_suction_surface", tip_closure_surface_id],
-                    "relation": "closed_blade_tip_edge",
-                },
-                {
-                    "id": f"{prefix}_root_hub_conformal_edge",
-                    "surfaces": ["hub_revolve_surface", root_surface_id],
-                    "relation": "conformal_hub_boundary",
-                },
-                {
-                    "id": f"{prefix}_tip_conformal_edge",
-                    "surfaces": [tip_surface_id, tip_closure_surface_id],
-                    "relation": "conformal_tip_boundary",
-                },
-            ]
-        )
+        blade_edges = []
+        if _policy_transition_enabled(policy_driven_blade_transitions, leading_policy):
+            blade_edges.extend(
+                [
+                    {
+                        "id": f"{prefix}_pressure_leading_edge",
+                        "surfaces": [f"{prefix}_pressure_surface", leading_surface_id],
+                        "relation": "closed_blade_edge",
+                    },
+                    {
+                        "id": f"{prefix}_suction_leading_edge",
+                        "surfaces": [f"{prefix}_suction_surface", leading_surface_id],
+                        "relation": "closed_blade_edge",
+                    },
+                ]
+            )
+        if _policy_transition_enabled(policy_driven_blade_transitions, trailing_policy):
+            blade_edges.extend(
+                [
+                    {
+                        "id": f"{prefix}_pressure_trailing_edge",
+                        "surfaces": [f"{prefix}_pressure_surface", trailing_surface_id],
+                        "relation": "closed_blade_edge",
+                    },
+                    {
+                        "id": f"{prefix}_suction_trailing_edge",
+                        "surfaces": [f"{prefix}_suction_surface", trailing_surface_id],
+                        "relation": "closed_blade_edge",
+                    },
+                ]
+            )
+        if _policy_transition_enabled(policy_driven_blade_transitions, root_policy):
+            blade_edges.extend(
+                [
+                    {
+                        "id": f"{prefix}_pressure_root_closure_edge",
+                        "surfaces": [f"{prefix}_pressure_surface", root_surface_id],
+                        "relation": "closed_blade_root_edge",
+                    },
+                    {
+                        "id": f"{prefix}_suction_root_closure_edge",
+                        "surfaces": [f"{prefix}_suction_surface", root_surface_id],
+                        "relation": "closed_blade_root_edge",
+                    },
+                    {
+                        "id": f"{prefix}_root_hub_conformal_edge",
+                        "surfaces": ["hub_revolve_surface", root_surface_id],
+                        "relation": "conformal_hub_boundary",
+                    },
+                ]
+            )
+        if _policy_transition_enabled(policy_driven_blade_transitions, tip_policy):
+            blade_edges.extend(
+                [
+                    {
+                        "id": f"{prefix}_pressure_tip_closure_edge",
+                        "surfaces": [f"{prefix}_pressure_surface", tip_closure_surface_id],
+                        "relation": "closed_blade_tip_edge",
+                    },
+                    {
+                        "id": f"{prefix}_suction_tip_closure_edge",
+                        "surfaces": [f"{prefix}_suction_surface", tip_closure_surface_id],
+                        "relation": "closed_blade_tip_edge",
+                    },
+                    {
+                        "id": f"{prefix}_tip_conformal_edge",
+                        "surfaces": [tip_surface_id, tip_closure_surface_id],
+                        "relation": "conformal_tip_boundary",
+                    },
+                ]
+            )
+        edges.extend(blade_edges)
         for side in ["pressure", "suction"]:
             blade_surface = f"{prefix}_{side}_surface"
             edges.extend(
@@ -1191,6 +1283,77 @@ def _surface_graph(
         "named_boundary_curves": named_boundary_curves,
     }
     return _apply_display_policy(surface_graph, display_policy)
+
+
+def _transition_policy_for_family(
+    transition_policies: dict[str, Any] | None,
+    edge_family: str,
+) -> dict[str, Any] | None:
+    if not transition_policies:
+        return None
+    policy = transition_policies.get(f"{edge_family}.default")
+    return policy if isinstance(policy, dict) else None
+
+
+def _transition_role(policy: dict[str, Any] | None, fillet_role: str, chamfer_role: str) -> str:
+    if policy and policy.get("treatment") == "chamfer":
+        return chamfer_role
+    return fillet_role
+
+
+def _policy_transition_enabled(policy_driven: bool, policy: dict[str, Any] | None) -> bool:
+    if not policy_driven:
+        return True
+    return bool(policy and policy.get("enabled") and policy.get("treatment") != "none")
+
+
+def _policy_transition_surface_record(
+    surface: dict[str, Any],
+    edge_family: str,
+    policy: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not _policy_transition_enabled(True, policy):
+        return None
+    assert policy is not None
+    treatment = str(policy["treatment"])
+    cad_surface = {
+        **surface["cad_surface"],
+        "role": surface["role"],
+        "feature_id": surface["feature_id"],
+        "source": "surface_graph.control_net_transition_surface",
+    }
+    return {
+        **surface,
+        "kind": "transition_surface",
+        "edge_family": edge_family,
+        "transition_policy_id": str(policy.get("policy_id", f"{edge_family}.default")),
+        "treatment": treatment,
+        "radius_mm": _round(policy["radius_mm"]),
+        "cfd_role": _cfd_role_for_edge_family(edge_family),
+        "cad_surface": cad_surface,
+        "display": {
+            **surface.get("display", {}),
+            "color": _transition_color(treatment),
+            "opacity": 1.0,
+            "edge_highlight": True,
+        },
+    }
+
+
+def _cfd_role_for_edge_family(edge_family: str) -> str:
+    return {
+        "blade_leading_edge": "leading_edge_transition",
+        "blade_trailing_edge": "trailing_edge_transition",
+        "blade_root_to_hub": "root_transition",
+        "blade_tip_or_shroud": "tip_transition",
+    }.get(edge_family, "transition")
+
+
+def _transition_color(treatment: str) -> str:
+    return {
+        "fillet": "#f59e0b",
+        "chamfer": "#a855f7",
+    }.get(treatment, "#64748b")
 
 
 def _annotate_transition_edge_metadata(
@@ -1267,40 +1430,64 @@ def _transition_edge_annotation(
         return _annotation_with_existing_surface(
             "blade_leading_edge",
             _edge_surfaces_matching(edge_surfaces, "leading_edge")
-            + [f"{blade_prefix}_leading_edge_fillet_surface", f"{blade_prefix}_leading_edge_surface"],
+            + [
+                f"{blade_prefix}_leading_transition_surface",
+                f"{blade_prefix}_leading_edge_fillet_surface",
+                f"{blade_prefix}_leading_edge_surface",
+            ],
             surface_ids,
         )
     if edge_id.endswith(("_pressure_trailing_edge", "_suction_trailing_edge")):
         return _annotation_with_existing_surface(
             "blade_trailing_edge",
             _edge_surfaces_matching(edge_surfaces, "trailing_edge")
-            + [f"{blade_prefix}_trailing_edge_fillet_surface", f"{blade_prefix}_trailing_edge_surface"],
+            + [
+                f"{blade_prefix}_trailing_transition_surface",
+                f"{blade_prefix}_trailing_edge_fillet_surface",
+                f"{blade_prefix}_trailing_edge_surface",
+            ],
             surface_ids,
         )
     if edge_id.endswith(("_pressure_root_closure_edge", "_suction_root_closure_edge", "_root_hub_conformal_edge")):
         return _annotation_with_existing_surface(
             "blade_root_to_hub",
             _edge_surfaces_matching(edge_surfaces, "_root_")
-            + [f"{blade_prefix}_root_fillet_surface", f"{blade_prefix}_root_closure_surface"],
+            + [
+                f"{blade_prefix}_root_transition_surface",
+                f"{blade_prefix}_root_fillet_surface",
+                f"{blade_prefix}_root_closure_surface",
+            ],
             surface_ids,
         )
     if edge_id.endswith(("_pressure_hub_edge", "_suction_hub_edge")):
         return _annotation_with_existing_surface(
             "blade_root_to_hub",
-            [f"{blade_prefix}_root_fillet_surface", f"{blade_prefix}_root_closure_surface"],
+            [
+                f"{blade_prefix}_root_transition_surface",
+                f"{blade_prefix}_root_fillet_surface",
+                f"{blade_prefix}_root_closure_surface",
+            ],
             surface_ids,
         )
     if edge_id.endswith(("_pressure_tip_closure_edge", "_suction_tip_closure_edge", "_tip_conformal_edge")):
         return _annotation_with_existing_surface(
             "blade_tip_or_shroud",
             _edge_surfaces_matching(edge_surfaces, "_tip_")
-            + [f"{blade_prefix}_tip_edge_fillet_surface", f"{blade_prefix}_tip_closure_surface"],
+            + [
+                f"{blade_prefix}_tip_transition_surface",
+                f"{blade_prefix}_tip_edge_fillet_surface",
+                f"{blade_prefix}_tip_closure_surface",
+            ],
             surface_ids,
         )
     if edge_id.endswith(("_pressure_tip_edge", "_suction_tip_edge")):
         return _annotation_with_existing_surface(
             "blade_tip_or_shroud",
-            [f"{blade_prefix}_tip_edge_fillet_surface", f"{blade_prefix}_tip_closure_surface"],
+            [
+                f"{blade_prefix}_tip_transition_surface",
+                f"{blade_prefix}_tip_edge_fillet_surface",
+                f"{blade_prefix}_tip_closure_surface",
+            ],
             surface_ids,
         )
     return None
@@ -1715,18 +1902,38 @@ def _blade_edge_lines(sampled_blades: list[dict[str, Any]], surface_graph: dict[
         blade_index = int(blade["index"])
         prefix = f"blade_{blade_index}"
         surface_id_by_key = {
-            "leading_edge_surface": f"{prefix}_leading_edge_fillet_surface"
-            if f"{prefix}_leading_edge_fillet_surface" in surface_ids
-            else f"{prefix}_leading_edge_surface",
-            "trailing_edge_surface": f"{prefix}_trailing_edge_fillet_surface"
-            if f"{prefix}_trailing_edge_fillet_surface" in surface_ids
-            else f"{prefix}_trailing_edge_surface",
-            "root_closure_surface": f"{prefix}_root_fillet_surface"
-            if f"{prefix}_root_fillet_surface" in surface_ids
-            else f"{prefix}_root_closure_surface",
-            "tip_closure_surface": f"{prefix}_tip_edge_fillet_surface"
-            if f"{prefix}_tip_edge_fillet_surface" in surface_ids
-            else f"{prefix}_tip_closure_surface",
+            "leading_edge_surface": _first_existing_surface_id(
+                [
+                    f"{prefix}_leading_transition_surface",
+                    f"{prefix}_leading_edge_fillet_surface",
+                    f"{prefix}_leading_edge_surface",
+                ],
+                surface_ids,
+            ),
+            "trailing_edge_surface": _first_existing_surface_id(
+                [
+                    f"{prefix}_trailing_transition_surface",
+                    f"{prefix}_trailing_edge_fillet_surface",
+                    f"{prefix}_trailing_edge_surface",
+                ],
+                surface_ids,
+            ),
+            "root_closure_surface": _first_existing_surface_id(
+                [
+                    f"{prefix}_root_transition_surface",
+                    f"{prefix}_root_fillet_surface",
+                    f"{prefix}_root_closure_surface",
+                ],
+                surface_ids,
+            ),
+            "tip_closure_surface": _first_existing_surface_id(
+                [
+                    f"{prefix}_tip_transition_surface",
+                    f"{prefix}_tip_edge_fillet_surface",
+                    f"{prefix}_tip_closure_surface",
+                ],
+                surface_ids,
+            ),
         }
         edge_specs = [
             ("leading_edge_pressure", "leading_edge_surface", 0, "#f59e0b"),
@@ -1739,18 +1946,28 @@ def _blade_edge_lines(sampled_blades: list[dict[str, Any]], surface_graph: dict[
             ("tip_edge_suction", "tip_closure_surface", -1, "#38bdf8"),
         ]
         for role, surface_key, column_index, color in edge_specs:
+            surface_id = surface_id_by_key[surface_key]
+            if surface_id is None:
+                continue
             lines.append(
                 {
                     "name": f"blade {blade_index} {role}",
                     "role": role,
                     "blade_index": blade_index,
                     "source": "axisymmetric_throughflow_nurbs.edge_closure_surface",
-                    "surface_id": surface_id_by_key[surface_key],
+                    "surface_id": surface_id,
                     "color": color,
                     "points": [row[column_index] for row in blade[surface_key]],
                 }
             )
     return lines
+
+
+def _first_existing_surface_id(candidate_surface_ids: list[str], surface_ids: set[str]) -> str | None:
+    for surface_id in candidate_surface_ids:
+        if surface_id in surface_ids:
+            return surface_id
+    return None
 
 
 def _normalize_geometry_stage(stage: str | None) -> str:
@@ -1825,7 +2042,7 @@ def _surface_visible_in_stage(surface: dict[str, Any], geometry_stage: str) -> b
         return True
     if geometry_stage == "blade_surfaces":
         return False
-    return surface.get("kind") in {"edge_closure_surface", "blend_surface"}
+    return surface.get("kind") in {"edge_closure_surface", "blend_surface", "transition_surface"}
 
 
 def _filtered_boundary_curves(boundary_curves: dict[str, Any], geometry_stage: str) -> dict[str, Any]:
@@ -2044,7 +2261,7 @@ def _check_closed_hood_shell_surfaces_present(surface_graph: dict[str, Any]) -> 
 def _check_stage_completeness(surface_graph: dict[str, Any], geometry_stage: str) -> dict[str, Any]:
     roles = {surface["role"] for surface in surface_graph["surfaces"]}
     kinds = {surface["kind"] for surface in surface_graph["surfaces"]}
-    edge_surface_present = bool(kinds.intersection({"edge_closure_surface", "blend_surface"}))
+    edge_surface_present = bool(kinds.intersection({"edge_closure_surface", "blend_surface", "transition_surface"}))
     if geometry_stage == "hub_support":
         passed = "hub" in roles and "blade_pressure" not in roles and not edge_surface_present
     elif geometry_stage == "blade_surfaces":
@@ -2092,18 +2309,42 @@ def _check_every_surface_has_uv_lines(
 
 def _blade_edge_surface_ids(prefix: str, surface_ids: set[str]) -> dict[str, str]:
     return {
-        "leading": f"{prefix}_leading_edge_fillet_surface"
-        if f"{prefix}_leading_edge_fillet_surface" in surface_ids
-        else f"{prefix}_leading_edge_surface",
-        "trailing": f"{prefix}_trailing_edge_fillet_surface"
-        if f"{prefix}_trailing_edge_fillet_surface" in surface_ids
-        else f"{prefix}_trailing_edge_surface",
-        "root": f"{prefix}_root_fillet_surface"
-        if f"{prefix}_root_fillet_surface" in surface_ids
-        else f"{prefix}_root_closure_surface",
-        "tip": f"{prefix}_tip_edge_fillet_surface"
-        if f"{prefix}_tip_edge_fillet_surface" in surface_ids
-        else f"{prefix}_tip_closure_surface",
+        "leading": _first_existing_surface_id(
+            [
+                f"{prefix}_leading_transition_surface",
+                f"{prefix}_leading_edge_fillet_surface",
+                f"{prefix}_leading_edge_surface",
+            ],
+            surface_ids,
+        )
+        or f"{prefix}_leading_edge_surface",
+        "trailing": _first_existing_surface_id(
+            [
+                f"{prefix}_trailing_transition_surface",
+                f"{prefix}_trailing_edge_fillet_surface",
+                f"{prefix}_trailing_edge_surface",
+            ],
+            surface_ids,
+        )
+        or f"{prefix}_trailing_edge_surface",
+        "root": _first_existing_surface_id(
+            [
+                f"{prefix}_root_transition_surface",
+                f"{prefix}_root_fillet_surface",
+                f"{prefix}_root_closure_surface",
+            ],
+            surface_ids,
+        )
+        or f"{prefix}_root_closure_surface",
+        "tip": _first_existing_surface_id(
+            [
+                f"{prefix}_tip_transition_surface",
+                f"{prefix}_tip_edge_fillet_surface",
+                f"{prefix}_tip_closure_surface",
+            ],
+            surface_ids,
+        )
+        or f"{prefix}_tip_closure_surface",
     }
 
 
@@ -2132,6 +2373,8 @@ def _check_blade_surface_closure_candidate(
         pressure = surfaces[f"{prefix}_pressure_surface"]["uv_grid"]
         suction = surfaces[f"{prefix}_suction_surface"]["uv_grid"]
         edge_surface_ids = _blade_edge_surface_ids(prefix, surface_ids)
+        if not set(edge_surface_ids.values()).issubset(surface_ids):
+            return {"name": "blade_surface_closure_candidate", "status": "FAIL"}
         leading = surfaces[edge_surface_ids["leading"]]["uv_grid"]
         trailing = surfaces[edge_surface_ids["trailing"]]["uv_grid"]
         root = surfaces[edge_surface_ids["root"]]["uv_grid"]
