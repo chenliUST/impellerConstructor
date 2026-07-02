@@ -25,3 +25,35 @@ def test_mesh_manifest_reports_triangle_quality_and_edges():
     assert manifest["quality_metrics"]["min_area"] > 0
     assert manifest["quality_metrics"]["max_aspect_ratio"] >= 1
     assert manifest["patch_regions"][0]["surface_graph_id"] == "quad"
+
+
+def test_mesh_manifest_reports_transition_regions():
+    surface_graph = {
+        "surfaces": [
+            {
+                "id": "blade_0_root_transition_surface",
+                "feature_id": "blade_00.root_transition",
+                "role": "blade_root_fillet",
+                "edge_family": "blade_root_to_hub",
+                "transition_policy_id": "blade_root_to_hub.default",
+                "uv_grid": [
+                    [[0, 0, 0], [0, 1, 0]],
+                    [[1, 0, 0], [1, 1, 0]],
+                ],
+            }
+        ]
+    }
+
+    manifest = build_surface_mesh_manifest(surface_graph)
+
+    assert manifest["transition_regions"] == [
+        {
+            "surface_graph_id": "blade_0_root_transition_surface",
+            "feature_id": "blade_00.root_transition",
+            "role": "blade_root_fillet",
+            "edge_family": "blade_root_to_hub",
+            "transition_policy_id": "blade_root_to_hub.default",
+            "triangle_start": 0,
+            "triangle_count": 2,
+        }
+    ]
