@@ -210,7 +210,7 @@ class RuleSynthesisService:
             geometry_metadata=geometry_metadata,
             model_output_root=self.model_output_root,
         )
-        export_strategy = _export_strategy(dsl["part_family"], dsl_context=dsl)
+        export_strategy = _export_strategy(dsl["part_family"], dsl_context=dsl, export_manifests=export_manifests)
         simulation_manifests = {}
         if dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.4", "0.5"}:
             surface_graph = geometry_metadata.get("surface_graph", {})
@@ -1151,13 +1151,21 @@ def _model_output_dir_for_run(run_dir: Path, model_output_root: Path | None = No
     return output_dir
 
 
-def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None) -> dict[str, Any]:
+def _export_strategy(
+    part_family: str,
+    dsl_context: dict[str, Any] | None = None,
+    export_manifests: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     export_contract = (dsl_context or {}).get("export_contract", {})
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_bounded_brep":
-        step_exactness = export_contract.get(
-            "diagnostic_step_exactness",
-            "surface_graph_bounded_unsewn_brep_step",
+        contract_step_exactness = export_contract.get(
+            "step_exactness",
+            export_contract.get(
+                "diagnostic_step_exactness",
+                "surface_graph_bounded_unsewn_brep_step",
+            ),
         )
+        step_exactness = (export_manifests or {}).get("step", {}).get("export_exactness") or contract_step_exactness
         target_step_exactness = export_contract.get("target_step_exactness", "surface_graph_trimmed_brep_step")
         diagnostic_step_exactness = export_contract.get(
             "diagnostic_step_exactness",
@@ -1178,7 +1186,7 @@ def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None
             "unsupported_surface_policy": "excluded_with_manifest_accounting",
             "export_contract": {
                 "mode": "surface_graph_bounded_brep",
-                "step_exactness": step_exactness,
+                "step_exactness": contract_step_exactness,
                 "target_step_exactness": target_step_exactness,
                 "diagnostic_step_exactness": diagnostic_step_exactness,
                 "bounded_brep_status": "bounded_faces_unsewn",

@@ -292,6 +292,15 @@ def test_v07_bounded_export_routes_step_to_bounded_brep_and_hides_mesh_step(tmp_
     assert strategy["cad_export_scope"] == "supported_bounded_brep_surfaces"
     assert strategy["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
     assert strategy["step_exactness"] != strategy["target_step_exactness"]
+    actual_strategy = service_module._export_strategy(
+        "impeller",
+        dsl_context={"export_contract": {"mode": "surface_graph_bounded_brep", "default_view": "cad_review_360"}},
+        export_manifests={"step": {"export_exactness": "surface_graph_trimmed_brep_step"}},
+    )
+    assert actual_strategy["step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert actual_strategy["target_step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert actual_strategy["diagnostic_step_exactness"] == "surface_graph_bounded_unsewn_brep_step"
+    assert actual_strategy["export_contract"]["step_exactness"] == "surface_graph_bounded_unsewn_brep_step"
 
 
 def test_v07_service_instantiates_bounded_brep_step_and_mesh_review_outputs(tmp_path):
@@ -305,9 +314,9 @@ def test_v07_service_instantiates_bounded_brep_step_and_mesh_review_outputs(tmp_
     assert manifest["preset_id"] == "radial_open_reference_v0_7"
     assert manifest["export_strategy"]["mode"] == "surface_graph_bounded_brep"
     assert manifest["export_strategy"]["cad_exports"] == "completed"
-    assert manifest["export_strategy"]["step_exactness"] == "surface_graph_bounded_unsewn_brep_step"
+    assert manifest["export_strategy"]["step_exactness"] == "surface_graph_trimmed_brep_step"
     assert manifest["export_strategy"]["target_step_exactness"] == "surface_graph_trimmed_brep_step"
-    assert manifest["export_strategy"]["step_exactness"] != manifest["export_strategy"]["target_step_exactness"]
+    assert manifest["export_strategy"]["diagnostic_step_exactness"] == "surface_graph_bounded_unsewn_brep_step"
     assert manifest["export_strategy"]["bounded_brep_status"] == "bounded_faces_unsewn"
     assert manifest["export_strategy"]["sewing_status"] == "not_attempted"
     assert manifest["export_strategy"]["coverage_status"] == "partial_supported_surfaces"
@@ -324,9 +333,11 @@ def test_v07_service_instantiates_bounded_brep_step_and_mesh_review_outputs(tmp_
     assert export_contract["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
 
     step_manifest = manifest["export_manifests"]["step"]
-    assert step_manifest["export_exactness"] == "surface_graph_bounded_unsewn_brep_step"
+    assert step_manifest["export_exactness"] == "surface_graph_trimmed_brep_step"
     assert step_manifest["bounded_brep_status"] == "bounded_faces_unsewn"
     assert step_manifest["target_exactness"] == "surface_graph_trimmed_brep_step"
+    assert {"name": "finite_reimport_bbox", "status": "PASS"} in step_manifest["validation_checks"]
+    assert step_manifest["reimport_bbox"]["x_span_mm"] < 5000.0
     assert step_manifest["bounded_face_count"] > 0
     assert step_manifest["sewing_status"] == "not_attempted"
     assert step_manifest["coverage_status"] == "partial_supported_surfaces"

@@ -136,10 +136,7 @@ def write_bounded_brep_step(
         Interface_Static.SetCVal_s(schema_key, previous_schema)
 
     bbox = reimport_step_bbox(step_path)
-    finite_bbox = (
-        max(bbox["x_span_mm"], bbox["y_span_mm"], bbox["z_span_mm"])
-        < FINITE_REIMPORT_BBOX_MAX_SPAN_MM
-    )
+    finite_bbox = _bbox_passes_exactness_gate(bbox)
     export_exactness = (
         BOUNDED_STEP_EXACTNESS
         if finite_bbox and face_regions
@@ -178,10 +175,36 @@ def reimport_step_bbox(path: Path) -> dict[str, float]:
     if read_status != IFSelect_RetDone:
         raise RuntimeError(f"OCCT STEP read failed with status {read_status}")
 
-    reader.TransferRoots()
+    try:
+        transferred_root_count = reader.TransferRoots()
+    except Exception as exc:
+        raise RuntimeError("OCCT STEP transfer failed") from exc
+
+    if transferred_root_count <= 0 or reader.NbShapes() <= 0:
+        raise RuntimeError("OCCT STEP transfer produced no shapes")
+
+    try:
+        shape = reader.OneShape()
+    except Exception as exc:
+        raise RuntimeError("OCCT STEP transfer produced no usable shape") from exc
+
+    if shape.IsNull():
+        raise RuntimeError("OCCT STEP transfer produced a null shape")
+
     box = Bnd_Box()
-    BRepBndLib.Add_s(reader.OneShape(), box)
-    x_min, y_min, z_min, x_max, y_max, z_max = box.Get()
+    try:
+        BRepBndLib.Add_s(shape, box)
+    except Exception as exc:
+        raise RuntimeError("OCCT STEP bbox calculation failed") from exc
+
+    if box.IsVoid():
+        raise RuntimeError("OCCT STEP bbox calculation produced a void box")
+
+    try:
+        x_min, y_min, z_min, x_max, y_max, z_max = box.Get()
+    except Exception as exc:
+        raise RuntimeError("OCCT STEP bbox calculation failed") from exc
+
     return {
         "x_min": x_min,
         "x_max": x_max,
@@ -193,6 +216,12 @@ def reimport_step_bbox(path: Path) -> dict[str, float]:
         "y_span_mm": y_max - y_min,
         "z_span_mm": z_max - z_min,
     }
+
+
+def _bbox_passes_exactness_gate(bbox: dict[str, float]) -> bool:
+    if not all(math.isfinite(value) for value in bbox.values()):
+        return False
+    return max(bbox["x_span_mm"], bbox["y_span_mm"], bbox["z_span_mm"]) < FINITE_REIMPORT_BBOX_MAX_SPAN_MM
 
 
 def bounded_step_contains_no_unbounded_plane_marker(path: Path) -> bool:

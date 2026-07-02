@@ -5,6 +5,9 @@ import pytest
 
 from part_rule_synthesis.impeller_bounded_brep_export import (
     BOUNDED_STEP_EXACTNESS,
+    DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS,
+    FINITE_REIMPORT_BBOX_MAX_SPAN_MM,
+    _bbox_passes_exactness_gate,
     bounded_step_contains_no_unbounded_plane_marker,
     make_annular_plane_face,
     reimport_step_bbox,
@@ -165,6 +168,47 @@ def test_reimport_step_bbox_rejects_unreadable_step_file(tmp_path: Path):
         reimport_step_bbox(step_path)
 
 
+def test_reimport_step_bbox_rejects_empty_step_without_shapes(tmp_path: Path):
+    step_path = tmp_path / "empty.step"
+    step_path.write_text(
+        "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="OCCT STEP transfer produced no shapes"):
+        reimport_step_bbox(step_path)
+
+
+def test_bbox_exactness_gate_rejects_nonfinite_values():
+    bbox = _bbox(
+        x_span_mm=100.0,
+        y_span_mm=float("nan"),
+        z_span_mm=0.0,
+    )
+
+    assert _bbox_passes_exactness_gate(bbox) is False
+
+
+def test_bbox_exactness_gate_rejects_large_spans():
+    bbox = _bbox(x_span_mm=FINITE_REIMPORT_BBOX_MAX_SPAN_MM, y_span_mm=100.0, z_span_mm=0.0)
+
+    assert _bbox_passes_exactness_gate(bbox) is False
+
+
+def test_write_bounded_brep_step_marks_large_reimport_bbox_diagnostic(tmp_path: Path, monkeypatch):
+    large_bbox = _bbox(x_span_mm=FINITE_REIMPORT_BBOX_MAX_SPAN_MM, y_span_mm=100.0, z_span_mm=0.0)
+
+    monkeypatch.setattr(
+        "part_rule_synthesis.impeller_bounded_brep_export.reimport_step_bbox",
+        lambda _path: large_bbox,
+    )
+
+    manifest = write_bounded_brep_step(tmp_path / "large.step", "impeller", _surface_graph(_annular_surface()))
+
+    assert manifest["export_exactness"] == DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS
+    assert {"name": "finite_reimport_bbox", "status": "FAIL"} in manifest["validation_checks"]
+
+
 def _annular_surface(**overrides):
     surface = {
         "id": "inner_hub_bottom_face",
@@ -181,6 +225,22 @@ def _annular_surface(**overrides):
 
 def _surface_graph(surface):
     return {"surfaces": [surface], "edges": []}
+
+
+def _bbox(**overrides):
+    bbox = {
+        "x_min": -50.0,
+        "x_max": 50.0,
+        "y_min": -50.0,
+        "y_max": 50.0,
+        "z_min": 0.0,
+        "z_max": 0.0,
+        "x_span_mm": 100.0,
+        "y_span_mm": 100.0,
+        "z_span_mm": 0.0,
+    }
+    bbox.update(overrides)
+    return bbox
 
 
 def _wire_count(shape):
