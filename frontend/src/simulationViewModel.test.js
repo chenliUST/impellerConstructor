@@ -15,6 +15,7 @@ describe("simulation view model", () => {
     assert.deepEqual(viewModeOptions().map((option) => option.id), [
       "cad_review_360",
       "cfd_full_360",
+      "mesh",
       "feature_debug",
     ]);
   });

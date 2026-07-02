@@ -26,32 +26,44 @@ AxisymmetricThroughflowRadialBladedImpeller
 
 Current focus:
 
-- radial open impeller preset `radial_open_reference_v0_4`
-- radial closed impeller preset `radial_closed_reference_v0_4`
+- radial open impeller preset `radial_open_reference_v0_6`
+- radial closed impeller preset `radial_closed_reference_v0_6`
 - sampled surface graph generation
+- surface-graph-faithful STL exports for external CAD review
+- graph-derived tessellated STEP mesh artifacts for external visual review
+- generated STEP files as graph-derived unsewn NURBS/analytic B-Rep support faces for V0.6 presets
 - surface/feature graph identity
-- full-360 CFD patch-group manifest
+- full-360 CFD patch-group manifest and CFD surface mesh inspection manifest
 - schema-only FEA solid view
-- frontend CAD review, CFD full-360, and feature-debug views
+- frontend CAD review, CFD full-360, mesh inspection, feature-debug views, export options, and fillet controls
 
 ## Claims The Repository Can Make
 
 The current code can claim:
 
 - deterministic runtime compilation from versioned JSON DSL resources
-- deterministic sampled impeller surface graph for the v0.4 open and closed presets
+- deterministic sampled impeller surface graph for the v0.6 open and closed presets
 - stable surface ids, feature ids, named boundary curves, and CFD patch group names for the tested presets
 - campaign signatures that freeze topology-level optimization shape
-- generated preview STL from sampled surface graph triangles
-- generated placeholder STEP text that explicitly marks exact CAD export as deferred
+- generated binary STL files derived from `manifest.geometry.surface_graph.surfaces[*].uv_grid`
+- generated STEP files as graph-derived unsewn NURBS/analytic B-Rep support faces for V0.6 presets
+- generated mesh STEP files as graph-derived tessellated mesh artifacts, separate from the V0.6 B-Rep STEP
+- export manifests with region provenance from exported triangles/faces to `surface_graph_id`, feature, and role
+- `cad_surface` payloads for exportable NURBS, plane, and cylinder graph surfaces
+- CFD surface mesh manifests for mesh-quality inspection
+- documented evidence that v0.4 CadQuery exports can differ from the frontend surface graph, and v0.5 corrects the source-of-truth split
+- documented V0.6 implementation evidence for NURBS/analytic B-Rep support-face export, mesh inspection, and explicit fillet/blend controls
 
 ## Claims The Repository Cannot Make Yet
 
 The current code cannot yet claim:
 
-- exact industrial B-Rep geometry
+- certified manufacturing CAD geometry
+- consumed trim-loop/wire STEP export from `trim_loops` or `cad_edge` data
 - watertight OCCT sewing or healing
-- exact variable-radius CAD fillets or chamfers
+- exact variable-radius industrial CAD fillets or chamfers across all parameter values
+- universal CAD repair/import quality across the full parameter space
+- CFD mesh-quality view backed by an external production-grade mesher
 - mesher-ready CFD volume domain
 - solver-ready CFD case generation
 - periodic single-passage CFD sector generation
@@ -80,8 +92,13 @@ Minimum next gates:
 Use these labels consistently in docs and manifests:
 
 - `research_grade_sampled_surface`: sampled surface graph, not exact CAD
-- `preview_mesh`: STL triangles generated from sampled surfaces
-- `cad_export_deferred`: exact STEP/B-Rep is not generated
+- `analysis_review_cad_export`: CadQuery-generated STEP/STL intended for external inspection, not certified manufacturing geometry
+- `cadquery_sync`: synchronous CadQuery export path used by the API
+- `surface_graph_faithful_export`: v0.5 export mode where files are derived from selected `surface_graph` surfaces
+- `surface_graph_sampled_mesh`: v0.5 STL exactness label for sampled graph triangulation
+- `surface_graph_mesh_step`: v0.5 STEP exactness label for graph-derived tessellated mesh STEP
+- `surface_graph_support_face_brep_step`: v0.6 current exactness label for graph-derived unsewn NURBS/analytic B-Rep support faces
+- `surface_graph_trimmed_nurbs_step`: v0.6 target exactness label; the current writer does not yet consume trim loops or `cad_edge` wires
 - `patch_contract_ready`: semantic CFD patch groups and instances are generated
 - `solver_adapter_missing`: no mesher or solver has been invoked
 - `schema_only`: resource shape exists but executable workflow does not

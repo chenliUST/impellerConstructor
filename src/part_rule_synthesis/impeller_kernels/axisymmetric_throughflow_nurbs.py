@@ -3,6 +3,12 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from part_rule_synthesis.impeller_cad_payload import (
+    bspline_surface_payload_from_control_net,
+    cylinder_surface_payload,
+    plane_surface_payload,
+)
+
 
 SURFACE_U_COUNT = 41
 SURFACE_V_COUNT = 33
@@ -31,11 +37,12 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     display_policy: dict[str, Any] | None = None,
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
+    profile_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
     stage = _normalize_geometry_stage(geometry_stage)
-    hub_profile, tip_profile = _profile_definitions(params, resolved_facets, profile_overrides)
+    hub_profile, tip_profile = _profile_definitions(params, resolved_facets, profile_overrides, profile_defaults)
     curve_controls = _validated_curve_overrides(curve_overrides, params, resolved_facets)
     hub_curve = _sample_profile_curve(hub_profile, SURFACE_U_COUNT)
     tip_curve = _sample_profile_curve(tip_profile, SURFACE_U_COUNT)
@@ -83,7 +90,7 @@ def build_axisymmetric_throughflow_nurbs_geometry(
                 "tip_or_shroud": tip_profile,
             },
             "profile_controls": {
-                "source": "user_override" if profile_overrides else "default_rule",
+                "source": "user_override" if profile_overrides else ("dsl_default" if profile_defaults else "default_rule"),
                 "editable_entities": ["hub_profile", "tip_or_shroud_profile"],
             },
             "meridional_curves": {
@@ -181,6 +188,15 @@ def _normalized_parameters(parameters: dict[str, Any]) -> dict[str, float]:
     return numeric
 
 
+def _uses_explicit_fillet_surfaces(params: dict[str, float]) -> bool:
+    return {
+        "root_fillet_radius_mm",
+        "leading_edge_radius_mm",
+        "trailing_edge_radius_mm",
+        "tip_edge_radius_mm",
+    }.issubset(params)
+
+
 def _normalized_facets(facets: dict[str, str]) -> dict[str, str]:
     return {
         "flow_topology": facets.get("flow_topology", "radial"),
@@ -262,8 +278,22 @@ def _profile_definitions(
     params: dict[str, float],
     facets: dict[str, str],
     profile_overrides: dict[str, Any] | None = None,
+    profile_defaults: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     default_hub, default_tip = _default_profile_definitions(params, facets)
+    defaults = profile_defaults or {}
+    default_hub = _validated_profile_override(
+        "hub_profile",
+        defaults.get("hub_profile"),
+        default_hub,
+        source="dsl_default",
+    )
+    default_tip = _validated_profile_override(
+        "tip_or_shroud_profile",
+        defaults.get("tip_or_shroud_profile"),
+        default_tip,
+        source="dsl_default",
+    )
     overrides = profile_overrides or {}
     hub = _validated_profile_override("hub_profile", overrides.get("hub_profile"), default_hub)
     tip = _validated_profile_override("tip_or_shroud_profile", overrides.get("tip_or_shroud_profile"), default_tip)
@@ -312,6 +342,7 @@ def _validated_profile_override(
     name: str,
     override: dict[str, Any] | None,
     fallback: dict[str, Any],
+    source: str = "user_override",
 ) -> dict[str, Any]:
     if override is None:
         return fallback
@@ -382,7 +413,7 @@ def _validated_profile_override(
         "weights": [_round(value) for value in weights],
         "knots": knots,
         "coordinate_system": "rz_meridional_mm",
-        "source": "user_override",
+        "source": source,
     }
 
 
@@ -769,6 +800,14 @@ def _surface_graph(
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    hub_grid = _revolve_grid(hub_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
+    hub_control_net, hub_cad_surface = _control_net_and_cad_surface(
+        "hub_revolve_surface",
+        "hub",
+        "hub",
+        hub_grid,
+        source="surface_graph.control_net_revolved_profile_sample",
+    )
     surfaces = [
         {
             "id": "hub_revolve_surface",
@@ -780,27 +819,38 @@ def _surface_graph(
             "material": True,
             "material_domain": "hub",
             "profile": hub_profile,
-            "uv_grid": _revolve_grid(hub_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "control_net": hub_control_net,
+            "uv_grid": hub_grid,
             "profile_samples_rz": _profile_samples_rz(hub_profile, SURFACE_U_COUNT),
+            "cad_surface": hub_cad_surface,
             "display": {"color": "#7a946f", "opacity": 0.9},
             "boundary_ids": ["hub_inlet_circle", "hub_outlet_circle"],
         }
     ]
     surfaces.extend(_hub_solid_surfaces(params, hub_profile, solid_features))
     tip_surface_id = "shroud_surface" if facets["shroud_topology"] == "closed" else "tip_reference_surface"
+    tip_role = (
+        "front_shroud_inner_surface"
+        if facets["shroud_topology"] == "closed"
+        else (
+            "construction_support_only"
+            if _surface_hidden_by_policy("blade_tip_support_surface", display_policy)
+            else "reference_only"
+        )
+    )
+    tip_grid = _revolve_grid(tip_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
+    tip_control_net, tip_cad_surface = _control_net_and_cad_surface(
+        tip_surface_id,
+        tip_role,
+        "front_shroud" if facets["shroud_topology"] == "closed" else "tip_reference",
+        tip_grid,
+        source="surface_graph.control_net_revolved_profile_sample",
+    )
     surfaces.append(
         {
             "id": tip_surface_id,
             "kind": "nurbs_revolve_surface",
-            "role": (
-                "front_shroud_inner_surface"
-                if facets["shroud_topology"] == "closed"
-                else (
-                    "construction_support_only"
-                    if _surface_hidden_by_policy("blade_tip_support_surface", display_policy)
-                    else "reference_only"
-                )
-            ),
+            "role": tip_role,
             "cfd_role": "tip_or_shroud_wall",
             "feature_id": "front_shroud" if facets["shroud_topology"] == "closed" else "tip_reference",
             "display_role": "shroud" if facets["shroud_topology"] == "closed" else "open_tip_reference",
@@ -808,8 +858,10 @@ def _surface_graph(
             "material": facets["shroud_topology"] == "closed",
             "material_domain": "front_hood" if facets["shroud_topology"] == "closed" else None,
             "profile": tip_profile,
-            "uv_grid": _revolve_grid(tip_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "control_net": tip_control_net,
+            "uv_grid": tip_grid,
             "profile_samples_rz": _profile_samples_rz(tip_profile, SURFACE_U_COUNT),
+            "cad_surface": tip_cad_surface,
             "display": {
                 "color": "#9db7c5" if facets["shroud_topology"] == "closed" else "#c8c08d",
                 "opacity": 0.34 if facets["shroud_topology"] == "open" else 0.72,
@@ -843,6 +895,17 @@ def _surface_graph(
     for blade in sampled_blades:
         prefix = f"blade_{blade['index']}"
         blade_feature_id = f"blade_{blade['index']:02d}"
+        explicit_fillets = _uses_explicit_fillet_surfaces(params)
+        leading_surface_id = f"{prefix}_leading_edge_fillet_surface" if explicit_fillets else f"{prefix}_leading_edge_surface"
+        trailing_surface_id = f"{prefix}_trailing_edge_fillet_surface" if explicit_fillets else f"{prefix}_trailing_edge_surface"
+        root_surface_id = f"{prefix}_root_fillet_surface" if explicit_fillets else f"{prefix}_root_closure_surface"
+        tip_closure_surface_id = f"{prefix}_tip_edge_fillet_surface" if explicit_fillets else f"{prefix}_tip_closure_surface"
+        edge_surface_kind = "blend_surface" if explicit_fillets else "edge_closure_surface"
+        leading_role = "blade_leading_edge_fillet" if explicit_fillets else "blade_leading_edge_closure"
+        trailing_role = "blade_trailing_edge_fillet" if explicit_fillets else "blade_trailing_edge_closure"
+        root_role = "blade_root_fillet" if explicit_fillets else "blade_root_hub_closure"
+        tip_role = "blade_tip_edge_fillet" if explicit_fillets else "blade_tip_closure"
+        tip_feature_id = f"{blade_feature_id}.tip_edge_round" if explicit_fillets else f"{blade_feature_id}.tip_transition"
         boundary_curves[f"{prefix}_pressure_hub_boundary"] = blade["pressure_hub_boundary"]
         boundary_curves[f"{prefix}_suction_hub_boundary"] = blade["suction_hub_boundary"]
         boundary_curves[f"{prefix}_pressure_tip_boundary"] = blade["pressure_tip_boundary"]
@@ -887,8 +950,43 @@ def _surface_graph(
                 },
             ]
         )
-        surfaces.extend(
-            [
+        pressure_control_net, pressure_cad_surface = _control_net_and_cad_surface(
+            f"{prefix}_pressure_surface",
+            "blade_pressure",
+            blade_feature_id,
+            blade["pressure_surface"],
+        )
+        suction_control_net, suction_cad_surface = _control_net_and_cad_surface(
+            f"{prefix}_suction_surface",
+            "blade_suction",
+            blade_feature_id,
+            blade["suction_surface"],
+        )
+        leading_control_net, leading_cad_surface = _control_net_and_cad_surface(
+            leading_surface_id,
+            leading_role,
+            f"{blade_feature_id}.leading_edge_round",
+            blade["leading_edge_surface"],
+        )
+        trailing_control_net, trailing_cad_surface = _control_net_and_cad_surface(
+            trailing_surface_id,
+            trailing_role,
+            f"{blade_feature_id}.trailing_edge_round",
+            blade["trailing_edge_surface"],
+        )
+        root_control_net, root_cad_surface = _control_net_and_cad_surface(
+            root_surface_id,
+            root_role,
+            f"{blade_feature_id}.root_fillet",
+            blade["root_closure_surface"],
+        )
+        tip_control_net, tip_cad_surface = _control_net_and_cad_surface(
+            tip_closure_surface_id,
+            tip_role,
+            tip_feature_id,
+            blade["tip_closure_surface"],
+        )
+        blade_surfaces = [
                 {
                     "id": f"{prefix}_pressure_surface",
                     "kind": "nurbs_surface",
@@ -897,8 +995,9 @@ def _surface_graph(
                     "feature_id": blade_feature_id,
                     "degree_u": 3,
                     "degree_v": 3,
-                    "control_net": _control_net_from_grid(blade["pressure_surface"]),
+                    "control_net": pressure_control_net,
                     "uv_grid": blade["pressure_surface"],
+                    "cad_surface": pressure_cad_surface,
                     "display": {"color": "#70a46f", "opacity": 0.9},
                     "boundary_ids": [
                         f"{prefix}_pressure_leading_edge",
@@ -915,8 +1014,9 @@ def _surface_graph(
                     "feature_id": blade_feature_id,
                     "degree_u": 3,
                     "degree_v": 3,
-                    "control_net": _control_net_from_grid(blade["suction_surface"]),
+                    "control_net": suction_control_net,
                     "uv_grid": blade["suction_surface"],
+                    "cad_surface": suction_cad_surface,
                     "display": {"color": "#5f8f66", "opacity": 0.9},
                     "boundary_ids": [
                         f"{prefix}_suction_leading_edge",
@@ -926,13 +1026,17 @@ def _surface_graph(
                     ],
                 },
                 {
-                    "id": f"{prefix}_leading_edge_surface",
-                    "kind": "edge_closure_surface",
-                    "role": "blade_leading_edge_closure",
+                    "id": leading_surface_id,
+                    "kind": edge_surface_kind,
+                    "role": leading_role,
                     "cfd_role": "leading_edge_transition",
                     "feature_id": f"{blade_feature_id}.leading_edge_round",
                     "closure_model": "ruled_pressure_mean_suction",
+                    "degree_u": 3,
+                    "degree_v": 3,
+                    "control_net": leading_control_net,
                     "uv_grid": blade["leading_edge_surface"],
+                    "cad_surface": leading_cad_surface,
                     "display": {"color": "#f59e0b", "opacity": 1.0, "edge_highlight": True},
                     "boundary_ids": [
                         f"{prefix}_pressure_leading_edge",
@@ -940,13 +1044,17 @@ def _surface_graph(
                     ],
                 },
                 {
-                    "id": f"{prefix}_trailing_edge_surface",
-                    "kind": "edge_closure_surface",
-                    "role": "blade_trailing_edge_closure",
+                    "id": trailing_surface_id,
+                    "kind": edge_surface_kind,
+                    "role": trailing_role,
                     "cfd_role": "trailing_edge_transition",
                     "feature_id": f"{blade_feature_id}.trailing_edge_round",
                     "closure_model": "ruled_pressure_mean_suction",
+                    "degree_u": 3,
+                    "degree_v": 3,
+                    "control_net": trailing_control_net,
                     "uv_grid": blade["trailing_edge_surface"],
+                    "cad_surface": trailing_cad_surface,
                     "display": {"color": "#ef4444", "opacity": 1.0, "edge_highlight": True},
                     "boundary_ids": [
                         f"{prefix}_pressure_trailing_edge",
@@ -954,13 +1062,17 @@ def _surface_graph(
                     ],
                 },
                 {
-                    "id": f"{prefix}_root_closure_surface",
-                    "kind": "edge_closure_surface",
-                    "role": "blade_root_hub_closure",
+                    "id": root_surface_id,
+                    "kind": edge_surface_kind,
+                    "role": root_role,
                     "cfd_role": "root_transition",
                     "feature_id": f"{blade_feature_id}.root_fillet",
                     "closure_model": "ruled_pressure_mean_suction",
+                    "degree_u": 3,
+                    "degree_v": 3,
+                    "control_net": root_control_net,
                     "uv_grid": blade["root_closure_surface"],
+                    "cad_surface": root_cad_surface,
                     "display": {"color": "#22c55e", "opacity": 1.0, "edge_highlight": True},
                     "boundary_ids": [
                         f"{prefix}_pressure_hub_root",
@@ -968,71 +1080,80 @@ def _surface_graph(
                     ],
                 },
                 {
-                    "id": f"{prefix}_tip_closure_surface",
-                    "kind": "edge_closure_surface",
-                    "role": "blade_tip_closure",
+                    "id": tip_closure_surface_id,
+                    "kind": edge_surface_kind,
+                    "role": tip_role,
                     "cfd_role": "tip_transition",
-                    "feature_id": f"{blade_feature_id}.tip_transition",
+                    "feature_id": tip_feature_id,
                     "closure_model": "ruled_pressure_mean_suction",
+                    "degree_u": 3,
+                    "degree_v": 3,
+                    "control_net": tip_control_net,
                     "uv_grid": blade["tip_closure_surface"],
+                    "cad_surface": tip_cad_surface,
                     "display": {"color": "#38bdf8", "opacity": 1.0, "edge_highlight": True},
                     "boundary_ids": [
                         f"{prefix}_pressure_tip_edge",
                         f"{prefix}_suction_tip_edge",
                     ],
                 },
-            ]
-        )
+        ]
+        if explicit_fillets:
+            blade_surfaces[2]["radius_mm"] = _round(params["leading_edge_radius_mm"])
+            blade_surfaces[3]["radius_mm"] = _round(params["trailing_edge_radius_mm"])
+            blade_surfaces[4]["radius_mm"] = _round(params["root_fillet_radius_mm"])
+            blade_surfaces[5]["radius_mm"] = _round(params["tip_edge_radius_mm"])
+        surfaces.extend(blade_surfaces)
         edges.extend(
             [
                 {
                     "id": f"{prefix}_pressure_leading_edge",
-                    "surfaces": [f"{prefix}_pressure_surface", f"{prefix}_leading_edge_surface"],
+                    "surfaces": [f"{prefix}_pressure_surface", leading_surface_id],
                     "relation": "closed_blade_edge",
                 },
                 {
                     "id": f"{prefix}_suction_leading_edge",
-                    "surfaces": [f"{prefix}_suction_surface", f"{prefix}_leading_edge_surface"],
+                    "surfaces": [f"{prefix}_suction_surface", leading_surface_id],
                     "relation": "closed_blade_edge",
                 },
                 {
                     "id": f"{prefix}_pressure_trailing_edge",
-                    "surfaces": [f"{prefix}_pressure_surface", f"{prefix}_trailing_edge_surface"],
+                    "surfaces": [f"{prefix}_pressure_surface", trailing_surface_id],
                     "relation": "closed_blade_edge",
                 },
                 {
                     "id": f"{prefix}_suction_trailing_edge",
-                    "surfaces": [f"{prefix}_suction_surface", f"{prefix}_trailing_edge_surface"],
+                    "surfaces": [f"{prefix}_suction_surface", trailing_surface_id],
                     "relation": "closed_blade_edge",
                 },
                 {
                     "id": f"{prefix}_pressure_root_closure_edge",
-                    "surfaces": [f"{prefix}_pressure_surface", f"{prefix}_root_closure_surface"],
+                    "surfaces": [f"{prefix}_pressure_surface", root_surface_id],
                     "relation": "closed_blade_root_edge",
                 },
                 {
                     "id": f"{prefix}_suction_root_closure_edge",
-                    "surfaces": [f"{prefix}_suction_surface", f"{prefix}_root_closure_surface"],
+                    "surfaces": [f"{prefix}_suction_surface", root_surface_id],
                     "relation": "closed_blade_root_edge",
                 },
                 {
                     "id": f"{prefix}_pressure_tip_closure_edge",
-                    "surfaces": [f"{prefix}_pressure_surface", f"{prefix}_tip_closure_surface"],
+                    "surfaces": [f"{prefix}_pressure_surface", tip_closure_surface_id],
                     "relation": "closed_blade_tip_edge",
                 },
                 {
                     "id": f"{prefix}_suction_tip_closure_edge",
-                    "surfaces": [f"{prefix}_suction_surface", f"{prefix}_tip_closure_surface"],
+                    "surfaces": [f"{prefix}_suction_surface", tip_closure_surface_id],
                     "relation": "closed_blade_tip_edge",
                 },
                 {
                     "id": f"{prefix}_root_hub_conformal_edge",
-                    "surfaces": ["hub_revolve_surface", f"{prefix}_root_closure_surface"],
+                    "surfaces": ["hub_revolve_surface", root_surface_id],
                     "relation": "conformal_hub_boundary",
                 },
                 {
                     "id": f"{prefix}_tip_conformal_edge",
-                    "surfaces": [tip_surface_id, f"{prefix}_tip_closure_surface"],
+                    "surfaces": [tip_surface_id, tip_closure_surface_id],
                     "relation": "conformal_tip_boundary",
                 },
             ]
@@ -1079,6 +1200,46 @@ def _hub_solid_surfaces(
         "weights": hub_profile["weights"][:],
         "knots": hub_profile["knots"][:],
     }
+    outer_grid = _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
+    outer_control_net, outer_cad_surface = _control_net_and_cad_surface(
+        "outer_hub_shell_surface",
+        "outer_hub_shell",
+        "hub",
+        outer_grid,
+        source="surface_graph.control_net_revolved_profile_sample",
+    )
+    bottom_outer_chamfer_grid = _chamfer_band_grid(max(bore_radius, bottom[0] - chamfer), bottom[0], bottom[1], bottom[1] + chamfer)
+    bottom_outer_chamfer_control_net, bottom_outer_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hub_chamfer_bottom_outer_surface",
+        "hub_chamfer",
+        "hub",
+        bottom_outer_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
+    top_cap_chamfer_grid = _chamfer_band_grid(max(bore_radius, top[0] - chamfer), top[0], top[1] - chamfer, top[1])
+    top_cap_chamfer_control_net, top_cap_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hub_chamfer_top_cap_surface",
+        "hub_chamfer",
+        "hub",
+        top_cap_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
+    bore_top_chamfer_grid = _chamfer_band_grid(bore_radius, bore_radius + chamfer, top[1] - chamfer, top[1])
+    bore_top_chamfer_control_net, bore_top_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hub_chamfer_bore_top_surface",
+        "hub_chamfer",
+        "hub",
+        bore_top_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
+    bore_bottom_chamfer_grid = _chamfer_band_grid(bore_radius, bore_radius + chamfer, bottom[1], bottom[1] + chamfer)
+    bore_bottom_chamfer_control_net, bore_bottom_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hub_chamfer_bore_bottom_surface",
+        "hub_chamfer",
+        "hub",
+        bore_bottom_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
     surfaces = [
         {
             "id": "outer_hub_shell_surface",
@@ -1087,8 +1248,10 @@ def _hub_solid_surfaces(
             "material_domain": "hub",
             "wall_thickness_mm": _round(params["hub_wall_thickness_mm"]),
             "profile": outer_profile,
-            "uv_grid": _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "control_net": outer_control_net,
+            "uv_grid": outer_grid,
             "profile_samples_rz": _profile_samples_rz(outer_profile, SURFACE_U_COUNT),
+            "cad_surface": outer_cad_surface,
             "display": {"color": "#78936a", "opacity": 0.48},
             "boundary_ids": ["outer_hub_top_circle", "outer_hub_bottom_circle"],
         },
@@ -1102,6 +1265,12 @@ def _hub_solid_surfaces(
             "outer_radius_mm": _round(bottom[0]),
             "z_mm": _round(bottom[1]),
             "uv_grid": _annular_plane_grid(bore_radius, bottom[0], bottom[1], 8, SURFACE_V_COUNT),
+            "cad_surface": plane_surface_payload(
+                [0.0, 0.0, bottom[1]],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ),
             "display": {"color": "#6d7f6a", "opacity": 0.82},
             "boundary_ids": ["mounting_bore_bottom_circle", "outer_hub_bottom_circle"],
         },
@@ -1115,6 +1284,12 @@ def _hub_solid_surfaces(
             "outer_radius_mm": _round(top[0]),
             "z_mm": _round(top[1]),
             "uv_grid": _annular_plane_grid(bore_radius, top[0], top[1], 8, SURFACE_V_COUNT),
+            "cad_surface": plane_surface_payload(
+                [0.0, 0.0, top[1]],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ),
             "display": {"color": "#768c68", "opacity": 0.82},
             "boundary_ids": ["mounting_bore_top_circle", "outer_hub_top_circle"],
         },
@@ -1128,6 +1303,7 @@ def _hub_solid_surfaces(
             "z_min_mm": _round(bottom[1]),
             "z_max_mm": _round(top[1]),
             "uv_grid": _cylinder_grid(bore_radius, bottom[1], top[1], SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "cad_surface": cylinder_surface_payload(bore_radius, bottom[1], top[1]),
             "display": {"color": "#4b5563", "opacity": 0.86},
             "boundary_ids": ["mounting_bore_bottom_circle", "mounting_bore_top_circle"],
         },
@@ -1137,7 +1313,9 @@ def _hub_solid_surfaces(
             "role": "hub_chamfer",
             "material_domain": "hub",
             "radius_mm": _round(params["hub_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(max(bore_radius, bottom[0] - chamfer), bottom[0], bottom[1], bottom[1] + chamfer),
+            "control_net": bottom_outer_chamfer_control_net,
+            "uv_grid": bottom_outer_chamfer_grid,
+            "cad_surface": bottom_outer_chamfer_cad_surface,
             "display": {"color": "#91aa80", "opacity": 0.9},
             "boundary_ids": ["hub_bottom_outer_chamfer_a", "hub_bottom_outer_chamfer_b"],
         },
@@ -1147,7 +1325,9 @@ def _hub_solid_surfaces(
             "role": "hub_chamfer",
             "material_domain": "hub",
             "radius_mm": _round(params["hub_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(max(bore_radius, top[0] - chamfer), top[0], top[1] - chamfer, top[1]),
+            "control_net": top_cap_chamfer_control_net,
+            "uv_grid": top_cap_chamfer_grid,
+            "cad_surface": top_cap_chamfer_cad_surface,
             "display": {"color": "#91aa80", "opacity": 0.9},
             "boundary_ids": ["hub_top_cap_chamfer_a", "hub_top_cap_chamfer_b"],
         },
@@ -1157,7 +1337,9 @@ def _hub_solid_surfaces(
             "role": "hub_chamfer",
             "material_domain": "hub",
             "radius_mm": _round(params["hub_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(bore_radius, bore_radius + chamfer, top[1] - chamfer, top[1]),
+            "control_net": bore_top_chamfer_control_net,
+            "uv_grid": bore_top_chamfer_grid,
+            "cad_surface": bore_top_chamfer_cad_surface,
             "display": {"color": "#91aa80", "opacity": 0.86},
             "boundary_ids": ["mounting_bore_top_chamfer_a", "mounting_bore_top_chamfer_b"],
         },
@@ -1167,7 +1349,9 @@ def _hub_solid_surfaces(
             "role": "hub_chamfer",
             "material_domain": "hub",
             "radius_mm": _round(params["hub_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(bore_radius, bore_radius + chamfer, bottom[1], bottom[1] + chamfer),
+            "control_net": bore_bottom_chamfer_control_net,
+            "uv_grid": bore_bottom_chamfer_grid,
+            "cad_surface": bore_bottom_chamfer_cad_surface,
             "display": {"color": "#91aa80", "opacity": 0.86},
             "boundary_ids": ["mounting_bore_bottom_chamfer_a", "mounting_bore_bottom_chamfer_b"],
         },
@@ -1198,6 +1382,38 @@ def _hood_shell_surfaces(
     outlet_inner = inner_points[-1]
     inlet_outer = outer_profile["control_points"][0]
     outlet_outer = outer_profile["control_points"][-1]
+    outer_grid = _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT)
+    outer_control_net, outer_cad_surface = _control_net_and_cad_surface(
+        "hood_outer_surface",
+        "front_hood_outer_surface",
+        "front_hood",
+        outer_grid,
+        source="surface_graph.control_net_revolved_profile_sample",
+    )
+    inlet_cap_grid = _axial_cap_grid(inlet_inner[0], inlet_inner[1], inlet_outer[1], SURFACE_V_COUNT)
+    inlet_cap_control_net, inlet_cap_cad_surface = _control_net_and_cad_surface(
+        "hood_inlet_cap_surface",
+        "hood_cap",
+        "front_hood",
+        inlet_cap_grid,
+        source="surface_graph.control_net_axial_cap_sample",
+    )
+    outlet_cap_grid = _axial_cap_grid(outlet_inner[0], outlet_inner[1], outlet_outer[1], SURFACE_V_COUNT)
+    outlet_cap_control_net, outlet_cap_cad_surface = _control_net_and_cad_surface(
+        "hood_outlet_cap_surface",
+        "hood_cap",
+        "front_hood",
+        outlet_cap_grid,
+        source="surface_graph.control_net_axial_cap_sample",
+    )
+    outlet_chamfer_grid = _chamfer_band_grid(max(1.0, outlet_inner[0] - chamfer), outlet_inner[0], outlet_inner[1], outlet_inner[1] + chamfer)
+    outlet_chamfer_control_net, outlet_chamfer_cad_surface = _control_net_and_cad_surface(
+        "hood_chamfer_outlet_surface",
+        "hood_chamfer",
+        "front_hood",
+        outlet_chamfer_grid,
+        source="surface_graph.control_net_chamfer_band_sample",
+    )
     surfaces = [
         {
             "id": "hood_outer_surface",
@@ -1208,8 +1424,10 @@ def _hood_shell_surfaces(
             "material_domain": "front_hood",
             "wall_thickness_mm": _round(thickness),
             "profile": outer_profile,
-            "uv_grid": _revolve_grid(outer_profile, SURFACE_U_COUNT, SURFACE_V_COUNT),
+            "control_net": outer_control_net,
+            "uv_grid": outer_grid,
             "profile_samples_rz": _profile_samples_rz(outer_profile, SURFACE_U_COUNT),
+            "cad_surface": outer_cad_surface,
             "display": {"color": "#b6cbd5", "opacity": 0.68},
             "boundary_ids": ["hood_outer_inlet_circle", "hood_outer_outlet_circle"],
         },
@@ -1219,7 +1437,9 @@ def _hood_shell_surfaces(
             "role": "hood_cap",
             "material": True,
             "material_domain": "front_hood",
-            "uv_grid": _axial_cap_grid(inlet_inner[0], inlet_inner[1], inlet_outer[1], SURFACE_V_COUNT),
+            "control_net": inlet_cap_control_net,
+            "uv_grid": inlet_cap_grid,
+            "cad_surface": inlet_cap_cad_surface,
             "display": {"color": "#a7bfca", "opacity": 0.7},
             "boundary_ids": ["shroud_inlet_circle", "hood_outer_inlet_circle"],
         },
@@ -1229,7 +1449,9 @@ def _hood_shell_surfaces(
             "role": "hood_cap",
             "material": True,
             "material_domain": "front_hood",
-            "uv_grid": _axial_cap_grid(outlet_inner[0], outlet_inner[1], outlet_outer[1], SURFACE_V_COUNT),
+            "control_net": outlet_cap_control_net,
+            "uv_grid": outlet_cap_grid,
+            "cad_surface": outlet_cap_cad_surface,
             "display": {"color": "#a7bfca", "opacity": 0.7},
             "boundary_ids": ["shroud_outlet_circle", "hood_outer_outlet_circle"],
         },
@@ -1240,7 +1462,9 @@ def _hood_shell_surfaces(
             "material": True,
             "material_domain": "front_hood",
             "radius_mm": _round(params["hood_chamfer_radius_mm"]),
-            "uv_grid": _chamfer_band_grid(max(1.0, outlet_inner[0] - chamfer), outlet_inner[0], outlet_inner[1], outlet_inner[1] + chamfer),
+            "control_net": outlet_chamfer_control_net,
+            "uv_grid": outlet_chamfer_grid,
+            "cad_surface": outlet_chamfer_cad_surface,
             "display": {"color": "#c5d4da", "opacity": 0.76},
             "boundary_ids": ["hood_outlet_chamfer_a", "hood_outlet_chamfer_b"],
         },
@@ -1257,7 +1481,7 @@ def _construction_lines(
         "blade_u": [],
         "blade_v": [],
         "blade_boundaries": _blade_boundary_lines(sampled_blades),
-        "blade_edges": _blade_edge_lines(sampled_blades),
+        "blade_edges": _blade_edge_lines(sampled_blades, surface_graph),
         "shroud": [],
         "passage": [],
         "surface_uv": _surface_uv_lines(surface_graph),
@@ -1338,10 +1562,26 @@ def _blade_boundary_lines(sampled_blades: list[dict[str, Any]]) -> list[dict[str
     return lines
 
 
-def _blade_edge_lines(sampled_blades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _blade_edge_lines(sampled_blades: list[dict[str, Any]], surface_graph: dict[str, Any]) -> list[dict[str, Any]]:
     lines = []
+    surface_ids = {surface["id"] for surface in surface_graph["surfaces"]}
     for blade in sampled_blades:
         blade_index = int(blade["index"])
+        prefix = f"blade_{blade_index}"
+        surface_id_by_key = {
+            "leading_edge_surface": f"{prefix}_leading_edge_fillet_surface"
+            if f"{prefix}_leading_edge_fillet_surface" in surface_ids
+            else f"{prefix}_leading_edge_surface",
+            "trailing_edge_surface": f"{prefix}_trailing_edge_fillet_surface"
+            if f"{prefix}_trailing_edge_fillet_surface" in surface_ids
+            else f"{prefix}_trailing_edge_surface",
+            "root_closure_surface": f"{prefix}_root_fillet_surface"
+            if f"{prefix}_root_fillet_surface" in surface_ids
+            else f"{prefix}_root_closure_surface",
+            "tip_closure_surface": f"{prefix}_tip_edge_fillet_surface"
+            if f"{prefix}_tip_edge_fillet_surface" in surface_ids
+            else f"{prefix}_tip_closure_surface",
+        }
         edge_specs = [
             ("leading_edge_pressure", "leading_edge_surface", 0, "#f59e0b"),
             ("leading_edge_suction", "leading_edge_surface", -1, "#f59e0b"),
@@ -1359,7 +1599,7 @@ def _blade_edge_lines(sampled_blades: list[dict[str, Any]]) -> list[dict[str, An
                     "role": role,
                     "blade_index": blade_index,
                     "source": "axisymmetric_throughflow_nurbs.edge_closure_surface",
-                    "surface_id": f"blade_{blade_index}_{surface_key}",
+                    "surface_id": surface_id_by_key[surface_key],
                     "color": color,
                     "points": [row[column_index] for row in blade[surface_key]],
                 }
@@ -1439,7 +1679,7 @@ def _surface_visible_in_stage(surface: dict[str, Any], geometry_stage: str) -> b
         return True
     if geometry_stage == "blade_surfaces":
         return False
-    return surface.get("kind") == "edge_closure_surface"
+    return surface.get("kind") in {"edge_closure_surface", "blend_surface"}
 
 
 def _filtered_boundary_curves(boundary_curves: dict[str, Any], geometry_stage: str) -> dict[str, Any]:
@@ -1555,6 +1795,8 @@ def _validity_report(
             "blade_v_count": BLADE_V_COUNT,
         },
     ]
+    if _uses_explicit_fillet_surfaces(params):
+        geometry_checks.append(_check_fillet_radius_feasible(params))
     engineering_checks = [
         {
             "name": "engineering_rules",
@@ -1593,6 +1835,22 @@ def _check_material_domain_positive_thickness(
         "status": "FAIL" if failing else "PASS",
         "checked_parameters": required,
         "failing_parameters": failing,
+    }
+
+
+def _check_fillet_radius_feasible(params: dict[str, float]) -> dict[str, Any]:
+    limit = max(params["blade_thickness_mm"] * 0.75, 1.0)
+    requested = max(
+        params.get("root_fillet_radius_mm", 0.0),
+        params.get("leading_edge_radius_mm", 0.0),
+        params.get("trailing_edge_radius_mm", 0.0),
+        params.get("tip_edge_radius_mm", 0.0),
+    )
+    return {
+        "name": "fillet_radius_within_local_thickness_bounds",
+        "status": "PASS" if requested <= limit else "FAIL",
+        "limit_mm": _round(limit),
+        "requested_max_mm": _round(requested),
     }
 
 
@@ -1640,12 +1898,13 @@ def _check_closed_hood_shell_surfaces_present(surface_graph: dict[str, Any]) -> 
 def _check_stage_completeness(surface_graph: dict[str, Any], geometry_stage: str) -> dict[str, Any]:
     roles = {surface["role"] for surface in surface_graph["surfaces"]}
     kinds = {surface["kind"] for surface in surface_graph["surfaces"]}
+    edge_surface_present = bool(kinds.intersection({"edge_closure_surface", "blend_surface"}))
     if geometry_stage == "hub_support":
-        passed = "hub" in roles and "blade_pressure" not in roles and "edge_closure_surface" not in kinds
+        passed = "hub" in roles and "blade_pressure" not in roles and not edge_surface_present
     elif geometry_stage == "blade_surfaces":
-        passed = "hub" in roles and "blade_pressure" in roles and "edge_closure_surface" not in kinds
+        passed = "hub" in roles and "blade_pressure" in roles and not edge_surface_present
     else:
-        passed = "hub" in roles and "blade_pressure" in roles and "edge_closure_surface" in kinds
+        passed = "hub" in roles and "blade_pressure" in roles and edge_surface_present
     return {
         "name": "stage_completeness",
         "status": "PASS" if passed else "FAIL",
@@ -1685,6 +1944,23 @@ def _check_every_surface_has_uv_lines(
     }
 
 
+def _blade_edge_surface_ids(prefix: str, surface_ids: set[str]) -> dict[str, str]:
+    return {
+        "leading": f"{prefix}_leading_edge_fillet_surface"
+        if f"{prefix}_leading_edge_fillet_surface" in surface_ids
+        else f"{prefix}_leading_edge_surface",
+        "trailing": f"{prefix}_trailing_edge_fillet_surface"
+        if f"{prefix}_trailing_edge_fillet_surface" in surface_ids
+        else f"{prefix}_trailing_edge_surface",
+        "root": f"{prefix}_root_fillet_surface"
+        if f"{prefix}_root_fillet_surface" in surface_ids
+        else f"{prefix}_root_closure_surface",
+        "tip": f"{prefix}_tip_edge_fillet_surface"
+        if f"{prefix}_tip_edge_fillet_surface" in surface_ids
+        else f"{prefix}_tip_closure_surface",
+    }
+
+
 def _check_blade_edge_surfaces_present(
     surface_graph: dict[str, Any],
     sampled_blades: list[dict[str, Any]],
@@ -1692,12 +1968,7 @@ def _check_blade_edge_surfaces_present(
     surface_ids = {surface["id"] for surface in surface_graph["surfaces"]}
     for blade in sampled_blades:
         prefix = f"blade_{blade['index']}"
-        required = {
-            f"{prefix}_leading_edge_surface",
-            f"{prefix}_trailing_edge_surface",
-            f"{prefix}_root_closure_surface",
-            f"{prefix}_tip_closure_surface",
-        }
+        required = set(_blade_edge_surface_ids(prefix, surface_ids).values())
         if not required.issubset(surface_ids):
             return {"name": "blade_edge_surfaces_present", "status": "FAIL"}
     return {"name": "blade_edge_surfaces_present", "status": "PASS"}
@@ -1708,15 +1979,17 @@ def _check_blade_surface_closure_candidate(
     sampled_blades: list[dict[str, Any]],
 ) -> dict[str, Any]:
     surfaces = {surface["id"]: surface for surface in surface_graph["surfaces"]}
+    surface_ids = set(surfaces)
     max_distance = 0.0
     for blade in sampled_blades:
         prefix = f"blade_{blade['index']}"
         pressure = surfaces[f"{prefix}_pressure_surface"]["uv_grid"]
         suction = surfaces[f"{prefix}_suction_surface"]["uv_grid"]
-        leading = surfaces[f"{prefix}_leading_edge_surface"]["uv_grid"]
-        trailing = surfaces[f"{prefix}_trailing_edge_surface"]["uv_grid"]
-        root = surfaces[f"{prefix}_root_closure_surface"]["uv_grid"]
-        tip = surfaces[f"{prefix}_tip_closure_surface"]["uv_grid"]
+        edge_surface_ids = _blade_edge_surface_ids(prefix, surface_ids)
+        leading = surfaces[edge_surface_ids["leading"]]["uv_grid"]
+        trailing = surfaces[edge_surface_ids["trailing"]]["uv_grid"]
+        root = surfaces[edge_surface_ids["root"]]["uv_grid"]
+        tip = surfaces[edge_surface_ids["tip"]]["uv_grid"]
         pairs = [
             (leading[0][0], pressure[0][0]),
             (leading[0][-1], suction[0][0]),
@@ -1877,6 +2150,29 @@ def _control_net_from_grid(grid: list[list[list[float]]]) -> list[list[list[floa
     u_indices = [0, len(grid) // 3, (len(grid) * 2) // 3, len(grid) - 1]
     v_indices = [0, len(grid[0]) // 3, (len(grid[0]) * 2) // 3, len(grid[0]) - 1]
     return [[grid[u_index][v_index] for v_index in v_indices] for u_index in u_indices]
+
+
+def _control_net_and_cad_surface(
+    surface_id: str,
+    role: str,
+    feature_id: str,
+    grid: list[list[list[float]]],
+    *,
+    source: str = "surface_graph.control_net",
+) -> tuple[list[list[list[float]]], dict[str, Any]]:
+    control_net = _control_net_from_grid(grid)
+    payload = bspline_surface_payload_from_control_net(
+        {
+            "id": surface_id,
+            "role": role,
+            "feature_id": feature_id,
+            "degree_u": 3,
+            "degree_v": 3,
+            "control_net": control_net,
+        }
+    )
+    payload["source"] = source
+    return control_net, payload
 
 
 def _section_metadata(

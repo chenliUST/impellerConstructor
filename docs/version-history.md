@@ -10,6 +10,7 @@ This repository keeps previous impeller DSL versions in source control and in ve
 | v0.2 slice | `2d3957b` | First focused axisymmetric throughflow impeller DSL/runtime/frontend metadata path. |
 | v0.3 runtime | `7afb0d2` | Solid hub/hood, profile/curve overrides, staged geometry, and frontend workflow. |
 | v0.4 graph contract | `f74eb06` | Design-space campaign signatures, variable profile topology, surface/feature graph, CFD full-360 manifest, and frontend CFD view. |
+| v0.5 export contract | local implementation | Surface-graph-faithful STL/STEP export contract with region provenance. |
 
 Version tags:
 
@@ -18,6 +19,8 @@ impeller-dsl-v0.2 -> 2d3957b
 impeller-dsl-v0.3 -> 7afb0d2
 impeller-dsl-v0.4 -> f74eb06
 ```
+
+The v0.5 implementation is intentionally not listed as a historical tag until the local verification and final commit are complete.
 
 ## v0.2
 
@@ -99,6 +102,35 @@ Known boundary:
 - CFD manifest generation does not yet invoke a mesher or solver.
 - Periodic single-passage CFD, FEA solid adapters, and CAM/DFMA feedback loops are future layers.
 
+## v0.5
+
+Location:
+
+```text
+src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_5
+```
+
+Primary preset ids:
+
+```text
+radial_open_reference_v0_5
+radial_closed_reference_v0_5
+```
+
+Purpose:
+
+- Preserve the v0.4 surface/feature graph and CFD full-360 semantics.
+- Add `export_contracts/surface_graph_faithful.json`.
+- Route v0.5 STL/STEP exports through `manifest.geometry.surface_graph`.
+- Add `export_manifests` with exactness labels and region provenance.
+- Make exported triangles/faces traceable to `surface_graph_id`, feature, and role.
+
+Known boundary:
+
+- STL is a sampled mesh projection of `surface_graph`.
+- STEP is a graph-derived faceted surface shell labeled `surface_graph_mesh_step`.
+- v0.5 does not claim exact analytic B-Rep surfaces, OCCT sewing/healing, or solver-ready meshes.
+
 ## How To Run A Specific Version
 
 In Python tests or scripts:
@@ -108,7 +140,7 @@ from pathlib import Path
 from part_rule_synthesis.service import RuleSynthesisService
 
 service = RuleSynthesisService(Path("runs"))
-engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
+engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_5")
 run = service.instantiate(engine.engine_id, {})
 manifest = run.manifest
 ```

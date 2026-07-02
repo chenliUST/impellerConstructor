@@ -24,8 +24,10 @@ describe("frontend application files", () => {
       "src/components/ParameterPanel.js",
       "src/components/GeometryLayerPanel.js",
       "src/components/CfdManifestPanel.js",
+      "src/components/MeshInspectionPanel.js",
       "src/components/ModelViewer.js",
       "src/components/ManifestPanel.js",
+      "src/meshViewModel.js",
       "src/simulationViewModel.js",
       "src/workspaceModel.js",
       "src/styles.css",
@@ -70,6 +72,14 @@ describe("frontend application files", () => {
     assert.match(panelSource, /optimization_stage/);
   });
 
+  test("manifest panel exposes export fidelity metadata", () => {
+    const panelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(panelSource, /export_manifests/);
+    assert.match(panelSource, /export_exactness/);
+    assert.match(panelSource, /surface_graph_faithful/);
+  });
+
   test("viewer gives blade boundary construction lines and named boundaries dedicated layers", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 
@@ -102,6 +112,7 @@ describe("frontend application files", () => {
     assert.match(viewerSource, /surfaceVisibleInView/);
     assert.match(viewerSource, /patchSurfaceIds/);
     assert.match(cfdPanelSource, /cfdPatchGroups/);
+    assert.match(cfdPanelSource, /MeshInspectionPanel/);
     assert.match(manifestPanelSource, /before/);
   });
 

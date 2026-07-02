@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import os
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
@@ -33,7 +34,11 @@ class FeedbackRequest(BaseModel):
 
 
 def create_app(root: Path | None = None) -> FastAPI:
-    service = RuleSynthesisService(root or Path(gettempdir()) / "part-rule-synthesis")
+    service_root = root or Path(os.environ.get("PART_RULE_SYNTHESIS_ROOT", Path(gettempdir()) / "part-rule-synthesis"))
+    model_output_root = None
+    if root is None:
+        model_output_root = Path(os.environ.get("PART_RULE_SYNTHESIS_MODEL_OUTPUT_DIR", Path.cwd() / "Model Output"))
+    service = RuleSynthesisService(service_root, model_output_root=model_output_root)
     app = FastAPI(title="Part Rule Synthesis", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -110,7 +115,10 @@ def create_app(root: Path | None = None) -> FastAPI:
         path = run.manifest["exports"].get(export_format)
         if not path:
             raise HTTPException(status_code=404, detail="unknown export")
-        return FileResponse(path)
+        path = Path(path)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="export file missing")
+        return FileResponse(path, filename=path.name)
 
     @app.post("/api/model-runs/{run_id}/feedback")
     def feedback(run_id: str, request: FeedbackRequest):

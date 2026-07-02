@@ -13,7 +13,7 @@ export const parameterGroups = [
 ];
 
 export const parameterSchema = {
-  blade_count: { label: "Blade count", unit: "", step: 1, valueType: "integer", default: 7, group: "blade_pattern" },
+  blade_count: { label: "Blade count", unit: "", step: 1, valueType: "integer", default: 12, group: "blade_pattern" },
   inlet_radius_mm: { label: "Inlet radius", unit: "mm", step: 1, default: 180, group: "main_dimensions" },
   exit_radius_mm: { label: "Exit radius", unit: "mm", step: 1, default: 620, group: "main_dimensions" },
   inlet_blade_height_mm: { label: "Inlet blade height", unit: "mm", step: 1, default: 150, group: "meridional_support" },
@@ -25,12 +25,15 @@ export const parameterSchema = {
   hub_profile_convexity: { label: "Hub profile convexity", unit: "", step: 0.05, default: 0.35, group: "shape_control", controlKind: "semantic_handle" },
   blade_wrap_deg: { label: "Blade wrap", unit: "deg", step: 1, default: 118, group: "blade_surface" },
   blade_lean_deg: { label: "Blade lean", unit: "deg", step: 1, default: 8, group: "blade_surface" },
-  leading_edge_lean_deg: { label: "Leading edge lean", unit: "deg", step: 1, default: 12, group: "blade_boundaries" },
-  trailing_edge_lean_deg: { label: "Trailing edge lean", unit: "deg", step: 1, default: -8, group: "blade_boundaries" },
-  leading_edge_sweep_mm: { label: "Leading edge sweep", unit: "mm", step: 1, default: 30, group: "blade_boundaries" },
-  trailing_edge_sweep_mm: { label: "Trailing edge sweep", unit: "mm", step: 1, default: -45, group: "blade_boundaries" },
+  leading_edge_lean_deg: { label: "Leading edge lean", unit: "deg", step: 1, default: 0, group: "blade_boundaries" },
+  trailing_edge_lean_deg: { label: "Trailing edge lean", unit: "deg", step: 1, default: 0, group: "blade_boundaries" },
+  leading_edge_sweep_mm: { label: "Leading edge sweep", unit: "mm", step: 1, default: 0, group: "blade_boundaries" },
+  trailing_edge_sweep_mm: { label: "Trailing edge sweep", unit: "mm", step: 1, default: 0, group: "blade_boundaries" },
   blade_thickness_mm: { label: "Blade thickness", unit: "mm", step: 0.5, default: 18, group: "blade_profile" },
   root_fillet_radius_mm: { label: "Root fillet radius", unit: "mm", step: 0.5, default: 8, group: "edge_treatment" },
+  leading_edge_radius_mm: { label: "Leading edge radius", unit: "mm", step: 0.5, default: 3, group: "edge_treatment" },
+  trailing_edge_radius_mm: { label: "Trailing edge radius", unit: "mm", step: 0.5, default: 2, group: "edge_treatment" },
+  tip_edge_radius_mm: { label: "Tip edge radius", unit: "mm", step: 0.5, default: 2, group: "edge_treatment" },
   hub_wall_thickness_mm: { label: "Hub wall thickness", unit: "mm", step: 0.5, default: 18, group: "solid_material" },
   hub_bottom_thickness_mm: { label: "Hub bottom thickness", unit: "mm", step: 0.5, default: 24, group: "solid_material" },
   hub_top_cap_thickness_mm: { label: "Hub top cap thickness", unit: "mm", step: 0.5, default: 8, group: "solid_material" },
@@ -48,13 +51,20 @@ export const facetSchema = {
   working_domain: { label: "Working domain", values: ["pump"] },
 };
 
+export const exportFileOptions = [
+  { id: "step", label: "STEP B-Rep", extension: ".step" },
+  { id: "stl", label: "STL Mesh", extension: ".stl" },
+  { id: "mesh_step", label: "STEP Mesh", extension: ".mesh.step" },
+  { id: "manifest", label: "Manifest", extension: ".manifest.json" },
+];
+
 export const presets = [
   {
     id: "axisymmetric-nurbs-open-throughflow",
-    presetId: "radial_open_reference_v0_4",
-    name: "NURBS open throughflow v0.4",
-    summary: "Open impeller: surface/feature graph, CFD full-360 manifest, finite hub solid, conformal blade surfaces.",
-    tags: ["open", "NURBS", "v0.4", "CFD"],
+    presetId: "radial_open_reference_v0_6",
+    name: "B-Rep open throughflow v0.6",
+    summary: "Open impeller: B-Rep edge treatment, mesh inspection, CFD full-360 manifest, and STEP/STL exports.",
+    tags: ["open", "B-Rep", "v0.6", "mesh inspection", "export"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -65,7 +75,7 @@ export const presets = [
       passage_topology: "throughflow_bladed_channel",
     },
     parameters: {
-      blade_count: 7,
+      blade_count: 12,
       inlet_radius_mm: 180,
       exit_radius_mm: 620,
       inlet_blade_height_mm: 150,
@@ -74,12 +84,15 @@ export const presets = [
       mounting_bore_radius_mm: 40,
       blade_wrap_deg: 118,
       blade_lean_deg: 8,
-      leading_edge_lean_deg: 12,
-      trailing_edge_lean_deg: -8,
-      leading_edge_sweep_mm: 30,
-      trailing_edge_sweep_mm: -45,
+      leading_edge_lean_deg: 0,
+      trailing_edge_lean_deg: 0,
+      leading_edge_sweep_mm: 0,
+      trailing_edge_sweep_mm: 0,
       blade_thickness_mm: 18,
       root_fillet_radius_mm: 8,
+      leading_edge_radius_mm: 3,
+      trailing_edge_radius_mm: 2,
+      tip_edge_radius_mm: 2,
       hub_wall_thickness_mm: 18,
       hub_bottom_thickness_mm: 24,
       hub_top_cap_thickness_mm: 8,
@@ -90,10 +103,10 @@ export const presets = [
   },
   {
     id: "axisymmetric-nurbs-closed-throughflow",
-    presetId: "radial_closed_reference_v0_4",
-    name: "NURBS closed throughflow v0.4",
-    summary: "Closed impeller: surface/feature graph, CFD full-360 manifest, finite hub solid, finite hood shell.",
-    tags: ["closed", "NURBS", "v0.4", "CFD"],
+    presetId: "radial_closed_reference_v0_6",
+    name: "B-Rep closed throughflow v0.6",
+    summary: "Closed impeller: B-Rep edge treatment, mesh inspection, CFD full-360 manifest, and STEP/STL exports.",
+    tags: ["closed", "B-Rep", "v0.6", "mesh inspection", "export"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -104,7 +117,7 @@ export const presets = [
       passage_topology: "throughflow_bladed_channel",
     },
     parameters: {
-      blade_count: 6,
+      blade_count: 12,
       inlet_radius_mm: 190,
       exit_radius_mm: 600,
       inlet_blade_height_mm: 130,
@@ -113,14 +126,17 @@ export const presets = [
       mounting_bore_radius_mm: 42,
       blade_wrap_deg: 95,
       blade_lean_deg: -5,
-      leading_edge_lean_deg: 8,
-      trailing_edge_lean_deg: -6,
-      leading_edge_sweep_mm: 24,
-      trailing_edge_sweep_mm: -36,
+      leading_edge_lean_deg: 0,
+      trailing_edge_lean_deg: 0,
+      leading_edge_sweep_mm: 0,
+      trailing_edge_sweep_mm: 0,
       blade_thickness_mm: 16,
-      root_fillet_radius_mm: 7,
+      root_fillet_radius_mm: 8,
+      leading_edge_radius_mm: 3,
+      trailing_edge_radius_mm: 2,
+      tip_edge_radius_mm: 2,
       hub_wall_thickness_mm: 18,
-      hub_bottom_thickness_mm: 24,
+      hub_bottom_thickness_mm: 22,
       hub_top_cap_thickness_mm: 8,
       hub_chamfer_radius_mm: 3,
       hood_wall_thickness_mm: 12,
@@ -172,6 +188,13 @@ export function overridesAfterParameterChange(name, profileOverrides, curveOverr
 export function exportUrl(apiBase, runId, format) {
   const normalizedBase = String(apiBase || apiDefault).replace(/\/+$/, "");
   return `${normalizedBase}/api/model-runs/${encodeURIComponent(runId)}/exports/${encodeURIComponent(format)}`;
+}
+
+export function exportFilename(presetId, runId, exportKind) {
+  const option = exportFileOptions.find((item) => item.id === exportKind) || exportFileOptions[0];
+  const safePreset = String(presetId || "impeller").replace(/[^A-Za-z0-9_-]/g, "_");
+  const safeRun = String(runId || "run").replace(/[^A-Za-z0-9_-]/g, "_");
+  return `${safePreset}_${safeRun}${option.extension}`;
 }
 
 export function selectedPreset(id) {

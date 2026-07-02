@@ -4,6 +4,8 @@ import { describe, test } from "node:test";
 import {
   buildInstantiatePayload,
   buildSynthesizePayload,
+  exportFilename,
+  exportFileOptions,
   exportUrl,
   facetSchema,
   overridesAfterParameterChange,
@@ -84,6 +86,9 @@ describe("impeller frontend model", () => {
       "trailing_edge_sweep_mm",
       "blade_thickness_mm",
       "root_fillet_radius_mm",
+      "leading_edge_radius_mm",
+      "trailing_edge_radius_mm",
+      "tip_edge_radius_mm",
       "hub_wall_thickness_mm",
       "hub_bottom_thickness_mm",
       "hub_top_cap_thickness_mm",
@@ -93,9 +98,9 @@ describe("impeller frontend model", () => {
     ]);
   });
 
-  test("presets include focused open and closed NURBS throughflow studies", () => {
-    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_4");
-    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_4");
+  test("presets include focused open and closed B-Rep throughflow studies", () => {
+    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_6");
+    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_6");
 
     assert.ok(open);
     assert.ok(closed);
@@ -103,8 +108,27 @@ describe("impeller frontend model", () => {
     assert.equal(closed.facets.shroud_topology, "closed");
     assert.equal(open.facets.passage_topology, "throughflow_bladed_channel");
     assert.equal(closed.facets.passage_topology, "throughflow_bladed_channel");
+    assert.equal(open.parameters.blade_count, 12);
+    assert.equal(closed.parameters.blade_count, 12);
+    assert.equal(open.parameters.leading_edge_lean_deg, 0);
+    assert.equal(open.parameters.trailing_edge_lean_deg, 0);
+    assert.equal(open.parameters.leading_edge_sweep_mm, 0);
+    assert.equal(open.parameters.trailing_edge_sweep_mm, 0);
+    assert.equal(closed.parameters.leading_edge_lean_deg, 0);
+    assert.equal(closed.parameters.trailing_edge_lean_deg, 0);
+    assert.equal(closed.parameters.leading_edge_sweep_mm, 0);
+    assert.equal(closed.parameters.trailing_edge_sweep_mm, 0);
     assert.ok(open.parameters.blade_wrap_deg > 0);
     assert.ok(closed.parameters.blade_wrap_deg > 0);
+    assert.equal(open.parameters.root_fillet_radius_mm, 8);
+    assert.equal(open.parameters.leading_edge_radius_mm, 3);
+    assert.equal(open.parameters.trailing_edge_radius_mm, 2);
+    assert.equal(open.parameters.tip_edge_radius_mm, 2);
+    assert.equal(closed.parameters.root_fillet_radius_mm, 8);
+    assert.equal(closed.parameters.leading_edge_radius_mm, 3);
+    assert.equal(closed.parameters.trailing_edge_radius_mm, 2);
+    assert.equal(closed.parameters.tip_edge_radius_mm, 2);
+    assert.equal(closed.parameters.hub_bottom_thickness_mm, 22);
     assert.ok(open.parameters.hub_wall_thickness_mm > 0);
     assert.ok(closed.parameters.hood_wall_thickness_mm > 0);
   });
@@ -132,6 +156,25 @@ describe("impeller frontend model", () => {
     assert.equal(parameterSchema.hub_nose_radius_mm.group, "shape_control");
     assert.equal(parameterSchema.hub_profile_convexity.group, "shape_control");
     assert.equal(parameterSchema.hub_base_radius_mm.controlKind, "semantic_handle");
+  });
+
+  test("v0.6 exposes interactive fillet and edge radius controls", () => {
+    assert.equal(parameterSchema.root_fillet_radius_mm.group, "edge_treatment");
+    assert.equal(parameterSchema.leading_edge_radius_mm.group, "edge_treatment");
+    assert.equal(parameterSchema.trailing_edge_radius_mm.group, "edge_treatment");
+    assert.equal(parameterSchema.tip_edge_radius_mm.group, "edge_treatment");
+
+    const payload = buildInstantiatePayload({
+      root_fillet_radius_mm: 10,
+      leading_edge_radius_mm: 4,
+      trailing_edge_radius_mm: 2.5,
+      tip_edge_radius_mm: 2,
+    });
+
+    assert.equal(payload.parameters.root_fillet_radius_mm, 10);
+    assert.equal(payload.parameters.leading_edge_radius_mm, 4);
+    assert.equal(payload.parameters.trailing_edge_radius_mm, 2.5);
+    assert.equal(payload.parameters.tip_edge_radius_mm, 2);
   });
 
   test("buildInstantiatePayload preserves explicit boundary parameters", () => {
@@ -215,5 +258,17 @@ describe("impeller frontend model", () => {
       exportUrl("http://127.0.0.1:8000", "run-abc", "stl"),
       "http://127.0.0.1:8000/api/model-runs/run-abc/exports/stl",
     );
+  });
+
+  test("exportFileOptions exposes brep mesh and manifest downloads", () => {
+    assert.deepEqual(exportFileOptions.map((option) => option.id), ["step", "stl", "mesh_step", "manifest"]);
+    assert.equal(exportFileOptions.find((option) => option.id === "step").label, "STEP B-Rep");
+    assert.equal(exportFileOptions.find((option) => option.id === "mesh_step").extension, ".mesh.step");
+  });
+
+  test("exportFilename uses preset run id and correct extension", () => {
+    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "step"), "radial_open_reference_v0_6_run-abc.step");
+    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "mesh_step"), "radial_open_reference_v0_6_run-abc.mesh.step");
+    assert.equal(exportFilename("radial_open_reference_v0_6", "run-abc", "manifest"), "radial_open_reference_v0_6_run-abc.manifest.json");
   });
 });

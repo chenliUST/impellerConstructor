@@ -23,10 +23,13 @@ This document records the intended ownership boundaries of the repository. It is
 | `service.py` | Rule synthesis orchestration, instantiation, manifests, export paths, and feedback APIs. |
 | `impeller_dsl_resources.py` | Loading versioned JSON DSL/ontology resources from package paths. |
 | `impeller_runtime_compiler.py` | Compiling versioned impeller DSL presets into runtime dictionaries. |
+| `impeller_surface_graph_export.py` | Graph-derived STL and faceted STEP export writer with surface-region provenance. |
+| `impeller_brep_export.py` | OCP/OCCT writer for V0.6 graph-derived unsewn NURBS/analytic B-Rep support faces. |
+| `impeller_cad_payload.py` | CAD payload helpers for exportable graph surfaces and edges. |
 | `impeller_shape_control.py` | Shape control normalization and compatibility helpers. |
 | `impeller_design_space.py` | v0.4 campaign signatures, topology freezing, and design vector contracts. |
 | `impeller_graph_contract.py` | Surface graph utility contracts, wetted-surface filtering, and area estimation. |
-| `impeller_cfd_manifest.py` | CFD full-360 patch group and patch instance manifest generation. |
+| `impeller_cfd_manifest.py` | CFD full-360 patch group, patch instance, and surface mesh inspection manifest generation. |
 | `impeller_kernels/axisymmetric_throughflow_nurbs.py` | Main axisymmetric throughflow NURBS impeller geometry kernel. |
 | `impeller_kernel.py` | Earlier impeller geometry kernel/proxy support retained for compatibility. |
 | `impeller_taxonomy.py` | Facet taxonomy and preset support outside the v0.4 slice. |
@@ -38,6 +41,8 @@ This document records the intended ownership boundaries of the repository. It is
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_2` | First focused slice contract. |
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_3` | Solid hub/hood and staged interactive curve workflow. |
 | `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_4` | Optimization-ready surface/feature graph and CFD full-360 view. |
+| `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_5` | Surface-graph-faithful export contract and export-region provenance. |
+| `src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_6` | NURBS/analytic B-Rep support-face STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls; trim-loop/wire export remains future work. |
 | `src/part_rule_synthesis/ontology/impeller/v0_2` | Ontology resources aligned with v0.2. |
 | `src/part_rule_synthesis/ontology/impeller/v0_3` | v0.3 ontology slice marker. |
 | `src/part_rule_synthesis/ontology/impeller/v0_4` | Ontology resources aligned with v0.4. |
@@ -69,6 +74,8 @@ Each DSL version should remain loadable through tests after newer versions are a
 | `docs/axisymmetric-throughflow-nurbs-kernel.md` | Current kernel construction order and v0.4 graph contract. |
 | `docs/current-research-frontier.md` | Canonical statement of what the current repository can and cannot claim. |
 | `docs/evidence-policy.md` | Rules for committing evidence artifacts and large generated outputs. |
+| `docs/evidence/2026-07-01-impeller-v0-5-surface-graph-faithful-export/` | User-supplied mismatch screenshots and analysis motivating implemented v0.5 export semantics. |
+| `docs/evidence/2026-07-01-impeller-v0-6-trimmed-nurbs-brep-export/` | Follow-up third-party STEP limitation evidence plus V0.6 NURBS/analytic B-Rep support-face implementation evidence and remaining trim-loop/wire and manual CAD import gaps. |
 
 ## Scripts
 
@@ -85,5 +92,5 @@ Each DSL version should remain loadable through tests after newer versions are a
 2. Keep backend tests covering each loadable DSL version.
 3. Keep frontend presets pointed at the latest interactive study version unless a legacy workflow is explicitly needed.
 4. Keep generated videos/screenshots out of routine code commits unless they are deliberate evidence artifacts.
-5. Treat exact B-Rep, meshing, CAE solver adapters, and CAM feedback as separate future integration layers.
+5. Treat certified manufacturing CAD, production meshing, CAE solver adapters, and CAM feedback as separate future integration layers.
 6. Keep `docs/current-research-frontier.md` aligned with README claims before presenting the project externally.

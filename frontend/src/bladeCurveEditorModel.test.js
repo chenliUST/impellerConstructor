@@ -17,6 +17,8 @@ describe("blade curve editor model", () => {
 
     assert.equal(controls.blade_mean.theta_center_u_curve.coordinate_system, "u_theta_deg");
     assert.equal(controls.thickness.thickness_u_curve.coordinate_system, "u_thickness_mm");
+    assert.deepEqual(controls.blade_edges.leading_edge_sweep_v_curve.control_points, [[0, 0], [0.5, 0], [1, 0]]);
+    assert.deepEqual(controls.blade_edges.trailing_edge_sweep_v_curve.control_points, [[0, 0], [0.5, 0], [1, 0]]);
     assert.equal(validateCurveOverrides(controls).status, "PASS");
   });
 

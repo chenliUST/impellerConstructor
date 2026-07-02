@@ -12,6 +12,10 @@ export function ManifestPanel({ manifest, exportLinks, before = null }) {
   const shape_control = manifest?.shape_control || {};
   const optimization_stage = shape_control.optimization_stage || "unset";
   const validityContracts = manifest?.validity || {};
+  const exportStrategy = manifest?.export_strategy || {};
+  const exportManifests = manifest?.export_manifests || {};
+  const stlExport = exportManifests.stl || {};
+  const stepExport = exportManifests.step || {};
 
   return h(
     "aside",
@@ -28,6 +32,8 @@ export function ManifestPanel({ manifest, exportLinks, before = null }) {
       h(Metric, { label: "Slice", value: ontology_slice || "None" }),
       h(Metric, { label: "Constructor", value: constructor_id || constructor_family || "None" }),
       h(Metric, { label: "Shape stage", value: optimization_stage }),
+      h(Metric, { label: "Export mode", value: exportStrategy.mode || "unset" }),
+      h(Metric, { label: "STL exactness", value: stlExport.export_exactness || "legacy" }),
       h(Metric, {
         label: "Contracts",
         value: String(
@@ -44,12 +50,46 @@ export function ManifestPanel({ manifest, exportLinks, before = null }) {
           h(
             "div",
             { className: "export-row" },
-            h("a", { href: exportLinks.stl, target: "_blank", rel: "noreferrer" }, "STL"),
-            h("a", { href: exportLinks.step, target: "_blank", rel: "noreferrer" }, "STEP"),
+            exportLinks.map((option) =>
+              h(
+                "a",
+                {
+                  key: option.id,
+                  href: option.href,
+                  download: option.download,
+                  target: "_blank",
+                  rel: "noreferrer",
+                },
+                option.label,
+              ),
+            ),
           ),
           h(Section, {
             title: "Source refs",
             body: summary.sourceRefs.length ? summary.sourceRefs.join(", ") : "None",
+          }),
+          h(Section, {
+            title: "Export fidelity",
+            body: h(
+              "pre",
+              null,
+              JSON.stringify(
+                {
+                  strategy: exportStrategy.mode || "legacy",
+                  source: exportStrategy.source || "legacy export path",
+                  view: exportStrategy.view || "legacy",
+                  stl_exactness: stlExport.export_exactness || "legacy",
+                  step_exactness: stepExport.export_exactness || "legacy",
+                  stl_surface_count: stlExport.surface_count || 0,
+                  stl_triangle_count: stlExport.triangle_count || 0,
+                  step_face_count: stepExport.face_count || 0,
+                  surface_graph_faithful: exportStrategy.mode === "surface_graph_faithful",
+                  export_manifests: Boolean(manifest.export_manifests),
+                },
+                null,
+                2,
+              ),
+            ),
           }),
           h(Section, {
             title: "Ontology constructor",

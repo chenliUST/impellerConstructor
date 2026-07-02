@@ -1,0 +1,36 @@
+{
+  "date": "2026-07-01",
+  "note": "Generated from temporary local v0.5 service runs; STL/STEP binaries were not committed. Updated after AP242 tessellated STEP compaction and V0.5 default-profile patch.",
+  "exports": [
+    {
+      "preset_id": "radial_open_reference_v0_5",
+      "dsl_version": "0.5",
+      "export_mode": "surface_graph_faithful",
+      "step_representation": "ap242_triangulated_face_set",
+      "blade_count": 12,
+      "stl_size_bytes": 2259284,
+      "step_size_bytes": 1659904,
+      "surface_count": 81,
+      "triangle_count": 45184,
+      "face_count": 45184,
+      "vertex_count": 21396,
+      "edge_closure_regions": 48,
+      "local_cadquery_occt_import": "PASS"
+    },
+    {
+      "preset_id": "radial_closed_reference_v0_5",
+      "dsl_version": "0.5",
+      "export_mode": "surface_graph_faithful",
+      "step_representation": "ap242_triangulated_face_set",
+      "blade_count": 12,
+      "stl_size_bytes": 2528084,
+      "step_size_bytes": 1870296,
+      "surface_count": 86,
+      "triangle_count": 50560,
+      "face_count": 50560,
+      "vertex_count": 24108,
+      "edge_closure_regions": 48,
+      "local_cadquery_occt_import": "not rerun"
+    }
+  ]
+}

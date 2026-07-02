@@ -55,6 +55,20 @@ def test_load_impeller_dsl_bundle_v04_exposes_design_space_and_simulation_views(
     }
 
 
+def test_load_impeller_dsl_bundle_v05_exposes_export_contracts():
+    bundle = load_impeller_dsl_bundle("v0_5")
+
+    assert bundle.slice["ontology_version"] == "0.4"
+    assert bundle.schema["dsl_version"] == "0.5"
+    assert "axisymmetric_throughflow_radial_bladed.open.v0_5" in bundle.constructors
+    assert "radial_open_reference_v0_5" in bundle.presets
+    assert bundle.shape_controls["shape_control_version"] == "0.5"
+    assert "export_contracts" in bundle.schema["required_sections"]
+    assert set(bundle.export_contracts) == {"surface_graph_faithful"}
+    assert bundle.export_contracts["surface_graph_faithful"]["mode"] == "surface_graph_faithful"
+    assert bundle.export_contracts["surface_graph_faithful"]["default_view"] == "cad_review_360"
+
+
 def test_load_impeller_dsl_bundle_v04_rejects_missing_simulation_view_refs():
     bundle = load_impeller_dsl_bundle("v0_4")
     constructors = deepcopy(bundle.constructors)
@@ -121,6 +135,19 @@ def test_compile_impeller_runtime_preset_v04_exposes_graph_contracts():
         "simulation_views.cfd_full_360",
         "simulation_views.fea_solid",
     } <= set(runtime["selected_rules"])
+
+
+def test_compile_impeller_runtime_preset_v05_exposes_surface_graph_export_contract():
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_5")
+
+    assert runtime["version"] == "0.5.0"
+    assert runtime["preset_id"] == "radial_open_reference_v0_5"
+    assert runtime["constructor_id"] == "axisymmetric_throughflow_radial_bladed.open.v0_5"
+    assert runtime["dsl_sections"]["dsl_version"] == "0.5"
+    assert runtime["export_contract"]["mode"] == "surface_graph_faithful"
+    assert runtime["export_contract"]["default_view"] == "cad_review_360"
+    assert runtime["export_contract"]["step_exactness"] == "surface_graph_mesh_step"
+    assert "export_contract.surface_graph_faithful" in runtime["selected_rules"]
 
 
 def test_compile_impeller_runtime_preset_rejects_unknown_preset():

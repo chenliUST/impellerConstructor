@@ -1,7 +1,14 @@
 import React, { useMemo, useState } from "react";
 
 import { instantiateImpeller, modelExportUrl, synthesizeImpeller } from "./apiClient.js";
-import { apiDefault, overridesAfterParameterChange, presets, selectedPreset } from "./appModel.js";
+import {
+  apiDefault,
+  exportFilename,
+  exportFileOptions,
+  overridesAfterParameterChange,
+  presets,
+  selectedPreset,
+} from "./appModel.js";
 import { viewModeOptions } from "./simulationViewModel.js";
 import { defaultVisibleLayers } from "./workspaceModel.js";
 import { BladeCurveEditor } from "./components/BladeCurveEditor.js";
@@ -44,13 +51,19 @@ export function App() {
   const facetLabel = useMemo(() => Object.values(facets).join(" / ").replaceAll("_", " "), [facets]);
   const exportLinks = useMemo(() => {
     if (!manifest?.run_id) {
-      return {};
+      return [];
     }
-    return {
-      stl: modelExportUrl(apiBase, manifest.run_id, "stl"),
-      step: modelExportUrl(apiBase, manifest.run_id, "step"),
-    };
-  }, [apiBase, manifest]);
+    const exportKeys = Object.keys(manifest.exports || {});
+    const options = exportKeys.length
+      ? exportFileOptions.filter((option) => exportKeys.includes(option.id))
+      : exportFileOptions;
+
+    return options.map((option) => ({
+      ...option,
+      href: modelExportUrl(apiBase, manifest.run_id, option.id),
+      download: exportFilename(manifest.preset_id || activePreset.presetId, manifest.run_id, option.id),
+    }));
+  }, [activePreset, apiBase, manifest]);
   const simulationModes = viewModeOptions();
 
   async function generateModel() {

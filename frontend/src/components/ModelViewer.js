@@ -129,7 +129,7 @@ export function ModelViewer({
     );
     frameCamera(bounds.radius || 1000);
     updateVisibility();
-    setStatus("Surface graph rendered");
+    setStatus(simulationViewMode === "mesh" ? meshInspectionStatus(manifest) : "Surface graph rendered");
   }, [surfaceGraph, simulationViewMode, selectedPatch, manifest]);
 
   useEffect(() => {
@@ -204,7 +204,7 @@ export function ModelViewer({
     if (constructionGroup) {
       const showConstruction =
         viewMode !== "shaded" &&
-        (simulationViewMode !== "cfd_full_360" || constructionGroup.userData.hasCfdBoundarySelection);
+        (!isCfdInspectionView(simulationViewMode) || constructionGroup.userData.hasCfdBoundarySelection);
       constructionGroup.visible = showConstruction;
       constructionGroup.traverse((child) => {
         if (child.isLineSegments && child.userData.layer) {
@@ -371,6 +371,20 @@ function createSurfaceGraphGroup(surfaceGraph, center, simulationViewMode, selec
   return group;
 }
 
+function isCfdInspectionView(simulationViewMode) {
+  return simulationViewMode === "cfd_full_360" || simulationViewMode === "mesh";
+}
+
+function meshInspectionStatus(manifest) {
+  const meshManifest = manifest?.simulation_manifests?.cfd_surface_mesh;
+  if (!meshManifest) {
+    return "CFD360 mesh manifest not available.";
+  }
+  const triangles = Number(meshManifest.triangle_count || 0);
+  const degenerate = Number(meshManifest.degenerate_triangle_count || 0);
+  return `CFD360 mesh inspection: ${triangles} triangles, ${degenerate} degenerate.`;
+}
+
 function surfaceGridGeometry(grid, center) {
   const positions = [];
   const indices = [];
@@ -473,15 +487,15 @@ function createConstructionGroup(linesByFeature, center, selectedBoundaryIds = n
 }
 
 function mergeConstructionLines(constructionLines, surfaceGraph, simulationViewMode = "cad_review_360", selectedBoundaryIds = new Set()) {
-  const merged = simulationViewMode === "cfd_full_360" ? {} : { ...(constructionLines || {}) };
+  const merged = isCfdInspectionView(simulationViewMode) ? {} : { ...(constructionLines || {}) };
   const namedBoundaryCurves = surfaceGraph?.named_boundary_curves || [];
   const visibleBoundaryCurves =
-    simulationViewMode === "cfd_full_360" && selectedBoundaryIds.size > 0
+    isCfdInspectionView(simulationViewMode) && selectedBoundaryIds.size > 0
       ? namedBoundaryCurves.filter((curve) => selectedBoundaryIds.has(curve.id))
       : namedBoundaryCurves;
   const shouldEmitBoundaryCurves =
     visibleBoundaryCurves.length > 0 &&
-    (simulationViewMode !== "cfd_full_360" || selectedBoundaryIds.size > 0);
+    (!isCfdInspectionView(simulationViewMode) || selectedBoundaryIds.size > 0);
   if (shouldEmitBoundaryCurves) {
     merged.named_boundary_curve = visibleBoundaryCurves.map((curve) => ({
       name: curve.id,

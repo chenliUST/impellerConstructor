@@ -1,0 +1,27 @@
+{
+  "contract_id": "surface_graph_faithful",
+  "mode": "surface_graph_faithful",
+  "default_view": "cad_review_360",
+  "source": "geometry.surface_graph",
+  "stl_exactness": "surface_graph_sampled_mesh",
+  "step_exactness": "surface_graph_mesh_step",
+  "region_provenance": {
+    "required_fields": [
+      "surface_graph_id",
+      "feature_id",
+      "role",
+      "triangle_start",
+      "triangle_count"
+    ]
+  },
+  "forbidden_fallbacks": [
+    "cadquery_proxy_solid_claimed_as_surface_graph_export",
+    "placeholder_step",
+    "placeholder_stl"
+  ],
+  "notes": [
+    "STL triangles are sampled directly from selected surface_graph uv_grid cells.",
+    "STEP is a graph-derived AP242 tessellated triangular face set with deduplicated sampled vertices.",
+    "STEP is not an exact analytic CAD B-Rep and does not contain CAD-native chamfer or fillet operations."
+  ]
+}

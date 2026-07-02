@@ -1,0 +1,56 @@
+{
+  "preset_id": "radial_open_reference_v0_5",
+  "supersedes": "../../v0_4/presets/radial_open_reference.json",
+  "display_name": "Radial open reference v0.5",
+  "summary": "Open radial throughflow impeller with v0.4 graph baseline plus v0.5 surface-graph-faithful STL/STEP export contract.",
+  "constructor_id": "axisymmetric_throughflow_radial_bladed.open.v0_5",
+  "parameter_values": {
+    "blade_count": 12,
+    "inlet_radius_mm": 180.0,
+    "exit_radius_mm": 620.0,
+    "inlet_blade_height_mm": 150.0,
+    "outlet_blade_height_mm": 72.0,
+    "inlet_blade_angle_deg": 21.0,
+    "outlet_blade_angle_deg": 42.0,
+    "blade_thickness_mm": 18.0,
+    "hub_curve_height_mm": 82.0,
+    "mounting_bore_radius_mm": 40.0,
+    "blade_wrap_deg": 118.0,
+    "blade_lean_deg": 8.0,
+    "leading_edge_lean_deg": 0.0,
+    "trailing_edge_lean_deg": 0.0,
+    "leading_edge_sweep_mm": 0.0,
+    "trailing_edge_sweep_mm": 0.0,
+    "root_fillet_radius_mm": 8.0,
+    "hub_wall_thickness_mm": 18.0,
+    "hub_bottom_thickness_mm": 24.0,
+    "hub_top_cap_thickness_mm": 8.0,
+    "hub_chamfer_radius_mm": 3.0
+  },
+  "editable_parameters": [
+    "blade_count",
+    "inlet_radius_mm",
+    "exit_radius_mm",
+    "inlet_blade_height_mm",
+    "outlet_blade_height_mm",
+    "mounting_bore_radius_mm",
+    "blade_wrap_deg",
+    "leading_edge_lean_deg",
+    "trailing_edge_lean_deg",
+    "leading_edge_sweep_mm",
+    "trailing_edge_sweep_mm",
+    "blade_thickness_mm",
+    "root_fillet_radius_mm",
+    "hub_wall_thickness_mm",
+    "hub_bottom_thickness_mm",
+    "hub_top_cap_thickness_mm",
+    "hub_chamfer_radius_mm"
+  ],
+  "source_refs": [
+    "research_inferred_initial_values",
+    "cfturbo_design_workflow",
+    "user_observed_frontend_geometry_feedback_2026_06_30",
+    "impeller_v0_5_surface_graph_faithful_export_spec_2026_07_01"
+  ]
+}
+

@@ -25,6 +25,8 @@ function Invoke-BackendVerification {
     }
 
     python -m pytest `
+        tests/test_impeller_surface_graph_export.py `
+        tests/test_impeller_runtime_compiler.py `
         tests/test_impeller_v04_resources.py `
         tests/test_impeller_version_lineage.py `
         tests/test_impeller_design_space.py `

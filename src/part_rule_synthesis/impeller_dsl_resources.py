@@ -27,22 +27,29 @@ class ImpellerDslBundle:
     aliases: dict[str, str]
     simulation_views: dict[str, dict[str, Any]] = field(default_factory=dict)
     simulation_view_refs: dict[str, str] = field(default_factory=dict)
+    export_contracts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    export_contract_refs: dict[str, str] = field(default_factory=dict)
 
 
 def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslBundle:
     ontology_root = ONTOLOGY_BASE / version
     dsl_root = DSL_BASE / version
-    fallback_ontology_root = ONTOLOGY_BASE / DEFAULT_DSL_VERSION
+    fallback_ontology_root = _fallback_version_root(ONTOLOGY_BASE, version)
     fallback_dsl_root = DSL_BASE / DEFAULT_DSL_VERSION
     if not dsl_root.exists():
         raise ValueError(f"unknown impeller DSL version: {version}")
 
     constructors = _load_json_directory_by_id(dsl_root / "constructors", "constructor_id")
     presets = _load_json_directory_by_id(dsl_root / "presets", "preset_id")
-    aliases = _read_json(dsl_root / "aliases.json")["legacy_preset_aliases"]
+    aliases = _load_aliases(dsl_root / "aliases.json")
     simulation_views, simulation_view_refs = (
         _load_simulation_views(dsl_root / "simulation_views")
         if (dsl_root / "simulation_views").exists()
+        else ({}, {})
+    )
+    export_contracts, export_contract_refs = (
+        _load_export_contracts(dsl_root / "export_contracts")
+        if (dsl_root / "export_contracts").exists()
         else ({}, {})
     )
     shape_controls = _read_json(dsl_root / "shape_controls" / "default_shape_controls.json")
@@ -75,6 +82,8 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
         aliases=aliases,
         simulation_views=simulation_views,
         simulation_view_refs=simulation_view_refs,
+        export_contracts=export_contracts,
+        export_contract_refs=export_contract_refs,
     )
     _validate_bundle(bundle)
     return bundle
@@ -85,7 +94,31 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _read_json_with_fallback(path: Path, fallback_path: Path) -> dict[str, Any]:
-    return _read_json(path if path.exists() else fallback_path)
+    if path.exists():
+        return _read_json(path)
+    if fallback_path.exists():
+        return _read_json(fallback_path)
+    return _read_json(ONTOLOGY_BASE / DEFAULT_DSL_VERSION / path.name)
+
+
+def _load_aliases(path: Path) -> dict[str, str]:
+    aliases = _read_json(path)
+    return aliases.get("legacy_preset_aliases", aliases)
+
+
+def _fallback_version_root(base: Path, version: str) -> Path:
+    available = sorted((path for path in base.glob("v*") if path.is_dir()), key=lambda path: _version_key(path.name))
+    previous = [
+        path
+        for path in available
+        if _version_key(path.name) <= _version_key(version)
+        and all((path / name).exists() for name in ["slice.json", "entities.json", "relations.json"])
+    ]
+    return previous[-1] if previous else base / DEFAULT_DSL_VERSION
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.removeprefix("v").split("_"))
 
 
 def _load_json_directory_by_id(path: Path, id_field: str) -> dict[str, dict[str, Any]]:
@@ -107,6 +140,17 @@ def _load_simulation_views(path: Path) -> tuple[dict[str, dict[str, Any]], dict[
     return views, refs
 
 
+def _load_export_contracts(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    contracts = {}
+    refs = {}
+    for item_path in sorted(path.glob("*.json")):
+        item = _read_json(item_path)
+        contract_id = item["contract_id"]
+        contracts[contract_id] = item
+        refs[f"{path.name}/{item_path.name}"] = contract_id
+    return contracts, refs
+
+
 def _validate_bundle(bundle: ImpellerDslBundle) -> None:
     family = "AxisymmetricThroughflowRadialBladedImpeller"
     if bundle.slice["constructor_family"] != family:
@@ -115,8 +159,8 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
         raise ValueError("impeller DSL schema constructor family mismatch")
     if bundle.schema["dsl_version"] in {"0.2", "0.3"} and bundle.shape_control_schema["default_stage"] != 1:
         raise ValueError("impeller v0.2/v0.3 shape control must default to stage 1")
-    if bundle.schema["dsl_version"] == "0.4" and "design_space" not in bundle.shape_controls:
-        raise ValueError("impeller v0.4 shape controls must include design_space")
+    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6"} and "design_space" not in bundle.shape_controls:
+        raise ValueError("impeller v0.4+ shape controls must include design_space")
     if "hub_meridional_profile" not in bundle.shape_controls["target_entities"]:
         raise ValueError("default shape controls must include hub_meridional_profile")
     if "policies" in bundle.shape_controls:
@@ -130,6 +174,7 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
         if constructor["shape_control"]["shape_control_ref"] != "shape_controls/default_shape_controls.json":
             raise ValueError(f"constructor {constructor_id} references unsupported shape control policy")
         _validate_constructor_simulation_view_refs(bundle, constructor_id, constructor)
+        _validate_constructor_export_contract_refs(bundle, constructor_id, constructor)
     for preset_id, preset in bundle.presets.items():
         if preset["preset_id"] != preset_id:
             raise ValueError(f"preset id mismatch: {preset_id}")
@@ -169,4 +214,24 @@ def _validate_constructor_simulation_view_refs(
         if resolved_view_id != view_id:
             raise ValueError(
                 f"constructor {constructor_id} simulation view {view_id} ref resolves to {resolved_view_id}"
+            )
+
+
+def _validate_constructor_export_contract_refs(
+    bundle: ImpellerDslBundle,
+    constructor_id: str,
+    constructor: dict[str, Any],
+) -> None:
+    for contract_id, contract in constructor.get("export_contracts", {}).items():
+        contract_ref = contract.get("contract_ref")
+        if contract_ref is None:
+            continue
+        if bundle.export_contract_refs and contract_ref not in bundle.export_contract_refs:
+            raise ValueError(f"constructor {constructor_id} export contract ref unresolved: {contract_ref}")
+        resolved_contract_id = bundle.export_contract_refs.get(contract_ref, contract_id)
+        if resolved_contract_id not in bundle.export_contracts:
+            raise ValueError(f"constructor {constructor_id} export contract ref unresolved: {contract_ref}")
+        if resolved_contract_id != contract_id:
+            raise ValueError(
+                f"constructor {constructor_id} export contract {contract_id} ref resolves to {resolved_contract_id}"
             )

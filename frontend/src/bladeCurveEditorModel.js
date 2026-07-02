@@ -3,8 +3,8 @@ export function defaultBladeCurveControls(parameters = {}) {
   const lean = Number(parameters.blade_lean_deg ?? 0);
   const leadingLean = Number(parameters.leading_edge_lean_deg ?? lean);
   const trailingLean = Number(parameters.trailing_edge_lean_deg ?? lean);
-  const leadingSweep = Number(parameters.leading_edge_sweep_mm ?? 30);
-  const trailingSweep = Number(parameters.trailing_edge_sweep_mm ?? -45);
+  const leadingSweep = Number(parameters.leading_edge_sweep_mm ?? 0);
+  const trailingSweep = Number(parameters.trailing_edge_sweep_mm ?? 0);
   const inlet = Number(parameters.inlet_radius_mm ?? 180);
   const exit = Number(parameters.exit_radius_mm ?? 620);
   const radialSpan = Math.max(1, exit - inlet);
@@ -23,11 +23,11 @@ export function defaultBladeCurveControls(parameters = {}) {
     blade_edges: {
       leading_edge_sweep_v_curve: {
         coordinate_system: "v_support_u_offset",
-        control_points: [[0, -leadingSweep / (2 * radialSpan)], [0.5, 0], [1, leadingSweep / (2 * radialSpan)]],
+        control_points: [[0, round(-leadingSweep / (2 * radialSpan))], [0.5, 0], [1, round(leadingSweep / (2 * radialSpan))]],
       },
       trailing_edge_sweep_v_curve: {
         coordinate_system: "v_support_u_offset",
-        control_points: [[0, -trailingSweep / (2 * radialSpan)], [0.5, 0], [1, trailingSweep / (2 * radialSpan)]],
+        control_points: [[0, round(-trailingSweep / (2 * radialSpan))], [0.5, 0], [1, round(trailingSweep / (2 * radialSpan))]],
       },
     },
     thickness: {
@@ -120,5 +120,6 @@ function cloneControls(controls) {
 }
 
 function round(value) {
-  return Math.round(Number(value) * 1000) / 1000;
+  const rounded = Math.round(Number(value) * 1000) / 1000;
+  return Object.is(rounded, -0) ? 0 : rounded;
 }
