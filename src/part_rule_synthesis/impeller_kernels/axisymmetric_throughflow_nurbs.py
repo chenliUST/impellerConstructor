@@ -74,6 +74,7 @@ def build_axisymmetric_throughflow_nurbs_geometry(
         stage,
         display_policy=display_policy,
         material_domain=material_domain,
+        transition_policies=transition_policies,
     )
     passage_model = {
         "type": "throughflow_bladed_channel",
@@ -2109,6 +2110,7 @@ def _validity_report(
     geometry_stage: str = "edge_closures",
     display_policy: dict[str, Any] | None = None,
     material_domain: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     topology_checks = [_check_stage_completeness(surface_graph, geometry_stage)]
     if geometry_stage in {"blade_surfaces", "edge_closures"}:
@@ -2123,8 +2125,8 @@ def _validity_report(
     if geometry_stage == "edge_closures":
         topology_checks.extend(
             [
-                _check_blade_edge_surfaces_present(surface_graph, sampled_blades),
-                _check_blade_surface_closure_candidate(surface_graph, sampled_blades),
+                _check_blade_edge_surfaces_present(surface_graph, sampled_blades, transition_policies),
+                _check_blade_surface_closure_candidate(surface_graph, sampled_blades, transition_policies),
             ]
         )
     topology_checks.append(_check_every_surface_has_uv_lines(surface_graph, construction_lines))
@@ -2307,55 +2309,68 @@ def _check_every_surface_has_uv_lines(
     }
 
 
-def _blade_edge_surface_ids(prefix: str, surface_ids: set[str]) -> dict[str, str]:
-    return {
-        "leading": _first_existing_surface_id(
-            [
-                f"{prefix}_leading_transition_surface",
-                f"{prefix}_leading_edge_fillet_surface",
-                f"{prefix}_leading_edge_surface",
-            ],
-            surface_ids,
-        )
-        or f"{prefix}_leading_edge_surface",
-        "trailing": _first_existing_surface_id(
-            [
-                f"{prefix}_trailing_transition_surface",
-                f"{prefix}_trailing_edge_fillet_surface",
-                f"{prefix}_trailing_edge_surface",
-            ],
-            surface_ids,
-        )
-        or f"{prefix}_trailing_edge_surface",
-        "root": _first_existing_surface_id(
-            [
-                f"{prefix}_root_transition_surface",
-                f"{prefix}_root_fillet_surface",
-                f"{prefix}_root_closure_surface",
-            ],
-            surface_ids,
-        )
-        or f"{prefix}_root_closure_surface",
-        "tip": _first_existing_surface_id(
-            [
-                f"{prefix}_tip_transition_surface",
-                f"{prefix}_tip_edge_fillet_surface",
-                f"{prefix}_tip_closure_surface",
-            ],
-            surface_ids,
-        )
-        or f"{prefix}_tip_closure_surface",
+def _blade_edge_surface_ids(
+    prefix: str,
+    surface_ids: set[str],
+    transition_policies: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    candidates_by_key = {
+        "leading": [
+            f"{prefix}_leading_transition_surface",
+            f"{prefix}_leading_edge_fillet_surface",
+            f"{prefix}_leading_edge_surface",
+        ],
+        "trailing": [
+            f"{prefix}_trailing_transition_surface",
+            f"{prefix}_trailing_edge_fillet_surface",
+            f"{prefix}_trailing_edge_surface",
+        ],
+        "root": [
+            f"{prefix}_root_transition_surface",
+            f"{prefix}_root_fillet_surface",
+            f"{prefix}_root_closure_surface",
+        ],
+        "tip": [
+            f"{prefix}_tip_transition_surface",
+            f"{prefix}_tip_edge_fillet_surface",
+            f"{prefix}_tip_closure_surface",
+        ],
     }
+    edge_family_by_key = {
+        "leading": "blade_leading_edge",
+        "trailing": "blade_trailing_edge",
+        "root": "blade_root_to_hub",
+        "tip": "blade_tip_or_shroud",
+    }
+    edge_surface_ids = {}
+    for key, candidates in candidates_by_key.items():
+        if not _blade_transition_surface_required(transition_policies, edge_family_by_key[key]):
+            continue
+        edge_surface_ids[key] = _first_existing_surface_id(candidates, surface_ids) or candidates[-1]
+    return edge_surface_ids
+
+
+def _blade_transition_surface_required(
+    transition_policies: dict[str, Any] | None,
+    edge_family: str,
+) -> bool:
+    if transition_policies is None:
+        return True
+    policy = _transition_policy_for_family(transition_policies, edge_family)
+    if policy is None:
+        return True
+    return _policy_transition_enabled(True, policy)
 
 
 def _check_blade_edge_surfaces_present(
     surface_graph: dict[str, Any],
     sampled_blades: list[dict[str, Any]],
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     surface_ids = {surface["id"] for surface in surface_graph["surfaces"]}
     for blade in sampled_blades:
         prefix = f"blade_{blade['index']}"
-        required = set(_blade_edge_surface_ids(prefix, surface_ids).values())
+        required = set(_blade_edge_surface_ids(prefix, surface_ids, transition_policies).values())
         if not required.issubset(surface_ids):
             return {"name": "blade_edge_surfaces_present", "status": "FAIL"}
     return {"name": "blade_edge_surfaces_present", "status": "PASS"}
@@ -2364,6 +2379,7 @@ def _check_blade_edge_surfaces_present(
 def _check_blade_surface_closure_candidate(
     surface_graph: dict[str, Any],
     sampled_blades: list[dict[str, Any]],
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     surfaces = {surface["id"]: surface for surface in surface_graph["surfaces"]}
     surface_ids = set(surfaces)
@@ -2372,31 +2388,52 @@ def _check_blade_surface_closure_candidate(
         prefix = f"blade_{blade['index']}"
         pressure = surfaces[f"{prefix}_pressure_surface"]["uv_grid"]
         suction = surfaces[f"{prefix}_suction_surface"]["uv_grid"]
-        edge_surface_ids = _blade_edge_surface_ids(prefix, surface_ids)
+        edge_surface_ids = _blade_edge_surface_ids(prefix, surface_ids, transition_policies)
         if not set(edge_surface_ids.values()).issubset(surface_ids):
             return {"name": "blade_surface_closure_candidate", "status": "FAIL"}
-        leading = surfaces[edge_surface_ids["leading"]]["uv_grid"]
-        trailing = surfaces[edge_surface_ids["trailing"]]["uv_grid"]
-        root = surfaces[edge_surface_ids["root"]]["uv_grid"]
-        tip = surfaces[edge_surface_ids["tip"]]["uv_grid"]
-        pairs = [
-            (leading[0][0], pressure[0][0]),
-            (leading[0][-1], suction[0][0]),
-            (leading[-1][0], pressure[0][-1]),
-            (leading[-1][-1], suction[0][-1]),
-            (trailing[0][0], pressure[-1][0]),
-            (trailing[0][-1], suction[-1][0]),
-            (trailing[-1][0], pressure[-1][-1]),
-            (trailing[-1][-1], suction[-1][-1]),
-            (root[0][0], pressure[0][0]),
-            (root[0][-1], suction[0][0]),
-            (root[-1][0], pressure[-1][0]),
-            (root[-1][-1], suction[-1][0]),
-            (tip[0][0], pressure[0][-1]),
-            (tip[0][-1], suction[0][-1]),
-            (tip[-1][0], pressure[-1][-1]),
-            (tip[-1][-1], suction[-1][-1]),
-        ]
+        pairs = []
+        if "leading" in edge_surface_ids:
+            leading = surfaces[edge_surface_ids["leading"]]["uv_grid"]
+            pairs.extend(
+                [
+                    (leading[0][0], pressure[0][0]),
+                    (leading[0][-1], suction[0][0]),
+                    (leading[-1][0], pressure[0][-1]),
+                    (leading[-1][-1], suction[0][-1]),
+                ]
+            )
+        if "trailing" in edge_surface_ids:
+            trailing = surfaces[edge_surface_ids["trailing"]]["uv_grid"]
+            pairs.extend(
+                [
+                    (trailing[0][0], pressure[-1][0]),
+                    (trailing[0][-1], suction[-1][0]),
+                    (trailing[-1][0], pressure[-1][-1]),
+                    (trailing[-1][-1], suction[-1][-1]),
+                ]
+            )
+        if "root" in edge_surface_ids:
+            root = surfaces[edge_surface_ids["root"]]["uv_grid"]
+            pairs.extend(
+                [
+                    (root[0][0], pressure[0][0]),
+                    (root[0][-1], suction[0][0]),
+                    (root[-1][0], pressure[-1][0]),
+                    (root[-1][-1], suction[-1][0]),
+                ]
+            )
+        if "tip" in edge_surface_ids:
+            tip = surfaces[edge_surface_ids["tip"]]["uv_grid"]
+            pairs.extend(
+                [
+                    (tip[0][0], pressure[0][-1]),
+                    (tip[0][-1], suction[0][-1]),
+                    (tip[-1][0], pressure[-1][-1]),
+                    (tip[-1][-1], suction[-1][-1]),
+                ]
+            )
+        if not pairs:
+            return {"name": "blade_surface_closure_candidate", "status": "FAIL"}
         for first, second in pairs:
             max_distance = max(max_distance, _distance(first, second))
     rounded = _round(max_distance)

@@ -579,7 +579,21 @@ def test_v07_disabled_transition_removes_blade_root_transition_surfaces():
         )
 
     surface_ids = {surface["id"] for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_topology_checks = {
+        check["name"]: check["status"]
+        for check in run.manifest["geometry"]["validity"]["topology_checks"]
+    }
+    manifest_topology_checks = {
+        check["name"]: check["status"]
+        for check in run.manifest["geometry_validity"]["topology_checks"]
+    }
+
     assert "blade_0_root_transition_surface" not in surface_ids
+    assert run.manifest["geometry"]["validity"]["status"] == "PASS"
+    assert run.manifest["geometry_validity"]["status"] == "PASS"
+    assert geometry_topology_checks["blade_edge_surfaces_present"] == "PASS"
+    assert geometry_topology_checks["blade_surface_closure_candidate"] == "PASS"
+    assert all(status != "FAIL" for status in manifest_topology_checks.values())
 
 
 def test_v07_surface_graph_edges_include_family_and_policy_metadata():
