@@ -70,6 +70,9 @@ def resolve_transition_policies(
         _apply_treatment(policy, enabled_overridden=enabled_overridden)
         policies[policy_id] = policy
 
+    for policy in policies.values():
+        _validate_active_policy_radius(policy)
+
     return policies
 
 
@@ -113,6 +116,13 @@ def _apply_treatment(policy: dict[str, Any], enabled_overridden: bool = False) -
         policy["radius_mm"] = 0.0
     elif not enabled_overridden:
         policy["enabled"] = True
+
+
+def _validate_active_policy_radius(policy: dict[str, Any]) -> None:
+    if policy["enabled"] and policy["treatment"] != "none" and policy["radius_mm"] <= 0.0:
+        raise TransitionPolicyError(
+            f"positive transition radius required for {policy['policy_id']}: {policy['radius_mm']}"
+        )
 
 
 def _validate_treatment(policy_id: str, treatment: Any) -> str:

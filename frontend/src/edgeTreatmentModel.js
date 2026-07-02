@@ -38,6 +38,8 @@ export function updateTransitionRow(currentOverrides, policyId, patch, baseRow =
     row.enabled = patch.treatment !== "none";
     if (patch.treatment === "none") {
       delete row.radius_mm;
+    } else if (!positiveRadius(row.radius_mm) && baseRow?.treatment === "none") {
+      row.radius_mm = fallbackRadiusMm(baseRow);
     }
   }
   if (Object.hasOwn(patch, "enabled")) {
@@ -45,6 +47,9 @@ export function updateTransitionRow(currentOverrides, policyId, patch, baseRow =
     const currentTreatment = row.treatment ?? baseRow?.treatment ?? "none";
     if (patch.enabled && currentTreatment === "none") {
       row.treatment = "fillet";
+      if (!positiveRadius(row.radius_mm)) {
+        row.radius_mm = fallbackRadiusMm(baseRow);
+      }
     } else if (!patch.enabled) {
       delete row.radius_mm;
     }
@@ -111,8 +116,22 @@ function transitionStatus(enabled, treatment, radiusMm) {
   if (!enabled || treatment === "none") {
     return "OFF";
   }
-  if (!Number.isFinite(radiusMm) || radiusMm < 0) {
+  if (!Number.isFinite(radiusMm) || radiusMm <= 0) {
     return "INVALID";
   }
   return "OK";
+}
+
+function fallbackRadiusMm(baseRow) {
+  for (const candidate of [baseRow?.radiusMm, baseRow?.defaultRadiusMm, baseRow?.mappedRadiusMm]) {
+    if (positiveRadius(candidate)) {
+      return Number(candidate);
+    }
+  }
+  return 1;
+}
+
+function positiveRadius(radiusMm) {
+  const radius = Number(radiusMm);
+  return Number.isFinite(radius) && radius > 0;
 }

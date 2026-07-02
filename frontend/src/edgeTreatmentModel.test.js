@@ -107,10 +107,30 @@ describe("edge treatment model", () => {
 
     assert.equal(enabled.enabled, true);
     assert.equal(enabled.treatment, "fillet");
-    assert.equal(enabled.status, "OK");
+    assert.equal(enabled.status, "INVALID");
     assert.equal(disabled.enabled, false);
     assert.equal(disabled.treatment, "none");
     assert.equal(disabled.status, "OFF");
+  });
+
+  test("reenabling a default-none row restores a positive fillet radius in payload", () => {
+    const baseRow = edgeTreatmentRows(manifest).find((row) => row.policyId === "blade_tip_or_shroud.default");
+    const overrides = updateTransitionRow({}, "blade_tip_or_shroud.default", { enabled: true }, baseRow);
+    const override = overrides["blade_tip_or_shroud.default"];
+    const effective = effectiveTransitionRow(baseRow, override);
+
+    assert.equal(override.enabled, true);
+    assert.equal(override.treatment, "fillet");
+    assert.equal(override.radius_mm, 1);
+    assert.equal(effective.radiusMm, 1);
+    assert.equal(effective.status, "OK");
+    assert.deepEqual(buildTransitionOverridePayload(overrides), {
+      "blade_tip_or_shroud.default": {
+        enabled: true,
+        treatment: "fillet",
+        radius_mm: 1,
+      },
+    });
   });
 
   test("buildTransitionOverridePayload omits empty overrides but keeps explicit disabled none override", () => {
@@ -183,6 +203,23 @@ describe("edge treatment model", () => {
           enabled: true,
           treatment: "fillet",
           radius_mm: -1,
+          continuity: "G1",
+        },
+      },
+    });
+
+    assert.equal(rows[0].status, "INVALID");
+  });
+
+  test("edgeTreatmentRows marks zero radius active treatment as invalid", () => {
+    const rows = edgeTreatmentRows({
+      edge_families: { blade_root_to_hub: { scope: "blade_pattern" } },
+      transition_policies: {
+        "blade_root_to_hub.default": {
+          edge_family: "blade_root_to_hub",
+          enabled: true,
+          treatment: "fillet",
+          radius_mm: 0,
           continuity: "G1",
         },
       },

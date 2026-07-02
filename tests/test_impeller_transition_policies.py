@@ -240,3 +240,52 @@ def test_resolve_transition_policies_rejects_negative_radius_override():
             {"root_fillet_radius_mm": 8.0},
             overrides={"blade_root_to_hub.default": {"radius_mm": -1.0}},
         )
+
+
+def test_resolve_transition_policies_rejects_enabled_non_none_zero_radius_after_overrides():
+    with pytest.raises(TransitionPolicyError, match="positive transition radius"):
+        resolve_transition_policies(
+            {
+                "blade_tip_or_shroud": {
+                    "default_treatment": "none",
+                    "default_radius_parameter": "tip_edge_radius_mm",
+                }
+            },
+            {"tip_edge_radius_mm": 4.0},
+            overrides={
+                "blade_tip_or_shroud.default": {
+                    "enabled": True,
+                    "treatment": "fillet",
+                    "radius_mm": 0.0,
+                }
+            },
+        )
+
+
+def test_resolve_transition_policies_allows_disabled_or_none_zero_radius():
+    disabled = resolve_transition_policies(
+        {
+            "blade_tip_or_shroud": {
+                "default_treatment": "fillet",
+                "default_radius_parameter": "tip_edge_radius_mm",
+            }
+        },
+        {"tip_edge_radius_mm": 0.0},
+        overrides={"blade_tip_or_shroud.default": {"enabled": False}},
+    )
+    none = resolve_transition_policies(
+        {
+            "blade_tip_or_shroud": {
+                "default_treatment": "fillet",
+                "default_radius_parameter": "tip_edge_radius_mm",
+            }
+        },
+        {"tip_edge_radius_mm": 0.0},
+        overrides={"blade_tip_or_shroud.default": {"enabled": False, "treatment": "none", "radius_mm": 0.0}},
+    )
+
+    assert disabled["blade_tip_or_shroud.default"]["enabled"] is False
+    assert disabled["blade_tip_or_shroud.default"]["radius_mm"] == 0.0
+    assert none["blade_tip_or_shroud.default"]["enabled"] is False
+    assert none["blade_tip_or_shroud.default"]["treatment"] == "none"
+    assert none["blade_tip_or_shroud.default"]["radius_mm"] == 0.0
