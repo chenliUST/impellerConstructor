@@ -897,21 +897,6 @@ def _surface_graph(
             "relation": "shared_hub_shell_definition",
         },
     ]
-    if solid_features:
-        edges.extend(
-            [
-                {
-                    "id": "hub_top_cap_outer_edge",
-                    "surfaces": ["outer_hub_shell_surface", "hub_top_cap_face"],
-                    "relation": "closed_hub_solid_boundary",
-                },
-                {
-                    "id": "mounting_bore_top_edge",
-                    "surfaces": ["mounting_bore_cylinder", "hub_top_cap_face"],
-                    "relation": "closed_mounting_bore_boundary",
-                },
-            ]
-        )
     boundary_curves: dict[str, Any] = {}
     named_boundary_curves: list[dict[str, Any]] = []
     for blade in sampled_blades:
@@ -1225,6 +1210,9 @@ def _annotate_transition_edge_metadata(
             continue
         policy_id = f"{edge_family}.default"
         if transition_policies is not None and policy_id not in transition_policies:
+            annotated_edges.append(edge)
+            continue
+        if not transition_surface_ids:
             annotated_edges.append(edge)
             continue
         annotated_edges.append(

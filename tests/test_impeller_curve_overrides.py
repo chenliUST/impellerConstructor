@@ -140,7 +140,7 @@ def test_axisymmetric_kernel_rejects_non_monotone_curve_override():
         )
 
 
-def test_axisymmetric_kernel_filters_surfaces_by_generation_stage():
+def test_impeller_geometry_stage_filters_surface_graph():
     hub_only = build_axisymmetric_throughflow_nurbs_geometry(PARAMS, FACETS, geometry_stage="hub_support")
     blades = build_axisymmetric_throughflow_nurbs_geometry(PARAMS, FACETS, geometry_stage="blade_surfaces")
     full = build_axisymmetric_throughflow_nurbs_geometry(PARAMS, FACETS, geometry_stage="edge_closures")

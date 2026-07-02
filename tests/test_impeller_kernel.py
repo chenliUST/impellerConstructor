@@ -537,15 +537,20 @@ def test_v07_surface_graph_edges_include_family_and_policy_metadata():
         service = RuleSynthesisService(Path(directory))
         engine = service.synthesize("impeller", "radial_open_reference_v0_7")
         run = service.instantiate(engine.engine_id, {})
+        staged_run = service.instantiate(engine.engine_id, {}, geometry_stage="blade_surfaces")
 
     manifest = run.manifest
     edges = manifest["geometry"]["surface_graph"]["edges"]
+    edge_ids = {edge["id"] for edge in edges}
     policies = manifest["transition_policies"]
     geometry_kernel = manifest["geometry_kernel"]
+    staged_edges = staged_run.manifest["geometry"]["surface_graph"]["edges"]
 
     assert "blade_root_to_hub.default" in policies
     root_edges = [edge for edge in edges if edge.get("edge_family") == "blade_root_to_hub"]
     assert root_edges
+    assert "hub_top_cap_outer_edge" not in edge_ids
+    assert "mounting_bore_top_edge" not in edge_ids
     assert all(edge["transition_policy_id"] == "blade_root_to_hub.default" for edge in root_edges)
     assert all(edge["transition_surface_ids"] for edge in root_edges)
     assert manifest["edge_families"]["blade_root_to_hub"] == manifest["geometry"]["edge_families"]["blade_root_to_hub"]
@@ -554,6 +559,11 @@ def test_v07_surface_graph_edges_include_family_and_policy_metadata():
     kernel_policy = geometry_kernel["transition_policies"]["blade_root_to_hub.default"]
     assert kernel_policy["treatment"] == policies["blade_root_to_hub.default"]["treatment"]
     assert kernel_policy["radius_mm"] == policies["blade_root_to_hub.default"]["radius_mm"]
+    assert not [
+        edge
+        for edge in staged_edges
+        if edge.get("edge_family") == "blade_root_to_hub" and not edge.get("transition_surface_ids")
+    ]
 
 
 def test_axisymmetric_nurbs_blade_edges_are_visible_construction_lines_from_closure_surfaces():
