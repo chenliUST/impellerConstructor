@@ -865,7 +865,15 @@ def _write_exports(
         )
         export_manifests["step"] = {
             **export_manifests["step"],
-            "bounded_brep_status": "deferred",
+            "bounded_brep_status": export_contract.get("bounded_brep_status", "deferred_until_bounded_face_export"),
+            "target_step_exactness": export_contract.get(
+                "target_step_exactness",
+                "surface_graph_trimmed_brep_step",
+            ),
+            "diagnostic_step_exactness": export_contract.get(
+                "diagnostic_step_exactness",
+                "surface_graph_bounded_unsewn_brep_step",
+            ),
             "limitations": [
                 "bounded_brep_construction_deferred_to_task_5",
                 "step_is_surface_graph_mesh_not_trimmed_brep",
@@ -1024,15 +1032,32 @@ def _model_output_dir_for_run(run_dir: Path, model_output_root: Path | None = No
     return output_dir
 
 
-def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None) -> dict[str, str]:
+def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None) -> dict[str, Any]:
     export_contract = (dsl_context or {}).get("export_contract", {})
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_bounded_brep":
+        step_exactness = export_contract.get("step_exactness", "surface_graph_mesh_step")
+        target_step_exactness = export_contract.get("target_step_exactness", "surface_graph_trimmed_brep_step")
+        diagnostic_step_exactness = export_contract.get(
+            "diagnostic_step_exactness",
+            "surface_graph_bounded_unsewn_brep_step",
+        )
+        bounded_brep_status = export_contract.get("bounded_brep_status", "deferred_until_bounded_face_export")
         return {
             "mode": "surface_graph_bounded_brep",
             "cad_exports": "deferred",
             "source": "geometry.surface_graph",
             "view": export_contract.get("default_view", "cad_review_360"),
-            "step_exactness": "surface_graph_mesh_step",
+            "step_exactness": step_exactness,
+            "target_step_exactness": target_step_exactness,
+            "diagnostic_step_exactness": diagnostic_step_exactness,
+            "bounded_brep_status": bounded_brep_status,
+            "export_contract": {
+                "mode": "surface_graph_bounded_brep",
+                "step_exactness": step_exactness,
+                "target_step_exactness": target_step_exactness,
+                "diagnostic_step_exactness": diagnostic_step_exactness,
+                "bounded_brep_status": bounded_brep_status,
+            },
             "reason": "Task 2 writes graph-derived mesh STEP/STL review outputs; bounded BREP construction is deferred",
         }
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":

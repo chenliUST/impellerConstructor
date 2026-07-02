@@ -10,6 +10,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 ONTOLOGY_BASE = PACKAGE_ROOT / "ontology" / "impeller"
 DSL_BASE = PACKAGE_ROOT / "dsl" / "impeller" / "axisymmetric_throughflow_radial_bladed"
 DEFAULT_DSL_VERSION = "v0_2"
+SUPPORTED_V07_DEFAULT_TREATMENTS = {"none", "chamfer", "fillet"}
 
 
 @dataclass(frozen=True)
@@ -197,6 +198,12 @@ def _validate_v07_edge_family_contracts(bundle: ImpellerDslBundle) -> None:
             for field_name in ["default_treatment", "default_radius_parameter"]:
                 if field_name not in edge_family:
                     raise ValueError(f"constructor {constructor_id} edge family {edge_family_id} missing {field_name}")
+            default_treatment = edge_family["default_treatment"]
+            if default_treatment not in SUPPORTED_V07_DEFAULT_TREATMENTS:
+                raise ValueError(
+                    f"constructor {constructor_id} edge family {edge_family_id} "
+                    f"has unsupported default_treatment {default_treatment}"
+                )
 
     for preset_id, preset in bundle.presets.items():
         constructor_id = preset["constructor_id"]

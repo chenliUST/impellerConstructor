@@ -1,5 +1,4 @@
 import copy
-import json
 from pathlib import Path
 
 import pytest
@@ -20,7 +19,19 @@ def test_v07_bundle_loads_schema_and_transition_resources():
         "radial_closed_reference_v0_7",
     }
     assert bundle.export_contracts["surface_graph_bounded_brep"]["mode"] == "surface_graph_bounded_brep"
-    assert bundle.export_contracts["surface_graph_bounded_brep"]["step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert bundle.export_contracts["surface_graph_bounded_brep"]["step_exactness"] == "surface_graph_mesh_step"
+    assert (
+        bundle.export_contracts["surface_graph_bounded_brep"]["target_step_exactness"]
+        == "surface_graph_trimmed_brep_step"
+    )
+    assert (
+        bundle.export_contracts["surface_graph_bounded_brep"]["diagnostic_step_exactness"]
+        == "surface_graph_bounded_unsewn_brep_step"
+    )
+    assert (
+        bundle.export_contracts["surface_graph_bounded_brep"]["bounded_brep_status"]
+        == "deferred_until_bounded_face_export"
+    )
 
 
 def test_v07_runtime_exposes_edge_families_and_default_policies():
@@ -70,6 +81,21 @@ def test_v07_validation_requires_edge_family_default_fields(field_name):
     with pytest.raises(
         ValueError,
         match=f"constructor {constructor_id} edge family blade_root_to_hub missing {field_name}",
+    ):
+        dsl_resources._validate_bundle(bundle)
+
+
+def test_v07_validation_rejects_unsupported_edge_family_default_treatment():
+    bundle = copy.deepcopy(load_impeller_dsl_bundle("v0_7"))
+    constructor_id = bundle.presets["radial_open_reference_v0_7"]["constructor_id"]
+    bundle.constructors[constructor_id]["edge_families"]["blade_root_to_hub"]["default_treatment"] = "blend"
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            f"constructor {constructor_id} edge family blade_root_to_hub "
+            "has unsupported default_treatment blend"
+        ),
     ):
         dsl_resources._validate_bundle(bundle)
 
@@ -140,6 +166,8 @@ def test_v07_bounded_export_uses_deferred_surface_graph_mesh_route(tmp_path, mon
     assert Path(exports["stl"]).parent == model_output_root
     assert Path(exports["manifest"]).parent == model_output_root
     assert export_manifests["step"]["export_exactness"] == "surface_graph_mesh_step"
+    assert export_manifests["step"]["bounded_brep_status"] == "deferred_until_bounded_face_export"
+    assert export_manifests["step"]["target_step_exactness"] == "surface_graph_trimmed_brep_step"
     assert export_manifests["stl"]["export_exactness"] == "surface_graph_sampled_mesh"
 
     strategy = service_module._export_strategy(
@@ -148,4 +176,42 @@ def test_v07_bounded_export_uses_deferred_surface_graph_mesh_route(tmp_path, mon
     )
     assert strategy["mode"] == "surface_graph_bounded_brep"
     assert strategy["cad_exports"] == "deferred"
-    assert "surface_graph_trimmed_brep_step" not in json.dumps(strategy)
+    assert strategy["step_exactness"] == "surface_graph_mesh_step"
+    assert strategy["target_step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert strategy["step_exactness"] != strategy["target_step_exactness"]
+
+
+def test_v07_service_instantiates_bounded_brep_as_deferred_mesh_bridge(tmp_path):
+    model_output_root = tmp_path / "model-output"
+    service = service_module.RuleSynthesisService(tmp_path / "workspace", model_output_root=model_output_root)
+
+    engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+    run = service.instantiate(engine.engine_id, {})
+    manifest = run.manifest
+
+    assert manifest["preset_id"] == "radial_open_reference_v0_7"
+    assert manifest["export_strategy"]["mode"] == "surface_graph_bounded_brep"
+    assert manifest["export_strategy"]["cad_exports"] == "deferred"
+    assert manifest["export_strategy"]["step_exactness"] == "surface_graph_mesh_step"
+    assert manifest["export_strategy"]["target_step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert manifest["export_strategy"]["step_exactness"] != manifest["export_strategy"]["target_step_exactness"]
+    assert manifest["export_strategy"]["bounded_brep_status"] == "deferred_until_bounded_face_export"
+
+    export_contract = manifest["export_strategy"]["export_contract"]
+    assert export_contract["step_exactness"] == "surface_graph_mesh_step"
+    assert export_contract["target_step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert export_contract["bounded_brep_status"] == "deferred_until_bounded_face_export"
+
+    step_manifest = manifest["export_manifests"]["step"]
+    assert step_manifest["export_exactness"] == "surface_graph_mesh_step"
+    assert step_manifest["bounded_brep_status"] == "deferred_until_bounded_face_export"
+    assert step_manifest["target_step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert "step_is_surface_graph_mesh_not_trimmed_brep" in step_manifest["limitations"]
+
+    step_path = Path(manifest["exports"]["step"])
+    stl_path = Path(manifest["exports"]["stl"])
+    manifest_path = Path(manifest["exports"]["manifest"])
+    assert step_path.parent == model_output_root
+    assert step_path.exists()
+    assert stl_path.exists()
+    assert manifest_path.exists()
