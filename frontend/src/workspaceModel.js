@@ -1,3 +1,5 @@
+import { isTransitionSurface } from "./meshOverlayModel.js";
+
 export const layerSchema = [
   { id: "shaded_surfaces", label: "Shaded surfaces" },
   { id: "hub_support", label: "Hub support" },
@@ -18,9 +20,9 @@ export function defaultVisibleLayers() {
   return Object.fromEntries(layerSchema.map((layer) => [layer.id, true]));
 }
 
-export function layerForSurface(surface = {}) {
+export function layerForSurface(surface = {}, meshManifest = null) {
   const cfdRole = surface.cfd_role || "";
-  if (isTransitionSurface(surface)) {
+  if (isTransitionSurface(surface, meshManifest)) {
     return "transition_surfaces";
   }
   if (surface.role === "solid_context" || cfdRole === "solid_context") {
@@ -59,16 +61,7 @@ export function layerForSurface(surface = {}) {
   return "shaded_surfaces";
 }
 
-export function isTransitionSurface(surface = {}) {
-  const role = String(surface.role || "");
-  const cfdRole = String(surface.cfd_role || "");
-  return (
-    Boolean(surface.transition_policy_id || surface.edge_family) ||
-    role.includes("fillet") ||
-    role.includes("chamfer") ||
-    cfdRole.includes("transition")
-  );
-}
+export { isTransitionSurface } from "./meshOverlayModel.js";
 
 export function layerForConstructionFeature(feature) {
   const featureLayers = {

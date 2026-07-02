@@ -63,7 +63,8 @@ describe("frontend application files", () => {
     assert.match(panelSource, /transitionRegionRows/);
     assert.match(panelSource, /transition-region-row/);
     assert.match(overlaySource, /triangle_edges/);
-    assert.match(overlaySource, /transitions/);
+    assert.match(overlaySource, /transitionSurfaceIds/);
+    assert.match(overlaySource, /isTransitionSurface/);
     assert.match(workspaceSource, /transition_surfaces/);
   });
 

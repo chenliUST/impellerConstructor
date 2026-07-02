@@ -33,7 +33,14 @@ describe("impeller geometry workspace model", () => {
 
   test("maps transition surfaces before generic blade or edge closure layers", () => {
     assert.equal(layerForSurface({ transition_policy_id: "root.fillet.default", role: "blade_root" }), "transition_surfaces");
-    assert.equal(layerForSurface({ edge_family: "blade_tip_or_shroud", kind: "edge_closure_surface" }), "transition_surfaces");
+    assert.equal(layerForSurface({ edge_family: "blade_tip_or_shroud", kind: "edge_closure_surface" }), "edge_closures");
+    assert.equal(
+      layerForSurface(
+        { id: "blade_00_tip_blend", edge_family: "blade_tip_or_shroud", kind: "edge_closure_surface" },
+        { transition_regions: [{ surface_graph_id: "blade_00_tip_blend" }] },
+      ),
+      "transition_surfaces",
+    );
     assert.equal(layerForSurface({ role: "blade_root_fillet" }), "transition_surfaces");
     assert.equal(layerForSurface({ cfd_role: "leading_edge_transition" }), "transition_surfaces");
   });

@@ -1,3 +1,5 @@
+import { isTransitionSurface } from "./meshOverlayModel.js";
+
 const CFD_HIDDEN_ROLES = new Set([
   "construction_support_only",
   "reference_only",
@@ -24,7 +26,7 @@ export function surfaceVisibleInView(surface, viewMode, manifest = null) {
   if ([surface?.role, surface?.cfd_role, surface?.kind, surface?.assembly_role].some((role) => CFD_HIDDEN_ROLES.has(role))) {
     return false;
   }
-  if (viewMode === "mesh" && (surface?.transition_policy_id || surface?.edge_family)) {
+  if (viewMode === "mesh" && isTransitionSurface(surface, cfdSurfaceMeshManifest(manifest))) {
     return true;
   }
   const patchSurfaceIds = cfdPatchSurfaceIds(manifest);
@@ -103,6 +105,10 @@ export function cfdPatchSurfaceIds(manifest) {
 
 function cfdFull360Manifest(manifest) {
   return manifest?.simulation_manifests?.cfd_full_360;
+}
+
+function cfdSurfaceMeshManifest(manifest) {
+  return manifest?.simulation_manifests?.cfd_surface_mesh;
 }
 
 function unscopedInstanceId(instanceId) {

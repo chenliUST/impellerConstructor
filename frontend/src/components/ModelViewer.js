@@ -3,8 +3,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
+import { isTransitionSurface } from "../meshOverlayModel.js";
 import { patchBoundaryCurveIds, patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js";
-import { defaultVisibleLayers, isTransitionSurface, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
+import { defaultVisibleLayers, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
 
 const h = React.createElement;
 
@@ -382,12 +383,12 @@ function createSurfaceGraphGroup(
                   : 0.92),
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.layer = layerForSurface(surface);
+    mesh.userData.layer = layerForSurface(surface, cfdSurfaceMeshManifest(manifest));
     mesh.userData.surfaceId = surfaceId;
     group.add(mesh);
 
     if (simulationViewMode === "mesh" && meshOverlayMode !== "off") {
-      const overlay = createMeshEdgeOverlay(geometry, surface);
+      const overlay = createMeshEdgeOverlay(geometry, surface, cfdSurfaceMeshManifest(manifest));
       group.add(overlay);
     }
   }
@@ -395,8 +396,8 @@ function createSurfaceGraphGroup(
   return group;
 }
 
-function createMeshEdgeOverlay(geometry, surface) {
-  const transitionSurface = isTransitionSurface(surface);
+function createMeshEdgeOverlay(geometry, surface, meshManifest = null) {
+  const transitionSurface = isTransitionSurface(surface, meshManifest);
   const material = new THREE.LineBasicMaterial({
     color: transitionSurface ? "#f97316" : "#1f2933",
     transparent: true,
@@ -423,6 +424,10 @@ function meshInspectionStatus(manifest) {
   const triangles = Number(meshManifest.triangle_count || 0);
   const degenerate = Number(meshManifest.degenerate_triangle_count || 0);
   return `CFD360 mesh inspection: ${triangles} triangles, ${degenerate} degenerate.`;
+}
+
+function cfdSurfaceMeshManifest(manifest) {
+  return manifest?.simulation_manifests?.cfd_surface_mesh;
 }
 
 function surfaceGridGeometry(grid, center) {
