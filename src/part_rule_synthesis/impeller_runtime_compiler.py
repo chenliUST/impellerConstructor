@@ -6,7 +6,7 @@ from part_rule_synthesis.impeller_dsl_resources import ImpellerDslBundle, load_i
 from part_rule_synthesis.impeller_shape_control import normalize_shape_control_space
 
 
-IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4", "v0_5", "v0_6")
+IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4", "v0_5", "v0_6", "v0_7")
 
 IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
     "blade_count": {"min": 2, "max": 64},
@@ -46,6 +46,7 @@ def compile_impeller_runtime_preset(
     bundle, resolved_preset_id = _bundle_for_preset(requested_preset_id)
     preset = bundle.presets[resolved_preset_id]
     constructor = bundle.constructors[preset["constructor_id"]]
+    parameters = preset["parameter_values"]
     facets = {**constructor["classification"], **(facet_overrides or {})}
     _validate_facets(bundle, facets)
     shape_control = normalize_shape_control_space(bundle.shape_control_schema, bundle.shape_controls)
@@ -62,7 +63,7 @@ def compile_impeller_runtime_preset(
         "constructor_family": bundle.slice["constructor_family"],
         "constructor_id": constructor["constructor_id"],
         "facets": facets,
-        "parameters": _parameter_specs(preset["parameter_values"]),
+        "parameters": _parameter_specs(parameters),
         "features": _features_for_constructor(constructor),
         "constraints": _constraints_for_constructor(constructor),
         "selected_rules": _selected_rules(bundle, constructor, simulation_views),
@@ -74,6 +75,11 @@ def compile_impeller_runtime_preset(
         "solid_features": constructor.get("solid_features", {}),
         "profile_defaults": constructor.get("profile_defaults", {}),
         "feature_graph": constructor.get("feature_graph", {}),
+        "edge_families": constructor.get("edge_families", {}),
+        "transition_policy_defaults": _transition_policy_defaults(
+            constructor.get("edge_families", {}),
+            parameters,
+        ),
         "simulation_views": simulation_views,
         "export_contract": export_contract,
         "shape_control": shape_control,
@@ -147,6 +153,26 @@ def _parameter_specs(values: dict[str, float | int]) -> dict[str, dict[str, floa
     return specs
 
 
+def _transition_policy_defaults(
+    edge_families: dict[str, Any],
+    parameters: dict[str, float | int],
+) -> dict[str, dict[str, Any]]:
+    policies = {}
+    for family_id, family in edge_families.items():
+        parameter_name = family["default_radius_parameter"]
+        policies[f"{family_id}.default"] = {
+            "edge_family": family_id,
+            "enabled": True,
+            "treatment": family["default_treatment"],
+            "radius_mm": float(parameters[parameter_name]),
+            "continuity": "G1" if family["default_treatment"] == "fillet" else "G0",
+            "applies_to": "all_pattern_instances",
+            "maps_to_parameters": [parameter_name],
+            "overrides": [],
+        }
+    return policies
+
+
 def _features_for_constructor(constructor: dict[str, Any]) -> list[str]:
     features = [
         "hub_material_solid",
@@ -213,7 +239,7 @@ def _selected_rules(
     constructor: dict[str, Any],
     simulation_views: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
-    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6"}:
+    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7"}:
         view_ids = simulation_views or constructor.get("simulation_views", {})
         export_contract_ids = constructor.get("export_contracts", {})
         return [

@@ -31,6 +31,11 @@ VERSION_CASES = [
         "0.6",
         ["radial_open_reference_v0_6", "radial_closed_reference_v0_6"],
     ),
+    (
+        "v0_7",
+        "0.7",
+        ["radial_open_reference_v0_7", "radial_closed_reference_v0_7"],
+    ),
 ]
 
 
