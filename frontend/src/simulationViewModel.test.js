@@ -24,6 +24,7 @@ describe("simulation view model", () => {
     assert.equal(surfaceVisibleInView({ role: "construction_support_only" }, "cfd_full_360"), false);
     assert.equal(surfaceVisibleInView({ role: "mounting_bore" }, "cfd_full_360"), false);
     assert.equal(surfaceVisibleInView({ cfd_role: "blade_pressure" }, "cfd_full_360"), true);
+    assert.equal(surfaceVisibleInView({ cfd_role: "leading_edge_transition" }, "mesh"), true);
     assert.equal(surfaceVisibleInView({ role: "construction_support_only" }, "cad_review_360"), true);
   });
 

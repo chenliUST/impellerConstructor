@@ -27,6 +27,7 @@ describe("frontend application files", () => {
       "src/components/MeshInspectionPanel.js",
       "src/components/ModelViewer.js",
       "src/components/ManifestPanel.js",
+      "src/meshOverlayModel.js",
       "src/meshViewModel.js",
       "src/simulationViewModel.js",
       "src/workspaceModel.js",
@@ -44,6 +45,23 @@ describe("frontend application files", () => {
     assert.doesNotMatch(viewerSource, /wireframe:\s*true/);
     assert.match(viewerSource, /LineSegments/);
     assert.match(appSource, /useState\(false\)/);
+  });
+
+  test("viewer exposes mesh overlay layers for CFD360 mesh inspection", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const panelSource = readFileSync(resolve(root, "src/components/MeshInspectionPanel.js"), "utf-8");
+    const overlaySource = readFileSync(resolve(root, "src/meshOverlayModel.js"), "utf-8");
+    const workspaceSource = readFileSync(resolve(root, "src/workspaceModel.js"), "utf-8");
+
+    assert.match(viewerSource, /meshOverlayMode\s*=\s*"triangle_edges"/);
+    assert.match(viewerSource, /WireframeGeometry/);
+    assert.match(viewerSource, /transition_mesh_edges/);
+    assert.match(viewerSource, /mesh_edges/);
+    assert.match(panelSource, /transitionRegionRows/);
+    assert.match(panelSource, /transition-region-row/);
+    assert.match(overlaySource, /triangle_edges/);
+    assert.match(overlaySource, /transitions/);
+    assert.match(workspaceSource, /transition_surfaces/);
   });
 
   test("parameter panel uses direct numeric inputs without range sliders", () => {
