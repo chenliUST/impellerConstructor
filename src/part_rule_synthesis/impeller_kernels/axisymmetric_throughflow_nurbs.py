@@ -38,6 +38,8 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     material_domain: dict[str, Any] | None = None,
     solid_features: dict[str, Any] | None = None,
     profile_defaults: dict[str, Any] | None = None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
@@ -60,6 +62,7 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     )
     construction_lines = _construction_lines(surface_graph, sampled_blades)
     surface_graph, construction_lines = _filter_by_geometry_stage(surface_graph, construction_lines, stage)
+    surface_graph = _annotate_transition_edge_metadata(surface_graph, edge_families, transition_policies)
     validity = _validity_report(
         surface_graph,
         sampled_blades,
@@ -153,6 +156,8 @@ def build_axisymmetric_throughflow_nurbs_geometry(
         "cad_features": _cad_features(resolved_facets),
         "construction_lines": construction_lines,
         "validity": validity,
+        "edge_families": edge_families or {},
+        "transition_policies": transition_policies or {},
     }
 
 
@@ -890,6 +895,21 @@ def _surface_graph(
             "relation": "shared_hub_shell_definition",
         },
     ]
+    if solid_features:
+        edges.extend(
+            [
+                {
+                    "id": "hub_top_cap_outer_edge",
+                    "surfaces": ["outer_hub_shell_surface", "hub_top_cap_face"],
+                    "relation": "closed_hub_solid_boundary",
+                },
+                {
+                    "id": "mounting_bore_top_edge",
+                    "surfaces": ["mounting_bore_cylinder", "hub_top_cap_face"],
+                    "relation": "closed_mounting_bore_boundary",
+                },
+            ]
+        )
     boundary_curves: dict[str, Any] = {}
     named_boundary_curves: list[dict[str, Any]] = []
     for blade in sampled_blades:
@@ -1181,6 +1201,139 @@ def _surface_graph(
         "named_boundary_curves": named_boundary_curves,
     }
     return _apply_display_policy(surface_graph, display_policy)
+
+
+def _annotate_transition_edge_metadata(
+    surface_graph: dict[str, Any],
+    edge_families: dict[str, Any] | None,
+    transition_policies: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not edge_families:
+        return surface_graph
+    surface_ids = {surface["id"] for surface in surface_graph.get("surfaces", [])}
+    annotated_edges = []
+    for edge in surface_graph.get("edges", []):
+        annotation = _transition_edge_annotation(edge, surface_ids)
+        if annotation is None:
+            annotated_edges.append(edge)
+            continue
+        edge_family, transition_surface_ids = annotation
+        if edge_family not in edge_families:
+            annotated_edges.append(edge)
+            continue
+        policy_id = f"{edge_family}.default"
+        if transition_policies is not None and policy_id not in transition_policies:
+            annotated_edges.append(edge)
+            continue
+        annotated_edges.append(
+            {
+                **edge,
+                "edge_family": edge_family,
+                "transition_policy_id": policy_id,
+                "transition_surface_ids": transition_surface_ids,
+            }
+        )
+    return {**surface_graph, "edges": annotated_edges}
+
+
+def _transition_edge_annotation(
+    edge: dict[str, Any],
+    surface_ids: set[str],
+) -> tuple[str, list[str]] | None:
+    edge_id = str(edge.get("id", ""))
+    edge_surfaces = [str(surface_id) for surface_id in edge.get("surfaces", [])]
+    if edge_id == "outer_hub_shell_bottom_edge":
+        return _annotation_with_existing_surface(
+            "hub_bottom_outer",
+            ["hub_chamfer_bottom_outer_surface"],
+            surface_ids,
+        )
+    if edge_id == "hub_top_cap_outer_edge":
+        return _annotation_with_existing_surface(
+            "hub_top_outer",
+            ["hub_chamfer_top_cap_surface"],
+            surface_ids,
+        )
+    if edge_id == "mounting_bore_top_edge":
+        return _annotation_with_existing_surface(
+            "mounting_bore_top",
+            ["hub_chamfer_bore_top_surface"],
+            surface_ids,
+        )
+    if edge_id == "mounting_bore_bottom_edge":
+        return _annotation_with_existing_surface(
+            "mounting_bore_bottom",
+            ["hub_chamfer_bore_bottom_surface"],
+            surface_ids,
+        )
+
+    blade_prefix = _blade_prefix_from_edge_id(edge_id)
+    if blade_prefix is None:
+        return None
+    if edge_id.endswith(("_pressure_leading_edge", "_suction_leading_edge")):
+        return _annotation_with_existing_surface(
+            "blade_leading_edge",
+            _edge_surfaces_matching(edge_surfaces, "leading_edge")
+            + [f"{blade_prefix}_leading_edge_fillet_surface", f"{blade_prefix}_leading_edge_surface"],
+            surface_ids,
+        )
+    if edge_id.endswith(("_pressure_trailing_edge", "_suction_trailing_edge")):
+        return _annotation_with_existing_surface(
+            "blade_trailing_edge",
+            _edge_surfaces_matching(edge_surfaces, "trailing_edge")
+            + [f"{blade_prefix}_trailing_edge_fillet_surface", f"{blade_prefix}_trailing_edge_surface"],
+            surface_ids,
+        )
+    if edge_id.endswith(("_pressure_root_closure_edge", "_suction_root_closure_edge", "_root_hub_conformal_edge")):
+        return _annotation_with_existing_surface(
+            "blade_root_to_hub",
+            _edge_surfaces_matching(edge_surfaces, "_root_")
+            + [f"{blade_prefix}_root_fillet_surface", f"{blade_prefix}_root_closure_surface"],
+            surface_ids,
+        )
+    if edge_id.endswith(("_pressure_hub_edge", "_suction_hub_edge")):
+        return _annotation_with_existing_surface(
+            "blade_root_to_hub",
+            [f"{blade_prefix}_root_fillet_surface", f"{blade_prefix}_root_closure_surface"],
+            surface_ids,
+        )
+    if edge_id.endswith(("_pressure_tip_closure_edge", "_suction_tip_closure_edge", "_tip_conformal_edge")):
+        return _annotation_with_existing_surface(
+            "blade_tip_or_shroud",
+            _edge_surfaces_matching(edge_surfaces, "_tip_")
+            + [f"{blade_prefix}_tip_edge_fillet_surface", f"{blade_prefix}_tip_closure_surface"],
+            surface_ids,
+        )
+    if edge_id.endswith(("_pressure_tip_edge", "_suction_tip_edge")):
+        return _annotation_with_existing_surface(
+            "blade_tip_or_shroud",
+            [f"{blade_prefix}_tip_edge_fillet_surface", f"{blade_prefix}_tip_closure_surface"],
+            surface_ids,
+        )
+    return None
+
+
+def _annotation_with_existing_surface(
+    edge_family: str,
+    candidate_surface_ids: list[str],
+    surface_ids: set[str],
+) -> tuple[str, list[str]]:
+    transition_surface_ids = []
+    for surface_id in candidate_surface_ids:
+        if surface_id in surface_ids and surface_id not in transition_surface_ids:
+            transition_surface_ids.append(surface_id)
+    return edge_family, transition_surface_ids
+
+
+def _edge_surfaces_matching(edge_surfaces: list[str], token: str) -> list[str]:
+    return [surface_id for surface_id in edge_surfaces if token in surface_id]
+
+
+def _blade_prefix_from_edge_id(edge_id: str) -> str | None:
+    parts = edge_id.split("_")
+    if len(parts) >= 2 and parts[0] == "blade" and parts[1].isdigit():
+        return f"blade_{parts[1]}"
+    return None
 
 
 def _hub_solid_surfaces(

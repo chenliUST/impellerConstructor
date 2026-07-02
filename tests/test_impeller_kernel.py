@@ -527,6 +527,30 @@ def test_v06_tip_fillet_radius_participates_in_feasibility_check():
     assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
 
 
+def test_v07_surface_graph_edges_include_family_and_policy_metadata():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(engine.engine_id, {})
+
+    manifest = run.manifest
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    policies = manifest["transition_policies"]
+
+    assert "blade_root_to_hub.default" in policies
+    root_edges = [edge for edge in edges if edge.get("edge_family") == "blade_root_to_hub"]
+    assert root_edges
+    assert all(edge["transition_policy_id"] == "blade_root_to_hub.default" for edge in root_edges)
+    assert all(edge["transition_surface_ids"] for edge in root_edges)
+    assert manifest["edge_families"]["blade_root_to_hub"] == manifest["geometry"]["edge_families"]["blade_root_to_hub"]
+    assert manifest["geometry"]["transition_policies"]["blade_root_to_hub.default"] == policies["blade_root_to_hub.default"]
+
+
 def test_axisymmetric_nurbs_blade_edges_are_visible_construction_lines_from_closure_surfaces():
     parameters = {
         "blade_count": 7,

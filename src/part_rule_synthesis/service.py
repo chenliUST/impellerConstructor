@@ -182,6 +182,8 @@ class RuleSynthesisService:
             curve_overrides=normalized_curve_overrides,
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
+            edge_families=edge_families,
+            transition_policies=transition_policies,
         )
         geometry_kernel = _geometry_kernel_metadata(
             dsl["part_family"],
@@ -257,7 +259,9 @@ class RuleSynthesisService:
         }
         if transition_policies is not None:
             manifest["transition_overrides"] = normalized_transition_overrides
-            manifest["transition_policies"] = transition_policies
+            manifest["transition_policies"] = geometry_metadata.get("transition_policies", transition_policies)
+        if geometry_metadata.get("edge_families"):
+            manifest["edge_families"] = geometry_metadata["edge_families"]
         if manifest["dsl_version"] in {"0.4", "0.5"}:
             manifest["campaign_signature"] = build_campaign_signature(
                 _campaign_signature_runtime_context(dsl),
@@ -669,9 +673,16 @@ def _geometry_metadata(
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
     dsl_context: dict[str, Any] | None = None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     is_impeller = part_family in {"centrifugal_impeller", "impeller"}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {}) if is_impeller else {}
+    impeller_geometry_options = _impeller_geometry_options(dsl_context)
+    if edge_families:
+        impeller_geometry_options["edge_families"] = edge_families
+    if transition_policies is not None:
+        impeller_geometry_options["transition_policies"] = transition_policies
     impeller_geometry = (
         build_impeller_geometry(
             parameters,
@@ -679,7 +690,7 @@ def _geometry_metadata(
             profile_overrides=profile_overrides,
             curve_overrides=curve_overrides,
             geometry_stage=geometry_stage,
-            **_impeller_geometry_options(dsl_context),
+            **impeller_geometry_options,
         )
         if is_impeller
         else {}
@@ -698,6 +709,8 @@ def _geometry_metadata(
         "sampled_blades": impeller_geometry.get("sampled_blades", []) if is_impeller else [],
         "surface_graph": impeller_geometry.get("surface_graph", {}) if is_impeller else {},
         "validity": impeller_geometry.get("validity", {}) if is_impeller else {},
+        "edge_families": impeller_geometry.get("edge_families", {}) if is_impeller else {},
+        "transition_policies": impeller_geometry.get("transition_policies", {}) if is_impeller else {},
         "named_regions": (
             ["hub.outer_surface", "blade_root", "blade_airfoil"]
             if part_family == "turbine_rotor"
