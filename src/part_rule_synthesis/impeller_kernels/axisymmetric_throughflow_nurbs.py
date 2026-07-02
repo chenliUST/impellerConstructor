@@ -843,7 +843,15 @@ def _surface_graph(
             "boundary_ids": ["hub_inlet_circle", "hub_outlet_circle"],
         }
     ]
-    surfaces.extend(_hub_solid_surfaces(params, hub_profile, solid_features))
+    surfaces.extend(
+        _hub_solid_surfaces(
+            params,
+            hub_profile,
+            solid_features,
+            edge_families=edge_families,
+            transition_policies=transition_policies,
+        )
+    )
     tip_surface_id = "shroud_surface" if facets["shroud_topology"] == "closed" else "tip_reference_surface"
     tip_role = (
         "front_shroud_inner_surface"
@@ -887,7 +895,16 @@ def _surface_graph(
         }
     )
     if facets["shroud_topology"] == "closed":
-        surfaces.extend(_hood_shell_surfaces(params, tip_profile, material_domain, solid_features))
+        surfaces.extend(
+            _hood_shell_surfaces(
+                params,
+                tip_profile,
+                material_domain,
+                solid_features,
+                edge_families=edge_families,
+                transition_policies=transition_policies,
+            )
+        )
 
     edges = [
         {
@@ -1312,27 +1329,37 @@ def _policy_transition_surface_record(
     surface: dict[str, Any],
     edge_family: str,
     policy: dict[str, Any] | None,
+    *,
+    surface_id: str | None = None,
+    role: str | None = None,
+    feature_id: str | None = None,
+    cfd_patch_group: str | None = None,
+    include_cfd_role: bool = True,
 ) -> dict[str, Any] | None:
     if not _policy_transition_enabled(True, policy):
         return None
     assert policy is not None
     treatment = str(policy["treatment"])
-    feature_id = _transition_feature_id(surface["feature_id"], edge_family, treatment)
+    resolved_surface_id = surface_id or surface["id"]
+    resolved_role = role or surface["role"]
+    resolved_feature_id = feature_id or _transition_feature_id(surface["feature_id"], edge_family, treatment)
     cad_surface = {
         **surface["cad_surface"],
-        "role": surface["role"],
-        "feature_id": feature_id,
+        "id": resolved_surface_id,
+        "role": resolved_role,
+        "feature_id": resolved_feature_id,
         "source": "surface_graph.control_net_transition_surface",
     }
-    return {
+    record = {
         **surface,
+        "id": resolved_surface_id,
         "kind": "transition_surface",
-        "feature_id": feature_id,
+        "role": resolved_role,
+        "feature_id": resolved_feature_id,
         "edge_family": edge_family,
         "transition_policy_id": str(policy.get("policy_id", f"{edge_family}.default")),
         "treatment": treatment,
         "radius_mm": _round(policy["radius_mm"]),
-        "cfd_role": _cfd_role_for_edge_family(edge_family),
         "cad_surface": cad_surface,
         "display": {
             **surface.get("display", {}),
@@ -1341,6 +1368,21 @@ def _policy_transition_surface_record(
             "edge_highlight": True,
         },
     }
+    if include_cfd_role:
+        record["cfd_role"] = _cfd_role_for_edge_family(edge_family)
+    else:
+        record.pop("cfd_role", None)
+    if cfd_patch_group:
+        record["cfd_patch_group"] = cfd_patch_group
+    return record
+
+
+def _edge_family_cfd_patch_group(edge_families: dict[str, Any] | None, edge_family: str) -> str | None:
+    family = (edge_families or {}).get(edge_family)
+    if not isinstance(family, dict):
+        return None
+    patch_group = family.get("cfd_patch_group")
+    return str(patch_group) if patch_group else None
 
 
 def _transition_feature_id(existing_feature_id: str, edge_family: str, treatment: str) -> str:
@@ -1415,25 +1457,25 @@ def _transition_edge_annotation(
     if edge_id == "outer_hub_shell_bottom_edge":
         return _annotation_with_existing_surface(
             "hub_bottom_outer",
-            ["hub_chamfer_bottom_outer_surface"],
+            ["hub_bottom_outer_transition_surface", "hub_chamfer_bottom_outer_surface"],
             surface_ids,
         )
     if edge_id == "hub_top_cap_outer_edge":
         return _annotation_with_existing_surface(
             "hub_top_outer",
-            ["hub_chamfer_top_cap_surface"],
+            ["hub_top_outer_transition_surface", "hub_chamfer_top_cap_surface"],
             surface_ids,
         )
     if edge_id == "mounting_bore_top_edge":
         return _annotation_with_existing_surface(
             "mounting_bore_top",
-            ["hub_chamfer_bore_top_surface"],
+            ["mounting_bore_top_transition_surface", "hub_chamfer_bore_top_surface"],
             surface_ids,
         )
     if edge_id == "mounting_bore_bottom_edge":
         return _annotation_with_existing_surface(
             "mounting_bore_bottom",
-            ["hub_chamfer_bore_bottom_surface"],
+            ["mounting_bore_bottom_transition_surface", "hub_chamfer_bore_bottom_surface"],
             surface_ids,
         )
 
@@ -1534,6 +1576,8 @@ def _hub_solid_surfaces(
     params: dict[str, float],
     hub_profile: dict[str, Any],
     solid_features: dict[str, Any] | None = None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     control_points = hub_profile["control_points"]
     bottom = min(control_points, key=lambda point: point[1])
@@ -1654,6 +1698,8 @@ def _hub_solid_surfaces(
             "display": {"color": "#4b5563", "opacity": 0.86},
             "boundary_ids": ["mounting_bore_bottom_circle", "mounting_bore_top_circle"],
         },
+    ]
+    legacy_transition_surfaces = [
         {
             "id": "hub_chamfer_bottom_outer_surface",
             "kind": "chamfer_surface",
@@ -1703,6 +1749,32 @@ def _hub_solid_surfaces(
             "boundary_ids": ["mounting_bore_bottom_chamfer_a", "mounting_bore_bottom_chamfer_b"],
         },
     ]
+    if transition_policies is not None:
+        transition_specs = [
+            (legacy_transition_surfaces[0], "hub_bottom_outer", "hub_bottom_outer_transition_surface"),
+            (legacy_transition_surfaces[1], "hub_top_outer", "hub_top_outer_transition_surface"),
+            (legacy_transition_surfaces[2], "mounting_bore_top", "mounting_bore_top_transition_surface"),
+            (legacy_transition_surfaces[3], "mounting_bore_bottom", "mounting_bore_bottom_transition_surface"),
+        ]
+        for legacy_surface, edge_family, surface_id in transition_specs:
+            policy = _transition_policy_for_family(transition_policies, edge_family)
+            if policy is None:
+                continue
+            treatment = str(policy["treatment"])
+            transition_surface = _policy_transition_surface_record(
+                legacy_surface,
+                edge_family,
+                policy,
+                surface_id=surface_id,
+                role=f"{edge_family}_{treatment}",
+                feature_id=f"hub.{edge_family}_transition.{treatment}",
+                cfd_patch_group=_edge_family_cfd_patch_group(edge_families, edge_family),
+                include_cfd_role=False,
+            )
+            if transition_surface is not None:
+                surfaces.append(transition_surface)
+    else:
+        surfaces.extend(legacy_transition_surfaces)
     if not solid_features:
         legacy_ids = {"outer_hub_shell_surface", "inner_hub_bottom_face", "mounting_bore_cylinder"}
         return [surface for surface in surfaces if surface["id"] in legacy_ids]
@@ -1714,6 +1786,8 @@ def _hood_shell_surfaces(
     tip_profile: dict[str, Any],
     material_domain: dict[str, Any] | None,
     solid_features: dict[str, Any] | None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     thickness = params["hood_wall_thickness_mm"]
     chamfer = max(0.001, params.get("hood_chamfer_radius_mm", 0.0))
@@ -1802,6 +1876,8 @@ def _hood_shell_surfaces(
             "display": {"color": "#a7bfca", "opacity": 0.7},
             "boundary_ids": ["shroud_outlet_circle", "hood_outer_outlet_circle"],
         },
+    ]
+    legacy_transition_surfaces = [
         {
             "id": "hood_chamfer_outlet_surface",
             "kind": "chamfer_surface",
@@ -1816,6 +1892,24 @@ def _hood_shell_surfaces(
             "boundary_ids": ["hood_outlet_chamfer_a", "hood_outlet_chamfer_b"],
         },
     ]
+    if transition_policies is not None:
+        policy = _transition_policy_for_family(transition_policies, "hood_outlet_lip")
+        if policy is not None:
+            treatment = str(policy["treatment"])
+            transition_surface = _policy_transition_surface_record(
+                legacy_transition_surfaces[0],
+                "hood_outlet_lip",
+                policy,
+                surface_id="hood_outlet_lip_transition_surface",
+                role=f"hood_outlet_lip_{treatment}",
+                feature_id=f"front_hood.hood_outlet_lip_transition.{treatment}",
+                cfd_patch_group=_edge_family_cfd_patch_group(edge_families, "hood_outlet_lip"),
+                include_cfd_role=False,
+            )
+            if transition_surface is not None:
+                surfaces.append(transition_surface)
+    else:
+        surfaces.extend(legacy_transition_surfaces)
     return surfaces
 
 

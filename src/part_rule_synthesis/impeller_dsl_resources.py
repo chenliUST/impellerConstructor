@@ -17,6 +17,7 @@ V07_TRANSITION_RADIUS_PARAMETERS = {
     "root_fillet_radius_mm",
     "tip_edge_radius_mm",
     "hub_chamfer_radius_mm",
+    "hood_chamfer_radius_mm",
 }
 
 

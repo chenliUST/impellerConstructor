@@ -638,6 +638,42 @@ def test_v07_enabled_root_transition_policy_radius_fails_feasibility_when_oversi
     assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
 
 
+def test_v07_hub_edge_treatments_are_policy_linked():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(engine.engine_id, {})
+
+    manifest = run.manifest
+    surfaces = {surface["id"]: surface for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+    expected = {
+        "hub_bottom_outer_transition_surface": ("hub_bottom_outer", "fillet"),
+        "hub_top_outer_transition_surface": ("hub_top_outer", "fillet"),
+        "mounting_bore_top_transition_surface": ("mounting_bore_top", "chamfer"),
+        "mounting_bore_bottom_transition_surface": ("mounting_bore_bottom", "chamfer"),
+    }
+
+    for surface_id, (edge_family, treatment) in expected.items():
+        surface = surfaces[surface_id]
+        policy_id = f"{edge_family}.default"
+        policy = manifest["transition_policies"][policy_id]
+
+        assert surface["kind"] == "transition_surface"
+        assert surface["edge_family"] == edge_family
+        assert surface["transition_policy_id"] == policy_id
+        assert surface["treatment"] == policy["treatment"] == treatment
+        assert surface["radius_mm"] == policy["radius_mm"]
+        assert surface["role"] == f"{edge_family}_{treatment}"
+        assert surface["cad_surface"]["feature_id"] == surface["feature_id"]
+        assert surface["cad_surface"]["source"] == "surface_graph.control_net_transition_surface"
+        assert surface["display"]["edge_highlight"] is True
+
+
 def test_v07_disabled_root_transition_ignores_oversized_legacy_root_fillet_radius():
     from pathlib import Path
     from tempfile import TemporaryDirectory
