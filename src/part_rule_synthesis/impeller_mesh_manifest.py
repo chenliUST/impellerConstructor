@@ -11,7 +11,6 @@ def build_surface_mesh_manifest(
     view_id: str = "cfd_full_360",
 ) -> dict[str, Any]:
     triangulation = triangulate_surface_graph(surface_graph, view_id=view_id)
-    surface_lookup = _surface_lookup(surface_graph)
     triangles = triangulation["triangles"]
     areas = [_triangle_area(triangle["points"]) for triangle in triangles]
     aspect_ratios = [_triangle_aspect_ratio(triangle["points"]) for triangle in triangles]
@@ -37,8 +36,39 @@ def build_surface_mesh_manifest(
             }
             for region in triangulation["triangle_regions"]
         ],
-        "transition_regions": _transition_regions(triangulation["triangle_regions"], surface_lookup),
+        "transition_regions": build_transition_regions(surface_graph, triangulation["triangle_regions"]),
     }
+
+
+def build_transition_regions(
+    surface_graph: dict[str, Any],
+    triangle_regions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    surface_lookup = _surface_lookup(surface_graph)
+    edge_lookup = _edge_transition_lookup(surface_graph)
+    regions: list[dict[str, Any]] = []
+    for region in triangle_regions:
+        surface_id = region["surface_graph_id"]
+        surface = surface_lookup.get(surface_id, {})
+        edge_metadata = edge_lookup.get(surface_id, {})
+        edge_family = str(surface.get("edge_family") or edge_metadata.get("edge_family") or "")
+        transition_policy_id = str(
+            surface.get("transition_policy_id") or edge_metadata.get("transition_policy_id") or ""
+        )
+        if not edge_family and not transition_policy_id:
+            continue
+        regions.append(
+            {
+                "surface_graph_id": surface_id,
+                "feature_id": region["feature_id"],
+                "role": region["role"],
+                "edge_family": edge_family,
+                "transition_policy_id": transition_policy_id,
+                "triangle_start": region["triangle_start"],
+                "triangle_count": region["triangle_count"],
+            }
+        )
+    return regions
 
 
 def _triangle_area(points: list[list[float]]) -> float:
@@ -90,26 +120,24 @@ def _surface_lookup(surface_graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
-def _transition_regions(
-    triangle_regions: list[dict[str, Any]],
-    surface_lookup: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    regions: list[dict[str, Any]] = []
-    for region in triangle_regions:
-        surface = surface_lookup.get(region["surface_graph_id"], {})
-        edge_family = str(surface.get("edge_family") or "")
-        transition_policy_id = str(surface.get("transition_policy_id") or "")
+def _edge_transition_lookup(surface_graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for edge in surface_graph.get("edges", []):
+        if not isinstance(edge, dict):
+            continue
+        edge_family = str(edge.get("edge_family") or "")
+        transition_policy_id = str(edge.get("transition_policy_id") or "")
         if not edge_family and not transition_policy_id:
             continue
-        regions.append(
-            {
-                "surface_graph_id": region["surface_graph_id"],
-                "feature_id": region["feature_id"],
-                "role": region["role"],
-                "edge_family": edge_family,
-                "transition_policy_id": transition_policy_id,
-                "triangle_start": region["triangle_start"],
-                "triangle_count": region["triangle_count"],
-            }
-        )
-    return regions
+        transition_surface_ids = edge.get("transition_surface_ids", [])
+        if not isinstance(transition_surface_ids, list):
+            continue
+        for surface_id in transition_surface_ids:
+            lookup.setdefault(
+                str(surface_id),
+                {
+                    "edge_family": edge_family,
+                    "transition_policy_id": transition_policy_id,
+                },
+            )
+    return lookup

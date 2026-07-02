@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from part_rule_synthesis.impeller_mesh_manifest import build_transition_regions
 from part_rule_synthesis.impeller_surface_graph_export import _deduplicated_indexed_faces, triangulate_surface_graph
 
 
@@ -33,7 +34,6 @@ def write_surface_graph_obj(
             face_index += 1
 
     obj_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    surface_lookup = _surface_lookup(surface_graph)
     return {
         "source": "surface_graph",
         "view": view_id,
@@ -49,42 +49,9 @@ def write_surface_graph_obj(
         "face_count": len(faces),
         "triangle_regions": triangulation["triangle_regions"],
         "face_regions": triangulation["triangle_regions"],
-        "transition_regions": _transition_regions(triangulation["triangle_regions"], surface_lookup),
+        "transition_regions": build_transition_regions(surface_graph, triangulation["triangle_regions"]),
     }
 
 
 def _obj_float(value: Any) -> str:
     return f"{float(value):.9g}"
-
-
-def _surface_lookup(surface_graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {
-        str(surface.get("id") or surface.get("surface_graph_id") or ""): surface
-        for surface in surface_graph.get("surfaces", [])
-        if isinstance(surface, dict)
-    }
-
-
-def _transition_regions(
-    triangle_regions: list[dict[str, Any]],
-    surface_lookup: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    regions: list[dict[str, Any]] = []
-    for region in triangle_regions:
-        surface = surface_lookup.get(region["surface_graph_id"], {})
-        edge_family = str(surface.get("edge_family") or "")
-        transition_policy_id = str(surface.get("transition_policy_id") or "")
-        if not edge_family and not transition_policy_id:
-            continue
-        regions.append(
-            {
-                "surface_graph_id": region["surface_graph_id"],
-                "feature_id": region["feature_id"],
-                "role": region["role"],
-                "edge_family": edge_family,
-                "transition_policy_id": transition_policy_id,
-                "triangle_start": region["triangle_start"],
-                "triangle_count": region["triangle_count"],
-            }
-        )
-    return regions
