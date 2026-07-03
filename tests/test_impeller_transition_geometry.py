@@ -118,6 +118,40 @@ def test_v08_blade_root_radius_override_changes_transition_geometry():
     assert _grid_digest(enlarged_root) != _grid_digest(baseline_root)
 
 
+def test_v08_blade_root_infeasible_radius_records_transition_failure():
+    geometry = _geometry_for_v08(
+        transition_overrides={
+            "blade_root_to_hub.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": 1000.0,
+            }
+        },
+    )
+
+    graph = geometry["surface_graph"]
+    failures = graph["transition_failures"]
+    root_failure = failures[0]
+    validity_checks = {
+        check["name"]: check
+        for check in geometry["validity"]["checks"]
+    }
+
+    assert root_failure["edge_treatment_site_id"] == "blade_0.root_to_hub"
+    assert root_failure["edge_family"] == "blade_root_to_hub"
+    assert root_failure["transition_policy_id"] == "blade_root_to_hub.default"
+    assert root_failure["requested_radius_mm"] == 1000.0
+    assert root_failure["suggested_max_radius_mm"] == 120.0
+    assert root_failure["reason"] == "radius_exceeds_local_feasible_limit"
+    assert root_failure["status"] == "FAIL"
+    assert not any(
+        site["edge_family"] == "blade_root_to_hub"
+        for site in graph["edge_treatment_sites"]
+    )
+    assert validity_checks["required_transition_geometry_resolved"]["status"] == "FAIL"
+    assert validity_checks["required_transition_geometry_resolved"]["failure_count"] > 0
+
+
 def test_v08_blade_root_chamfer_override_changes_transition_geometry_and_role():
     baseline = _geometry_for_v08()
     chamfered = _geometry_for_v08(
@@ -439,6 +473,48 @@ def test_v08_axisymmetric_hub_and_bore_overrides_resolve_transition_geometry(
         "transition_surface_ids": [surface_id],
         "feature_id": surface_id,
     } in graph["edge_treatment_sites"]
+
+
+def test_v08_axisymmetric_infeasible_radius_records_transition_failure_without_mutation():
+    geometry = _geometry_for_v08(
+        transition_overrides={
+            "hub_top_outer.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": 1000.0,
+            }
+        }
+    )
+
+    graph = geometry["surface_graph"]
+    failure = next(
+        failure
+        for failure in graph["transition_failures"]
+        if failure["edge_family"] == "hub_top_outer"
+    )
+    validity_checks = {
+        check["name"]: check
+        for check in geometry["validity"]["checks"]
+    }
+    failed_surface = _surface_by_id(geometry, "hub_top_outer_transition_surface")
+
+    assert failure == {
+        "edge_treatment_site_id": "hub_top_outer",
+        "edge_family": "hub_top_outer",
+        "transition_policy_id": "hub_top_outer.default",
+        "requested_radius_mm": 1000.0,
+        "reason": "radius_exceeds_local_feasible_limit",
+        "suggested_max_radius_mm": 120.0,
+        "status": "FAIL",
+    }
+    assert failed_surface["transition_geometry"] != "resolved_fillet_patch"
+    assert "edge_treatment_site_id" not in failed_surface
+    assert not any(
+        site["edge_family"] == "hub_top_outer"
+        for site in graph["edge_treatment_sites"]
+    )
+    assert validity_checks["required_transition_geometry_resolved"]["status"] == "FAIL"
+    assert validity_checks["required_transition_geometry_resolved"]["failure_count"] > 0
 
 
 def test_v08_closed_hood_defaults_resolve_transition_geometry():

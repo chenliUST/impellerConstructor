@@ -124,6 +124,20 @@ _AXISYMMETRIC_TRANSITION_SPECS = (
     ),
 )
 
+_BLADE_ROOT_MAX_RADIUS_MM = 120.0
+_BLADE_EDGE_MAX_RADIUS_MM = 80.0
+_AXISYMMETRIC_MAX_RADIUS_MM = 120.0
+_BLADE_EDGE_FAMILIES = {
+    "blade_leading_edge",
+    "blade_trailing_edge",
+    "blade_tip_or_shroud",
+    "blade_tip_to_shroud",
+}
+_AXISYMMETRIC_EDGE_FAMILIES = {
+    spec.edge_family
+    for spec in _AXISYMMETRIC_TRANSITION_SPECS
+}
+
 
 def build_fillet_section(
     *,
@@ -272,6 +286,15 @@ def _resolve_v08_transition_geometry(
     if _policy_enabled(policy):
         surface_by_id = {surface["id"]: surface for surface in surfaces}
         for blade_index in _blade_indices_from_pressure_surfaces(surfaces):
+            failure = _radius_feasibility_failure(
+                "blade_root_to_hub",
+                policy,
+                _suggested_max_radius_mm("blade_root_to_hub"),
+                site_id=f"blade_{blade_index}.root_to_hub",
+            )
+            if failure:
+                transition_failures.append(failure)
+                continue
             try:
                 site_dicts.append(_resolve_blade_root_site(surface_by_id, blade_index, policy))
             except (KeyError, TypeError, ValueError) as exc:
@@ -296,6 +319,15 @@ def _resolve_v08_transition_geometry(
             surface_by_id = {surface["id"]: surface for surface in surfaces}
             continue
         for blade_index in blade_indices:
+            failure = _radius_feasibility_failure(
+                spec.edge_family,
+                policy,
+                _suggested_max_radius_mm(spec.edge_family),
+                site_id=f"blade_{blade_index}.{spec.site_suffix}",
+            )
+            if failure:
+                transition_failures.append(failure)
+                continue
             try:
                 site_dicts.append(_resolve_blade_edge_site(surface_by_id, blade_index, policy, spec))
             except (KeyError, TypeError, ValueError) as exc:
@@ -317,6 +349,14 @@ def _resolve_v08_transition_geometry(
         if not _policy_enabled(policy):
             _remove_surfaces_by_edge_family_or_id(surfaces, spec.edge_family, spec.surface_id)
             surface_by_id = {surface["id"]: surface for surface in surfaces}
+            continue
+        failure = _radius_feasibility_failure(
+            spec.edge_family,
+            policy,
+            _suggested_max_radius_mm(spec.edge_family),
+        )
+        if failure:
+            transition_failures.append(failure)
             continue
         try:
             site_dicts.append(
@@ -346,6 +386,7 @@ def _resolve_v08_transition_geometry(
         {
             "check_id": "required_transition_geometry_resolved",
             "status": "PASS" if not transition_failures else "FAIL",
+            "failure_count": len(transition_failures),
         },
     ]
     return TransitionResolution(
@@ -379,6 +420,36 @@ def _active_blade_edge_specs(transition_policies: dict[str, Any]) -> tuple[Blade
             _BLADE_TIP_TO_SHROUD_SPEC,
         )
     return _BLADE_EDGE_SPECS
+
+
+def _radius_feasibility_failure(
+    edge_family: str,
+    policy: dict[str, Any],
+    suggested_max_radius_mm: float,
+    site_id: str | None = None,
+) -> dict[str, Any] | None:
+    requested_radius_mm = float(policy.get("radius_mm", 0.0))
+    if requested_radius_mm <= suggested_max_radius_mm:
+        return None
+    return {
+        "edge_treatment_site_id": site_id or edge_family,
+        "edge_family": edge_family,
+        "transition_policy_id": str(policy.get("policy_id", f"{edge_family}.default")),
+        "requested_radius_mm": requested_radius_mm,
+        "reason": "radius_exceeds_local_feasible_limit",
+        "suggested_max_radius_mm": float(suggested_max_radius_mm),
+        "status": "FAIL",
+    }
+
+
+def _suggested_max_radius_mm(edge_family: str) -> float:
+    if edge_family == "blade_root_to_hub":
+        return _BLADE_ROOT_MAX_RADIUS_MM
+    if edge_family in _BLADE_EDGE_FAMILIES:
+        return _BLADE_EDGE_MAX_RADIUS_MM
+    if edge_family in _AXISYMMETRIC_EDGE_FAMILIES:
+        return _AXISYMMETRIC_MAX_RADIUS_MM
+    return _AXISYMMETRIC_MAX_RADIUS_MM
 
 
 def _resolve_blade_root_site(
