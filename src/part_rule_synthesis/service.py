@@ -1276,17 +1276,17 @@ def _export_strategy(
         default_coverage_status = (
             "complete_transition_resolved_surface_graph"
             if mode == "transition_resolved_bounded_brep"
-            else "partial_supported_surfaces"
+            else "complete_surface_graph_cad_surfaces"
         )
         default_cad_export_scope = (
             "all_transition_resolved_surface_graph_cad_surfaces"
             if mode == "transition_resolved_bounded_brep"
-            else "supported_bounded_brep_surfaces"
+            else "all_surface_graph_cad_surfaces"
         )
         default_unsupported_surface_policy = (
             "fail_export"
             if mode == "transition_resolved_bounded_brep"
-            else "excluded_with_manifest_accounting"
+            else "fail_export"
         )
         coverage_status = export_contract.get("coverage_status", default_coverage_status)
         cad_export_scope = export_contract.get("cad_export_scope", default_cad_export_scope)
