@@ -5,6 +5,17 @@ export function meshOverlayOptions() {
   ];
 }
 
+export function effectiveMeshOverlayMode(simulationViewMode, meshOverlayMode = "triangle_edges") {
+  if (simulationViewMode !== "mesh") {
+    return "off";
+  }
+  return meshOverlayOptions().some((option) => option.id === meshOverlayMode) ? meshOverlayMode : "triangle_edges";
+}
+
+export function meshOverlayControlVisible(simulationViewMode) {
+  return simulationViewMode === "mesh";
+}
+
 export function transitionRegionRows(meshManifest = {}) {
   return transitionRegionEntries(meshManifest).map((region) => ({
     edgeFamily: region.edge_family || region.edgeFamily || region.id || "",

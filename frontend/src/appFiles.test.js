@@ -49,13 +49,18 @@ describe("frontend application files", () => {
 
   test("viewer exposes mesh overlay layers for CFD360 mesh inspection", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const panelSource = readFileSync(resolve(root, "src/components/MeshInspectionPanel.js"), "utf-8");
     const overlaySource = readFileSync(resolve(root, "src/meshOverlayModel.js"), "utf-8");
     const workspaceSource = readFileSync(resolve(root, "src/workspaceModel.js"), "utf-8");
 
     assert.match(viewerSource, /meshOverlayMode\s*=\s*"triangle_edges"/);
+    assert.match(appSource, /meshOverlayMode/);
+    assert.match(appSource, /setMeshOverlayMode/);
+    assert.match(appSource, /meshOverlayMode,\s*setMeshOverlayMode,/);
+    assert.match(viewerSource, /meshOverlayOptions/);
     assert.match(viewerSource, /WireframeGeometry/);
-    assert.match(viewerSource, /createSurfaceGraphGroup\(\s*visibleSurfaceGraph,\s*bounds\.center,\s*simulationViewMode,\s*selectedSurfaceIds,\s*meshOverlayMode,\s*manifest,\s*\)/);
+    assert.match(viewerSource, /createSurfaceGraphGroup\(\s*visibleSurfaceGraph,\s*bounds\.center,\s*simulationViewMode,\s*selectedSurfaceIds,\s*activeMeshOverlayMode,\s*manifest,\s*\)/);
     assert.match(viewerSource, /surfaceVisibleInView\(surface,\s*simulationViewMode,\s*manifest\)/);
     assert.doesNotMatch(viewerSource, /surfaceVisibleInView\(surface,\s*simulationViewMode\)/);
     assert.match(viewerSource, /transition_mesh_edges/);

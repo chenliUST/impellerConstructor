@@ -19,7 +19,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -394,6 +395,26 @@ input[type="range"] {
   font-weight: 750;
 }
 
+.mesh-overlay-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #40514b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.mesh-overlay-control select {
+  min-width: 126px;
+  border: 1px solid #cbd5d1;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #17231f;
+  padding: 5px 7px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .geometry-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -469,6 +490,31 @@ input[type="range"] {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.metric-grid,
+.transition-runtime-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 10px;
+  margin: 0 0 8px;
+  color: #40514b;
+  font-size: 11px;
+}
+
+.metric-grid dt,
+.transition-runtime-grid dt {
+  color: #64746e;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.metric-grid dd,
+.transition-runtime-grid dd {
+  margin: 0;
+  color: #17231f;
+  font-weight: 800;
+  text-align: right;
 }
 
 .metric {

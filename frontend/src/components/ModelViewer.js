@@ -3,7 +3,12 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
-import { isTransitionSurface } from "../meshOverlayModel.js";
+import {
+  effectiveMeshOverlayMode,
+  isTransitionSurface,
+  meshOverlayControlVisible,
+  meshOverlayOptions,
+} from "../meshOverlayModel.js";
 import { patchBoundaryCurveIds, patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js";
 import { defaultVisibleLayers, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
 
@@ -17,12 +22,14 @@ export function ModelViewer({
   setViewMode,
   simulationViewMode = "cad_review_360",
   meshOverlayMode = "triangle_edges",
+  setMeshOverlayMode = null,
   selectedPatch = null,
   manifest = null,
   autoRotate,
   setAutoRotate,
   visibleLayers = defaultVisibleLayers(),
 }) {
+  const activeMeshOverlayMode = effectiveMeshOverlayMode(simulationViewMode, meshOverlayMode);
   const containerRef = useRef(null);
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
@@ -99,7 +106,7 @@ export function ModelViewer({
 
   useEffect(() => {
     updateVisibility();
-  }, [viewMode, visibleLayers, simulationViewMode, meshOverlayMode, selectedPatch, manifest]);
+  }, [viewMode, visibleLayers, simulationViewMode, activeMeshOverlayMode, selectedPatch, manifest]);
 
   useEffect(() => {
     const selectedBoundaryIds = patchBoundaryCurveIds(manifest, selectedPatch);
@@ -127,7 +134,7 @@ export function ModelViewer({
       bounds.center,
       simulationViewMode,
       selectedSurfaceIds,
-      meshOverlayMode,
+      activeMeshOverlayMode,
       manifest,
     );
     modelRef.current.shaded = shaded;
@@ -139,7 +146,7 @@ export function ModelViewer({
     frameCamera(bounds.radius || 1000);
     updateVisibility();
     setStatus(simulationViewMode === "mesh" ? meshInspectionStatus(manifest) : "Surface graph rendered");
-  }, [surfaceGraph, simulationViewMode, meshOverlayMode, selectedPatch, manifest]);
+  }, [surfaceGraph, simulationViewMode, activeMeshOverlayMode, selectedPatch, manifest]);
 
   useEffect(() => {
     if (surfaceGraph?.surfaces?.length) {
@@ -203,7 +210,7 @@ export function ModelViewer({
     const constructionGroup = modelRef.current.constructionGroup;
     if (shaded) {
       const showShaded = viewMode !== "wireframe" && visibleLayers.shaded_surfaces !== false;
-      const showMeshOverlay = simulationViewMode === "mesh" && meshOverlayMode !== "off" && viewMode !== "shaded";
+      const showMeshOverlay = simulationViewMode === "mesh" && activeMeshOverlayMode !== "off" && viewMode !== "shaded";
       shaded.visible = showShaded || showMeshOverlay;
       shaded.traverse((child) => {
         if (child.isMesh && child.userData.layer) {
@@ -316,6 +323,22 @@ export function ModelViewer({
         }),
         "Auto rotate",
       ),
+      meshOverlayControlVisible(simulationViewMode)
+        ? h(
+            "label",
+            { className: "mesh-overlay-control" },
+            h("span", null, "Mesh overlay"),
+            h(
+              "select",
+              {
+                value: activeMeshOverlayMode,
+                onChange: (event) => setMeshOverlayMode?.(event.target.value),
+                disabled: !setMeshOverlayMode,
+              },
+              meshOverlayOptions().map((option) => h("option", { key: option.id, value: option.id }, option.label)),
+            ),
+          )
+        : null,
     ),
     h("div", { className: "viewer-canvas", ref: containerRef }),
     h("div", { className: "viewer-status" }, status),

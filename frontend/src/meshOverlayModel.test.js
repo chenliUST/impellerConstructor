@@ -1,11 +1,31 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { isTransitionSurface, meshOverlayOptions, transitionRegionRows, transitionSurfaceIds } from "./meshOverlayModel.js";
+import {
+  effectiveMeshOverlayMode,
+  isTransitionSurface,
+  meshOverlayControlVisible,
+  meshOverlayOptions,
+  transitionRegionRows,
+  transitionSurfaceIds,
+} from "./meshOverlayModel.js";
 
 describe("mesh overlay model", () => {
   test("meshOverlayOptions exposes stable overlay ids", () => {
     assert.deepEqual(meshOverlayOptions().map((option) => option.id), ["off", "triangle_edges"]);
+  });
+
+  test("mesh overlay is active by default only in mesh inspection view", () => {
+    assert.equal(effectiveMeshOverlayMode("mesh", undefined), "triangle_edges");
+    assert.equal(effectiveMeshOverlayMode("mesh", "off"), "off");
+    assert.equal(effectiveMeshOverlayMode("cad_review_360", "triangle_edges"), "off");
+    assert.equal(effectiveMeshOverlayMode("cfd_full_360", "triangle_edges"), "off");
+  });
+
+  test("mesh overlay control is only relevant for mesh inspection view", () => {
+    assert.equal(meshOverlayControlVisible("mesh"), true);
+    assert.equal(meshOverlayControlVisible("cad_review_360"), false);
+    assert.equal(meshOverlayControlVisible("cfd_full_360"), false);
   });
 
   test("transitionRegionRows maps mesh manifest transition regions", () => {

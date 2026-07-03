@@ -5,6 +5,7 @@ import {
   buildTransitionOverridePayload,
   edgeTreatmentRows,
   effectiveTransitionRow,
+  transitionRuntimeSummary,
   updateTransitionRow,
 } from "./edgeTreatmentModel.js";
 
@@ -56,6 +57,43 @@ describe("edge treatment model", () => {
     );
     assert.equal(rows[0].radiusMm, 8);
     assert.equal(rows[0].continuity, "G1");
+  });
+
+  test("transitionRuntimeSummary reads resolved transition runtime counts", () => {
+    assert.deepEqual(
+      transitionRuntimeSummary({
+        transition_geometry_status: "resolved_trimmed_surface_graph",
+        transition_surface_count: 6,
+        unsupported_transition_count: 0,
+        transition_failure_count: 1,
+      }),
+      {
+        status: "resolved_trimmed_surface_graph",
+        surfaceCount: 6,
+        unsupportedCount: 0,
+        failureCount: 1,
+        available: true,
+      },
+    );
+  });
+
+  test("transitionRuntimeSummary falls back to mesh transition region count", () => {
+    assert.deepEqual(
+      transitionRuntimeSummary({
+        simulation_manifests: {
+          cfd_surface_mesh: {
+            transition_regions: [{ surface_graph_id: "root" }, { surface_graph_id: "tip" }],
+          },
+        },
+      }),
+      {
+        status: "",
+        surfaceCount: 2,
+        unsupportedCount: 0,
+        failureCount: 0,
+        available: true,
+      },
+    );
   });
 
   test("updateTransitionRow changes treatment and radius using API radius field", () => {

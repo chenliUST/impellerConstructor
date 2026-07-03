@@ -1,22 +1,28 @@
 import React from "react";
 
 import { transitionRegionRows } from "../meshOverlayModel.js";
-import { meshQualitySummary } from "../meshViewModel.js";
+import { meshInspectionSummary } from "../meshViewModel.js";
 
 const h = React.createElement;
 
 export function MeshInspectionPanel({ meshManifest }) {
-  const summary = meshQualitySummary(meshManifest);
+  const summary = meshInspectionSummary(meshManifest);
   const transitionRows = transitionRegionRows(meshManifest);
   return h("section", { className: "panel-section" }, [
     h("h3", { key: "title" }, "CFD360 Mesh"),
     h("dl", { key: "metrics", className: "metric-grid" }, [
+      h("dt", { key: "type-label" }, "Mesh type"),
+      h("dd", { key: "type-value" }, summary.meshType),
       h("dt", { key: "tri-label" }, "Triangles"),
       h("dd", { key: "tri-value" }, String(summary.triangleCount)),
       h("dt", { key: "deg-label" }, "Degenerate"),
       h("dd", { key: "deg-value" }, String(summary.degenerateTriangleCount)),
       h("dt", { key: "aspect-label" }, "Max aspect"),
       h("dd", { key: "aspect-value" }, String(summary.maxAspectRatio)),
+      h("dt", { key: "transition-label" }, "Transitions"),
+      h("dd", { key: "transition-value" }, summary.hasTransitionRegions ? `${summary.transitionRegionCount} regions` : "none"),
+      h("dt", { key: "transition-tri-label" }, "Transition tris"),
+      h("dd", { key: "transition-tri-value" }, String(summary.transitionTriangleCount)),
     ]),
     transitionRows.length > 0
       ? h("div", { key: "transition-regions", className: "patch-list" }, [

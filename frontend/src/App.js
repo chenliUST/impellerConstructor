@@ -36,6 +36,7 @@ export function App() {
   const [stlUrl, setStlUrl] = useState("");
   const [viewMode, setViewMode] = useState("combined");
   const [simulationViewMode, setSimulationViewMode] = useState("cad_review_360");
+  const [meshOverlayMode, setMeshOverlayMode] = useState("triangle_edges");
   const [selectedPatch, setSelectedPatch] = useState(null);
   const [autoRotate, setAutoRotate] = useState(false);
   const [visibleLayers, setVisibleLayers] = useState(defaultVisibleLayers);
@@ -250,6 +251,8 @@ export function App() {
         viewMode,
         setViewMode,
         simulationViewMode,
+        meshOverlayMode,
+        setMeshOverlayMode,
         selectedPatch,
         manifest,
         autoRotate,
