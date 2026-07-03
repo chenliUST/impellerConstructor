@@ -59,6 +59,25 @@ def test_v07_runtime_exposes_edge_families_and_default_policies():
         assert policy["radius_mm"] == expected_radius
 
 
+def test_v07_runtime_allows_axial_public_data_facet_studies():
+    runtime = compile_impeller_runtime_preset(
+        "radial_open_reference_v0_7",
+        {
+            "flow_topology": "axial",
+            "shroud_topology": "open",
+            "suction_topology": "single_suction",
+            "blade_exit_geometry": "backward_curved",
+            "working_domain": "fan_or_blower",
+            "passage_topology": "throughflow_bladed_channel",
+        },
+    )
+
+    assert runtime["facets"]["flow_topology"] == "axial"
+    assert runtime["facets"]["working_domain"] == "fan_or_blower"
+    assert runtime["dsl_sections"]["dsl_version"] == "0.7"
+    assert "edge_families" in runtime
+
+
 def test_pre_v07_runtime_does_not_emit_transition_policy_fields():
     runtime = compile_impeller_runtime_preset("radial_open_reference_v0_6")
 

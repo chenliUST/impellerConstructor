@@ -1,0 +1,259 @@
+{
+  "id": "reference-axial-turbine-rotor",
+  "name": "Reference axial turbine rotor",
+  "tags": [
+    "mechanical-analogy",
+    "turbine",
+    "axial",
+    "rotor",
+    "v0.7"
+  ],
+  "run_id": "run-2e89991e13ce",
+  "status": "PASS",
+  "facets": {
+    "flow_topology": "axial",
+    "shroud_topology": "open",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "working_domain": "compressor",
+    "passage_topology": "throughflow_bladed_channel"
+  },
+  "parameters": {
+    "blade_count": 54,
+    "inlet_radius_mm": 155,
+    "exit_radius_mm": 275,
+    "inlet_blade_height_mm": 120,
+    "outlet_blade_height_mm": 105,
+    "hub_curve_height_mm": 95,
+    "mounting_bore_radius_mm": 60,
+    "blade_wrap_deg": 48,
+    "blade_lean_deg": 18,
+    "leading_edge_lean_deg": 12,
+    "trailing_edge_lean_deg": -18,
+    "leading_edge_sweep_mm": 12,
+    "trailing_edge_sweep_mm": -18,
+    "blade_thickness_mm": 4,
+    "root_fillet_radius_mm": 1.5,
+    "leading_edge_radius_mm": 0.7,
+    "trailing_edge_radius_mm": 0.4,
+    "tip_edge_radius_mm": 0.4,
+    "hub_wall_thickness_mm": 8,
+    "hub_bottom_thickness_mm": 12,
+    "hub_top_cap_thickness_mm": 4,
+    "hub_chamfer_radius_mm": 1.2,
+    "hood_wall_thickness_mm": 3,
+    "hood_chamfer_radius_mm": 0.8
+  },
+  "profile_overrides": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          155,
+          95
+        ],
+        [
+          158,
+          76
+        ],
+        [
+          160,
+          57
+        ],
+        [
+          164,
+          38
+        ],
+        [
+          168,
+          18
+        ],
+        [
+          170,
+          0
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          275,
+          96
+        ],
+        [
+          274,
+          77
+        ],
+        [
+          273,
+          58
+        ],
+        [
+          272,
+          39
+        ],
+        [
+          271,
+          19
+        ],
+        [
+          270,
+          1
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "curve_overrides": {
+    "blade_mean": {
+      "theta_center_u_curve": {
+        "coordinate_system": "u_theta_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.2,
+            8
+          ],
+          [
+            0.55,
+            28
+          ],
+          [
+            0.85,
+            42
+          ],
+          [
+            1,
+            48
+          ]
+        ]
+      },
+      "span_lean_u_curve": {
+        "coordinate_system": "u_lean_deg",
+        "control_points": [
+          [
+            0,
+            12
+          ],
+          [
+            0.45,
+            24
+          ],
+          [
+            1,
+            -18
+          ]
+        ]
+      }
+    },
+    "blade_edges": {
+      "leading_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            -0.05
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0.07
+          ]
+        ]
+      },
+      "trailing_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0.08
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            -0.09
+          ]
+        ]
+      }
+    },
+    "thickness": {
+      "thickness_u_curve": {
+        "coordinate_system": "u_thickness_mm",
+        "control_points": [
+          [
+            0,
+            4
+          ],
+          [
+            0.45,
+            3.4
+          ],
+          [
+            1,
+            2
+          ]
+        ]
+      }
+    }
+  },
+  "copied_exports": {
+    "step": "model_snapshots/reference-axial-turbine-rotor/reference-axial-turbine-rotor.step",
+    "stl": "model_snapshots/reference-axial-turbine-rotor/reference-axial-turbine-rotor.stl",
+    "obj": "model_snapshots/reference-axial-turbine-rotor/reference-axial-turbine-rotor.obj",
+    "manifest": "model_snapshots/reference-axial-turbine-rotor/reference-axial-turbine-rotor.manifest.json"
+  },
+  "surface_count": 333
+}

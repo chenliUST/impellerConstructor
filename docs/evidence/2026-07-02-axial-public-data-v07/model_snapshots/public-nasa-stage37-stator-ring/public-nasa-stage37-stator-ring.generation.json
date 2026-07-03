@@ -1,0 +1,255 @@
+{
+  "id": "public-nasa-stage37-stator-ring",
+  "name": "Public NASA Stage 37 stator ring",
+  "tags": [
+    "public-data",
+    "axial",
+    "stator",
+    "ring",
+    "v0.7"
+  ],
+  "run_id": "run-839704c71e95",
+  "status": "PASS",
+  "facets": {
+    "flow_topology": "axial",
+    "shroud_topology": "closed",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "working_domain": "compressor",
+    "passage_topology": "throughflow_bladed_channel"
+  },
+  "parameters": {
+    "blade_count": 46,
+    "inlet_radius_mm": 176.4,
+    "exit_radius_mm": 253.7,
+    "inlet_blade_height_mm": 77.3,
+    "outlet_blade_height_mm": 75.6,
+    "hub_curve_height_mm": 60,
+    "mounting_bore_radius_mm": 82,
+    "blade_wrap_deg": 24,
+    "blade_lean_deg": 2,
+    "leading_edge_lean_deg": -4,
+    "trailing_edge_lean_deg": 5,
+    "leading_edge_sweep_mm": 2,
+    "trailing_edge_sweep_mm": -3,
+    "blade_thickness_mm": 2.3,
+    "root_fillet_radius_mm": 0.9,
+    "leading_edge_radius_mm": 0.35,
+    "trailing_edge_radius_mm": 0.25,
+    "tip_edge_radius_mm": 0.25,
+    "hub_wall_thickness_mm": 4.5,
+    "hub_bottom_thickness_mm": 6,
+    "hub_top_cap_thickness_mm": 3,
+    "hub_chamfer_radius_mm": 0.8,
+    "hood_wall_thickness_mm": 3,
+    "hood_chamfer_radius_mm": 0.8
+  },
+  "profile_overrides": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          176.4,
+          60
+        ],
+        [
+          176.8,
+          48
+        ],
+        [
+          177.3,
+          36
+        ],
+        [
+          177.8,
+          23
+        ],
+        [
+          178.2,
+          11
+        ],
+        [
+          178.6,
+          0
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          253.7,
+          61
+        ],
+        [
+          253.4,
+          49
+        ],
+        [
+          253,
+          37
+        ],
+        [
+          252.6,
+          24
+        ],
+        [
+          252.3,
+          12
+        ],
+        [
+          252,
+          1
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "curve_overrides": {
+    "blade_mean": {
+      "theta_center_u_curve": {
+        "coordinate_system": "u_theta_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.25,
+            4
+          ],
+          [
+            0.6,
+            15
+          ],
+          [
+            1,
+            24
+          ]
+        ]
+      },
+      "span_lean_u_curve": {
+        "coordinate_system": "u_lean_deg",
+        "control_points": [
+          [
+            0,
+            -6
+          ],
+          [
+            0.5,
+            2
+          ],
+          [
+            1,
+            5
+          ]
+        ]
+      }
+    },
+    "blade_edges": {
+      "leading_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            -0.02
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0.03
+          ]
+        ]
+      },
+      "trailing_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0.04
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            -0.04
+          ]
+        ]
+      }
+    },
+    "thickness": {
+      "thickness_u_curve": {
+        "coordinate_system": "u_thickness_mm",
+        "control_points": [
+          [
+            0,
+            2.3
+          ],
+          [
+            0.4,
+            2
+          ],
+          [
+            1,
+            1.2
+          ]
+        ]
+      }
+    }
+  },
+  "copied_exports": {
+    "step": "model_snapshots/public-nasa-stage37-stator-ring/public-nasa-stage37-stator-ring.step",
+    "stl": "model_snapshots/public-nasa-stage37-stator-ring/public-nasa-stage37-stator-ring.stl",
+    "obj": "model_snapshots/public-nasa-stage37-stator-ring/public-nasa-stage37-stator-ring.obj",
+    "manifest": "model_snapshots/public-nasa-stage37-stator-ring/public-nasa-stage37-stator-ring.manifest.json"
+  },
+  "surface_count": 290
+}

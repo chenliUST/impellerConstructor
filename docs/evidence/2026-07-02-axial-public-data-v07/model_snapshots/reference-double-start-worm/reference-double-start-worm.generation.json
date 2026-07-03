@@ -1,0 +1,258 @@
+{
+  "id": "reference-double-start-worm",
+  "name": "Reference double-start worm",
+  "tags": [
+    "mechanical-analogy",
+    "worm",
+    "screw",
+    "v0.7"
+  ],
+  "run_id": "run-740be69b4400",
+  "status": "PASS",
+  "facets": {
+    "flow_topology": "axial",
+    "shroud_topology": "open",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "working_domain": "pump",
+    "passage_topology": "throughflow_bladed_channel"
+  },
+  "parameters": {
+    "blade_count": 2,
+    "inlet_radius_mm": 18,
+    "exit_radius_mm": 45,
+    "inlet_blade_height_mm": 27,
+    "outlet_blade_height_mm": 27,
+    "hub_curve_height_mm": 160,
+    "mounting_bore_radius_mm": 5,
+    "blade_wrap_deg": 720,
+    "blade_lean_deg": 0,
+    "leading_edge_lean_deg": 0,
+    "trailing_edge_lean_deg": 0,
+    "leading_edge_sweep_mm": 0,
+    "trailing_edge_sweep_mm": 0,
+    "blade_thickness_mm": 5,
+    "root_fillet_radius_mm": 1,
+    "leading_edge_radius_mm": 0.5,
+    "trailing_edge_radius_mm": 0.5,
+    "tip_edge_radius_mm": 0.5,
+    "hub_wall_thickness_mm": 5,
+    "hub_bottom_thickness_mm": 7,
+    "hub_top_cap_thickness_mm": 3,
+    "hub_chamfer_radius_mm": 0.8,
+    "hood_wall_thickness_mm": 1,
+    "hood_chamfer_radius_mm": 0.5
+  },
+  "profile_overrides": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          18,
+          160
+        ],
+        [
+          18,
+          128
+        ],
+        [
+          18,
+          96
+        ],
+        [
+          18,
+          64
+        ],
+        [
+          18,
+          32
+        ],
+        [
+          18,
+          0
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          45,
+          161
+        ],
+        [
+          45,
+          129
+        ],
+        [
+          45,
+          97
+        ],
+        [
+          45,
+          65
+        ],
+        [
+          45,
+          33
+        ],
+        [
+          45,
+          1
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "curve_overrides": {
+    "blade_mean": {
+      "theta_center_u_curve": {
+        "coordinate_system": "u_theta_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.25,
+            -180
+          ],
+          [
+            0.5,
+            -360
+          ],
+          [
+            0.75,
+            -540
+          ],
+          [
+            1,
+            -720
+          ]
+        ]
+      },
+      "span_lean_u_curve": {
+        "coordinate_system": "u_lean_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      }
+    },
+    "blade_edges": {
+      "leading_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      },
+      "trailing_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      }
+    },
+    "thickness": {
+      "thickness_u_curve": {
+        "coordinate_system": "u_thickness_mm",
+        "control_points": [
+          [
+            0,
+            5
+          ],
+          [
+            0.5,
+            5
+          ],
+          [
+            1,
+            5
+          ]
+        ]
+      }
+    }
+  },
+  "copied_exports": {
+    "step": "model_snapshots/reference-double-start-worm/reference-double-start-worm.step",
+    "stl": "model_snapshots/reference-double-start-worm/reference-double-start-worm.stl",
+    "obj": "model_snapshots/reference-double-start-worm/reference-double-start-worm.obj",
+    "manifest": "model_snapshots/reference-double-start-worm/reference-double-start-worm.manifest.json"
+  },
+  "surface_count": 21
+}

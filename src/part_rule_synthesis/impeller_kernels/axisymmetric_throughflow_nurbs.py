@@ -554,35 +554,69 @@ def _default_curve_controls(params: dict[str, float], facets: dict[str, str]) ->
     trailing_lean = params["trailing_edge_lean_deg"]
     mid_lean = params["blade_lean_deg"] + 0.5 * (leading_lean + trailing_lean)
     radial_span = max(params["exit_radius_mm"] - params["inlet_radius_mm"], 1.0)
+    leading_sweep_offset = params["leading_edge_sweep_mm"] / (2.0 * radial_span)
+    trailing_sweep_offset = params["trailing_edge_sweep_mm"] / (2.0 * radial_span)
     return {
         "blade_mean": {
             "theta_center_u_curve": _curve_def(
                 "u_theta_deg",
-                [[0.0, 0.0], [0.33, wrap * _smoothstep(0.33)], [0.66, wrap * _smoothstep(0.66)], [1.0, wrap]],
+                [
+                    [0.0, 0.0],
+                    [0.167, wrap * _smoothstep(0.167)],
+                    [0.333, wrap * _smoothstep(0.333)],
+                    [0.5, wrap * _smoothstep(0.5)],
+                    [0.667, wrap * _smoothstep(0.667)],
+                    [0.833, wrap * _smoothstep(0.833)],
+                    [1.0, wrap],
+                ],
                 "default_rule",
             ),
             "span_lean_u_curve": _curve_def(
                 "u_lean_deg",
-                [[0.0, leading_lean], [0.5, mid_lean], [1.0, trailing_lean]],
+                [
+                    [0.0, leading_lean],
+                    [0.25, 0.5 * leading_lean + 0.5 * mid_lean],
+                    [0.5, mid_lean],
+                    [0.75, 0.5 * trailing_lean + 0.5 * mid_lean],
+                    [1.0, trailing_lean],
+                ],
                 "default_rule",
             ),
         },
         "blade_edges": {
             "leading_edge_sweep_v_curve": _curve_def(
                 "v_support_u_offset",
-                [[0.0, -params["leading_edge_sweep_mm"] / (2.0 * radial_span)], [0.5, 0.0], [1.0, params["leading_edge_sweep_mm"] / (2.0 * radial_span)]],
+                [
+                    [0.0, -leading_sweep_offset],
+                    [0.25, -0.5 * leading_sweep_offset],
+                    [0.5, 0.0],
+                    [0.75, 0.5 * leading_sweep_offset],
+                    [1.0, leading_sweep_offset],
+                ],
                 "default_rule",
             ),
             "trailing_edge_sweep_v_curve": _curve_def(
                 "v_support_u_offset",
-                [[0.0, -params["trailing_edge_sweep_mm"] / (2.0 * radial_span)], [0.5, 0.0], [1.0, params["trailing_edge_sweep_mm"] / (2.0 * radial_span)]],
+                [
+                    [0.0, -trailing_sweep_offset],
+                    [0.25, -0.5 * trailing_sweep_offset],
+                    [0.5, 0.0],
+                    [0.75, 0.5 * trailing_sweep_offset],
+                    [1.0, trailing_sweep_offset],
+                ],
                 "default_rule",
             ),
         },
         "thickness": {
             "thickness_u_curve": _curve_def(
                 "u_thickness_mm",
-                [[0.0, params["blade_thickness_mm"]], [0.5, params["blade_thickness_mm"] * (1.0 - 0.45 * _smoothstep(0.5))], [1.0, params["blade_thickness_mm"] * 0.55]],
+                [
+                    [0.0, params["blade_thickness_mm"]],
+                    [0.25, params["blade_thickness_mm"] * (1.0 - 0.45 * _smoothstep(0.25))],
+                    [0.5, params["blade_thickness_mm"] * (1.0 - 0.45 * _smoothstep(0.5))],
+                    [0.75, params["blade_thickness_mm"] * (1.0 - 0.45 * _smoothstep(0.75))],
+                    [1.0, params["blade_thickness_mm"] * 0.55],
+                ],
                 "default_rule",
             ),
         },

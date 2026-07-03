@@ -14,9 +14,19 @@ import {
   presets,
 } from "./appModel.js";
 
+function maxAbsCurveValue(curve) {
+  return Math.max(...curve.control_points.map((point) => Math.abs(point[1])));
+}
+
+function supportOffsetEnvelope(parameters, sweepName) {
+  const radialSpan = Math.max(1, Math.abs(parameters.exit_radius_mm - parameters.inlet_radius_mm));
+  const scalarOffset = Math.abs(parameters[sweepName]) / (2 * radialSpan);
+  return scalarOffset === 0 ? 0 : Math.min(0.121, scalarOffset * 1.65);
+}
+
 describe("impeller frontend model", () => {
   test("presets expose bounded impeller parameters", () => {
-    assert.equal(presets.length, 2);
+    assert.ok(presets.length >= 2);
 
     for (const preset of presets) {
       const payload = buildInstantiatePayload(preset.parameters);
@@ -28,6 +38,74 @@ describe("impeller frontend model", () => {
       assert.ok(payload.parameters.exit_radius_mm > payload.parameters.inlet_radius_mm);
       assert.equal(Number.isFinite(payload.parameters.hub_curve_height_mm), true);
       assert.equal(Number.isFinite(payload.parameters.blade_wrap_deg), true);
+    }
+  });
+
+  test("presets include public data approximation cases", () => {
+    const publicCases = presets.filter((preset) => preset.tags.includes("public-data"));
+
+    assert.equal(publicCases.length, 8);
+    assert.deepEqual(
+      publicCases.map((preset) => preset.id),
+      [
+        "public-nasa-rotor67-axial-blisk",
+        "public-nasa-rotor37-compressor-blisk",
+        "public-nasa-stage37-stator-ring",
+        "public-nasa-sdt-r4-turbofan-fan",
+        "public-rr-ultrafan-cti-fan",
+        "public-rr-ultrafan-ogv-ring",
+        "public-liquid-rocket-turbopump-inducer",
+        "public-nasa-sr7l-propfan",
+      ],
+    );
+    for (const preset of publicCases) {
+      assert.match(preset.presetId, /_v0_7$/);
+      assert.equal(preset.facets.flow_topology, "axial");
+      assert.ok(preset.profileOverrides?.hub_profile?.control_points.length >= 4);
+      assert.ok(preset.profileOverrides?.tip_or_shroud_profile?.control_points.length >= 4);
+      assert.ok(preset.curveOverrides?.blade_mean?.theta_center_u_curve?.control_points.length >= 4);
+      assert.ok(preset.curveOverrides?.blade_mean?.span_lean_u_curve?.control_points.length >= 5);
+      assert.ok(preset.curveOverrides?.blade_edges?.leading_edge_sweep_v_curve?.control_points.length >= 5);
+      assert.ok(preset.curveOverrides?.blade_edges?.trailing_edge_sweep_v_curve?.control_points.length >= 5);
+      assert.ok(preset.curveOverrides?.thickness?.thickness_u_curve?.control_points.length >= 5);
+      assert.equal(Number.isFinite(preset.parameters.leading_edge_radius_mm), true);
+      assert.equal(Number.isFinite(preset.parameters.trailing_edge_radius_mm), true);
+      assert.equal(Number.isFinite(preset.parameters.tip_edge_radius_mm), true);
+    }
+  });
+
+  test("presets include mechanical analogy cases", () => {
+    const analogyCases = presets.filter((preset) => preset.tags.includes("mechanical-analogy"));
+
+    assert.deepEqual(
+      analogyCases.map((preset) => preset.id),
+      [
+        "reference-spur-gear-tooth-ring",
+        "reference-axial-turbine-rotor",
+        "reference-double-start-worm",
+      ],
+    );
+    for (const preset of analogyCases) {
+      assert.match(preset.presetId, /_v0_7$/);
+      assert.ok(preset.profileOverrides?.hub_profile?.control_points.length >= 4);
+      assert.ok(preset.profileOverrides?.tip_or_shroud_profile?.control_points.length >= 4);
+      assert.ok(preset.curveOverrides?.blade_mean?.theta_center_u_curve?.control_points.length >= 4);
+      assert.ok(preset.curveOverrides?.blade_edges?.leading_edge_sweep_v_curve?.control_points.length >= 5);
+      assert.ok(preset.curveOverrides?.blade_edges?.trailing_edge_sweep_v_curve?.control_points.length >= 5);
+      assert.equal(preset.facets.passage_topology, "throughflow_bladed_channel");
+      assert.equal(Number.isFinite(preset.parameters.blade_wrap_deg), true);
+    }
+  });
+
+  test("public and analogy edge sweep overrides stay near scalar sweep envelope", () => {
+    const cases = presets.filter((preset) => preset.curveOverrides);
+
+    for (const preset of cases) {
+      const leading = preset.curveOverrides.blade_edges.leading_edge_sweep_v_curve;
+      const trailing = preset.curveOverrides.blade_edges.trailing_edge_sweep_v_curve;
+
+      assert.ok(maxAbsCurveValue(leading) <= supportOffsetEnvelope(preset.parameters, "leading_edge_sweep_mm"));
+      assert.ok(maxAbsCurveValue(trailing) <= supportOffsetEnvelope(preset.parameters, "trailing_edge_sweep_mm"));
     }
   });
 
@@ -63,7 +141,7 @@ describe("impeller frontend model", () => {
     assert.deepEqual(facetSchema.suction_topology.values, ["single_suction"]);
     assert.deepEqual(facetSchema.blade_exit_geometry.values, ["backward_curved"]);
     assert.deepEqual(facetSchema.passage_topology.values, ["throughflow_bladed_channel"]);
-    assert.deepEqual(facetSchema.working_domain.values, ["pump"]);
+    assert.deepEqual(facetSchema.working_domain.values, ["pump", "compressor", "fan_or_blower"]);
   });
 
   test("parameterSchema only exposes key NURBS construction controls", () => {
