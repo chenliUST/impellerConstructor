@@ -147,7 +147,7 @@ def _transition_regions(
     return regions
 
 
-def _quality_metrics(triangles: list[dict[str, Any]]) -> dict[str, float]:
+def _quality_metrics(triangles: list[dict[str, Any]]) -> dict[str, Any]:
     edge_lengths = [
         edge_length
         for triangle in triangles
@@ -161,7 +161,8 @@ def _quality_metrics(triangles: list[dict[str, Any]]) -> dict[str, float]:
         "max_aspect_ratio": max(aspect_ratios) if aspect_ratios else 0.0,
         "min_edge_length_mm": min(edge_lengths) if edge_lengths else 0.0,
         "max_edge_length_mm": max(edge_lengths) if edge_lengths else 0.0,
-        "boundary_mismatch_max_mm": 0.0,
+        "boundary_mismatch_max_mm": None,
+        "boundary_mismatch_status": "not_evaluated",
     }
 
 

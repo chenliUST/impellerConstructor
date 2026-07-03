@@ -113,7 +113,8 @@ def test_write_surface_graph_exports_routes_resolved_graph_through_transition_me
     assert manifests["stl"]["mesh_type"] == "transition_aware_surface_mesh"
     assert manifests["stl"]["source"] == "transition_resolved_surface_graph"
     assert manifests["stl"]["transition_regions"][0]["edge_treatment_site_id"] == "blade_0.root_to_hub"
-    assert manifests["stl"]["transition_regions"][0]["quality"]["boundary_mismatch_max_mm"] == 0.0
+    assert manifests["stl"]["transition_regions"][0]["quality"]["boundary_mismatch_max_mm"] is None
+    assert manifests["stl"]["transition_regions"][0]["quality"]["boundary_mismatch_status"] == "not_evaluated"
     assert manifests["step"]["mesh_type"] == "transition_aware_surface_mesh"
     assert manifests["step"]["transition_regions"] == manifests["stl"]["transition_regions"]
 

@@ -54,7 +54,8 @@ def test_transition_aware_mesh_reports_blade_root_transition_quality():
     assert root_regions[0]["treatment"] == "fillet"
     assert root_regions[0]["radius_mm"] == 8.0
     assert root_regions[0]["quality"]["max_aspect_ratio"] > 0
-    assert root_regions[0]["quality"]["boundary_mismatch_max_mm"] <= 1.0e-6
+    assert root_regions[0]["quality"]["boundary_mismatch_max_mm"] is None
+    assert root_regions[0]["quality"]["boundary_mismatch_status"] == "not_evaluated"
 
 
 def test_transition_aware_mesh_accounts_for_all_triangles_and_skips():
