@@ -391,6 +391,14 @@ def write_bounded_brep_step(
             "status": "PASS" if face_count_matches else "FAIL",
         },
     ]
+    failed_validation_checks = [
+        str(check["name"]) for check in validation_checks if check.get("status") != "PASS"
+    ]
+    if transition_resolved and failed_validation_checks:
+        raise RuntimeError(
+            "transition-resolved bounded BREP export validation failed: "
+            + ", ".join(failed_validation_checks)
+        )
 
     return {
         "source": "surface_graph",

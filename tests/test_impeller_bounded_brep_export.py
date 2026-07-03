@@ -209,6 +209,25 @@ def test_write_bounded_brep_step_marks_large_reimport_bbox_diagnostic(tmp_path: 
     assert {"name": "finite_reimport_bbox", "status": "FAIL"} in manifest["validation_checks"]
 
 
+def test_write_bounded_brep_step_rejects_transition_resolved_validation_failures(
+    tmp_path: Path,
+    monkeypatch,
+):
+    large_bbox = _bbox(x_span_mm=FINITE_REIMPORT_BBOX_MAX_SPAN_MM, y_span_mm=100.0, z_span_mm=0.0)
+    surface_graph = {
+        **_surface_graph(_annular_surface()),
+        "transition_geometry_status": "resolved_trimmed_surface_graph",
+    }
+
+    monkeypatch.setattr(
+        "part_rule_synthesis.impeller_bounded_brep_export.reimport_step_bbox",
+        lambda _path: large_bbox,
+    )
+
+    with pytest.raises(RuntimeError, match="finite_reimport_bbox"):
+        write_bounded_brep_step(tmp_path / "transition_large.step", "impeller", surface_graph)
+
+
 def _annular_surface(**overrides):
     surface = {
         "id": "inner_hub_bottom_face",

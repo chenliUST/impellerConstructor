@@ -960,6 +960,10 @@ def _write_exports(
             view_id=export_contract.get("default_view", "cad_review_360"),
         )
         if bounded_surface_graph is not None:
+            validation_checks = _legacy_bounded_brep_validation_checks(
+                brep_manifest.get("validation_checks", []),
+                has_excluded_surfaces=bool(bounded_surface_graph["excluded_surface_ids"]),
+            )
             brep_manifest = {
                 **brep_manifest,
                 "bounded_brep_status": "bounded_faces_unsewn",
@@ -973,6 +977,7 @@ def _write_exports(
                 "excluded_surface_ids": bounded_surface_graph["excluded_surface_ids"],
                 "unsupported_surface_count": bounded_surface_graph["unsupported_surface_count"],
                 "unsupported_surface_kinds": bounded_surface_graph["excluded_surface_kinds"],
+                "validation_checks": validation_checks,
                 "diagnostic_step_exactness": export_contract.get(
                     "diagnostic_step_exactness",
                     brep_manifest.get("export_exactness", "surface_graph_bounded_unsewn_brep_step"),
@@ -1186,6 +1191,37 @@ def _bounded_brep_supported_surface_graph(surface_graph: dict[str, Any]) -> dict
         "excluded_surface_kinds": dict(sorted(excluded_surface_kinds.items())),
         "limitations": limitations,
     }
+
+
+def _legacy_bounded_brep_validation_checks(
+    validation_checks: list[dict[str, Any]],
+    *,
+    has_excluded_surfaces: bool,
+) -> list[dict[str, Any]]:
+    checks_by_name = {
+        str(check.get("name")): dict(check)
+        for check in validation_checks
+        if isinstance(check, dict) and check.get("name")
+    }
+    ordered_names = [
+        "finite_reimport_bbox",
+        "complete_surface_coverage",
+        "reimport_face_count_matches_manifest",
+    ]
+    merged_checks: list[dict[str, Any]] = []
+    for name in ordered_names:
+        check = dict(checks_by_name.get(name, {"name": name, "status": "PASS"}))
+        if name == "complete_surface_coverage" and has_excluded_surfaces:
+            check["status"] = "FAIL"
+        merged_checks.append(check)
+
+    known_names = set(ordered_names)
+    merged_checks.extend(
+        dict(check)
+        for check in validation_checks
+        if isinstance(check, dict) and check.get("name") not in known_names
+    )
+    return merged_checks
 
 
 def _bounded_brep_strategy_reason(

@@ -322,6 +322,95 @@ def test_v07_bounded_export_routes_step_to_bounded_brep_and_hides_mesh_step(tmp_
     assert actual_strategy["export_contract"]["step_exactness"] == "surface_graph_bounded_unsewn_brep_step"
 
 
+def test_legacy_bounded_export_partial_accounting_marks_incomplete_coverage(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    model_output_root = tmp_path / "model-output"
+
+    def fake_graph_exports(mesh_step_path, stl_path, solid_name, surface_graph, view_id="cad_review_360"):
+        Path(mesh_step_path).write_text("mesh step", encoding="utf-8")
+        Path(stl_path).write_text("solid impeller\nendsolid impeller\n", encoding="utf-8")
+        return {"stl": {"source": "surface_graph", "export_exactness": "surface_graph_sampled_mesh"}}
+
+    def fake_bounded_brep(step_path, solid_name, surface_graph, view_id="cad_review_360"):
+        Path(step_path).write_text("ISO-10303-21;\nADVANCED_FACE();\nEND-ISO-10303-21;\n", encoding="utf-8")
+        surface_ids = [surface["id"] for surface in surface_graph["surfaces"]]
+        return {
+            "source": "surface_graph",
+            "view": view_id,
+            "export_exactness": "surface_graph_bounded_unsewn_brep_step",
+            "target_exactness": "surface_graph_trimmed_brep_step",
+            "bounded_face_count": len(surface_ids),
+            "reimport_face_count": len(surface_ids),
+            "total_surface_count": len(surface_ids),
+            "supported_surface_count": len(surface_ids),
+            "included_surface_ids": surface_ids,
+            "excluded_surface_ids": [],
+            "validation_checks": [
+                {"name": "finite_reimport_bbox", "status": "PASS"},
+                {"name": "complete_surface_coverage", "status": "PASS"},
+                {"name": "reimport_face_count_matches_manifest", "status": "PASS"},
+            ],
+        }
+
+    def fake_obj_export(obj_path, solid_name, surface_graph, view_id="cad_review_360"):
+        Path(obj_path).write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="utf-8")
+        return {"source": "surface_graph", "export_exactness": "surface_graph_obj_mesh"}
+
+    monkeypatch.setattr(service_module, "write_surface_graph_exports", fake_graph_exports)
+    monkeypatch.setattr(service_module, "write_bounded_brep_step", fake_bounded_brep)
+    monkeypatch.setattr(service_module, "write_surface_graph_obj", fake_obj_export)
+
+    _exports, export_manifests = service_module._write_exports(
+        run_dir,
+        "impeller",
+        {},
+        dsl_context={
+            "preset_id": "legacy_v0_7_partial",
+            "export_contract": {
+                "mode": "surface_graph_bounded_brep",
+                "default_view": "cad_review_360",
+                "cad_export_scope": "supported_bounded_brep_surfaces",
+                "unsupported_surface_policy": "excluded_with_manifest_accounting",
+            },
+        },
+        geometry_metadata={
+            "surface_graph": {
+                "surfaces": [
+                    {
+                        "id": "bottom_cap",
+                        "feature_id": "hub_material_solid",
+                        "role": "hub",
+                        "kind": "annular_plane_surface",
+                        "outer_radius_mm": 10.0,
+                        "inner_radius_mm": 2.0,
+                        "z_mm": 0.0,
+                    },
+                    {
+                        "id": "blade_surface",
+                        "feature_id": "blade_0",
+                        "role": "blade_pressure",
+                        "kind": "lofted_blade_surface",
+                        "uv_grid": [
+                            [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
+                            [[0.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+                        ],
+                    },
+                ]
+            }
+        },
+        model_output_root=model_output_root,
+    )
+
+    step_manifest = export_manifests["step"]
+    assert step_manifest["included_surface_ids"] == ["bottom_cap"]
+    assert step_manifest["excluded_surface_ids"] == ["blade_surface"]
+    assert step_manifest["coverage_status"] == "partial_supported_surfaces"
+    assert {"name": "finite_reimport_bbox", "status": "PASS"} in step_manifest["validation_checks"]
+    assert {"name": "complete_surface_coverage", "status": "FAIL"} in step_manifest["validation_checks"]
+    assert {"name": "reimport_face_count_matches_manifest", "status": "PASS"} in step_manifest["validation_checks"]
+
+
 def test_v07_service_instantiates_bounded_brep_step_and_mesh_review_outputs(tmp_path):
     model_output_root = tmp_path / "model-output"
     service = service_module.RuleSynthesisService(tmp_path / "workspace", model_output_root=model_output_root)
