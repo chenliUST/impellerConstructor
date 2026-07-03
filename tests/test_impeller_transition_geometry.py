@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+from part_rule_synthesis.impeller_transition_geometry import (
+    build_chamfer_section,
+    build_fillet_section,
+    max_distance_from_line,
+    max_radius_error,
+)
 from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 from part_rule_synthesis.service import (
     _bind_parameters,
@@ -81,3 +87,35 @@ def test_v08_blade_root_chamfer_override_changes_transition_geometry_and_role():
     assert chamfered_root["role"] == "blade_root_chamfer"
     assert chamfered_root["treatment"] == "chamfer"
     assert _grid_digest(chamfered_root) != _grid_digest(baseline_root)
+
+
+def test_build_fillet_section_samples_requested_radius_arc():
+    section = build_fillet_section(
+        first_trim_point=(8.0, 0.0, 0.0),
+        second_trim_point=(0.0, 8.0, 0.0),
+        center=(8.0, 8.0, 0.0),
+        radius_mm=8.0,
+        sample_count=7,
+        edge_tangent=(0.0, 0.0, 1.0),
+    )
+
+    assert len(section.points) == 7
+    assert section.treatment == "fillet"
+    assert section.radius_mm == 8.0
+    assert max_radius_error(section.points, center=(8.0, 8.0, 0.0), radius_mm=8.0) <= 1.0e-6
+
+
+def test_build_chamfer_section_samples_straight_line():
+    section = build_chamfer_section(
+        first_trim_point=(8.0, 0.0, 0.0),
+        second_trim_point=(0.0, 8.0, 0.0),
+        sample_count=3,
+    )
+
+    assert len(section.points) == 3
+    assert section.treatment == "chamfer"
+    assert max_distance_from_line(
+        section.points,
+        first=(8.0, 0.0, 0.0),
+        second=(0.0, 8.0, 0.0),
+    ) <= 1.0e-6
