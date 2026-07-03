@@ -556,6 +556,12 @@ def _resolve_axisymmetric_transition_site(
     )
 
     surface["uv_grid"] = resolved_grid
+    if "control_net" in surface:
+        surface["control_net"] = _copy_uv_grid(resolved_grid)
+    if isinstance(surface.get("cad_surface"), dict) and "control_points" in surface["cad_surface"]:
+        cad_surface = dict(surface["cad_surface"])
+        cad_surface["control_points"] = _copy_uv_grid(resolved_grid)
+        surface["cad_surface"] = cad_surface
     surface["edge_treatment_site_id"] = edge_family
     surface["edge_family"] = edge_family
     surface["transition_policy_id"] = str(policy.get("policy_id", f"{edge_family}.default"))
@@ -731,7 +737,12 @@ def _point3_from_grid_point(
         raise ValueError(
             f"{surface_id} uv_grid row {row_index} point {point_index} must contain 3 coordinates"
         )
-    return (float(point[0]), float(point[1]), float(point[2]))
+    coordinates = (float(point[0]), float(point[1]), float(point[2]))
+    if not all(math.isfinite(coordinate) for coordinate in coordinates):
+        raise ValueError(
+            f"{surface_id} uv_grid row {row_index} point {point_index} must contain finite coordinates"
+        )
+    return coordinates
 
 
 def _replace_first_v_column(grid: list[list[list[float]]], boundary: list[Point3]) -> None:
