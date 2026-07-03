@@ -353,6 +353,170 @@ def test_v08_disabled_blade_edge_transitions_remove_surfaces_across_all_blades()
     assert _blade_surface_ids(geometry, "_tip_transition_surface") == []
 
 
+@pytest.mark.parametrize(
+    (
+        "policy_id",
+        "surface_id",
+        "edge_family",
+        "baseline_radius",
+        "override_treatment",
+        "override_radius",
+    ),
+    [
+        (
+            "hub_top_outer.default",
+            "hub_top_outer_transition_surface",
+            "hub_top_outer",
+            3.0,
+            "fillet",
+            10.0,
+        ),
+        (
+            "hub_bottom_outer.default",
+            "hub_bottom_outer_transition_surface",
+            "hub_bottom_outer",
+            3.0,
+            "fillet",
+            11.0,
+        ),
+        (
+            "mounting_bore_top.default",
+            "mounting_bore_top_transition_surface",
+            "mounting_bore_top",
+            3.0,
+            "chamfer",
+            7.0,
+        ),
+        (
+            "mounting_bore_bottom.default",
+            "mounting_bore_bottom_transition_surface",
+            "mounting_bore_bottom",
+            3.0,
+            "chamfer",
+            8.0,
+        ),
+    ],
+)
+def test_v08_axisymmetric_hub_and_bore_overrides_resolve_transition_geometry(
+    policy_id,
+    surface_id,
+    edge_family,
+    baseline_radius,
+    override_treatment,
+    override_radius,
+):
+    baseline = _geometry_for_v08()
+    changed = _geometry_for_v08(
+        transition_overrides={
+            policy_id: {
+                "enabled": True,
+                "treatment": override_treatment,
+                "radius_mm": override_radius,
+            }
+        }
+    )
+
+    graph = changed["surface_graph"]
+    baseline_surface = _surface_by_id(baseline, surface_id)
+    changed_surface = _surface_by_id(changed, surface_id)
+
+    assert baseline_surface["radius_mm"] == baseline_radius
+    assert changed_surface["edge_treatment_site_id"] == edge_family
+    assert changed_surface["edge_family"] == edge_family
+    assert changed_surface["transition_policy_id"] == policy_id
+    assert changed_surface["treatment"] == override_treatment
+    assert changed_surface["radius_mm"] == override_radius
+    assert changed_surface["transition_geometry"] == f"resolved_{override_treatment}_patch"
+    assert changed_surface["transition_quality"]["has_resolved_patch"]
+    assert _grid_digest(changed_surface) != _grid_digest(baseline_surface)
+    assert {
+        "edge_treatment_site_id": edge_family,
+        "edge_family": edge_family,
+        "transition_policy_id": policy_id,
+        "treatment": override_treatment,
+        "radius_mm": override_radius,
+        "adjacent_surface_ids": [],
+        "transition_surface_ids": [surface_id],
+        "feature_id": surface_id,
+    } in graph["edge_treatment_sites"]
+
+
+def test_v08_closed_hood_defaults_resolve_transition_geometry():
+    geometry = _geometry_for_v08(preset_name="radial_closed_reference_v0_8")
+
+    graph = geometry["surface_graph"]
+    inlet = _surface_by_id(geometry, "hood_chamfer_inlet_surface")
+    outlet = _surface_by_id(geometry, "hood_chamfer_outlet_surface")
+
+    for surface, surface_id, edge_family in [
+        (inlet, "hood_chamfer_inlet_surface", "hood_inlet_lip"),
+        (outlet, "hood_chamfer_outlet_surface", "hood_outlet_lip"),
+    ]:
+        assert surface["edge_treatment_site_id"] == edge_family
+        assert surface["edge_family"] == edge_family
+        assert surface["transition_policy_id"] == f"{edge_family}.default"
+        assert surface["treatment"] == "fillet"
+        assert surface["radius_mm"] == 3.0
+        assert surface["transition_geometry"] == "resolved_fillet_patch"
+        assert surface["transition_quality"]["has_resolved_patch"]
+        assert {
+            "edge_treatment_site_id": edge_family,
+            "edge_family": edge_family,
+            "transition_policy_id": f"{edge_family}.default",
+            "treatment": "fillet",
+            "radius_mm": 3.0,
+            "adjacent_surface_ids": [],
+            "transition_surface_ids": [surface_id],
+            "feature_id": surface_id,
+        } in graph["edge_treatment_sites"]
+
+
+def test_v08_closed_hood_override_changes_transition_geometry():
+    baseline = _geometry_for_v08(preset_name="radial_closed_reference_v0_8")
+    changed = _geometry_for_v08(
+        transition_overrides={
+            "hood_outlet_lip.default": {
+                "enabled": True,
+                "treatment": "chamfer",
+                "radius_mm": 9.0,
+            }
+        },
+        preset_name="radial_closed_reference_v0_8",
+    )
+
+    baseline_outlet = _surface_by_id(baseline, "hood_chamfer_outlet_surface")
+    changed_outlet = _surface_by_id(changed, "hood_chamfer_outlet_surface")
+
+    assert changed_outlet["edge_treatment_site_id"] == "hood_outlet_lip"
+    assert changed_outlet["edge_family"] == "hood_outlet_lip"
+    assert changed_outlet["transition_policy_id"] == "hood_outlet_lip.default"
+    assert changed_outlet["treatment"] == "chamfer"
+    assert changed_outlet["radius_mm"] == 9.0
+    assert changed_outlet["transition_geometry"] == "resolved_chamfer_patch"
+    assert _grid_digest(changed_outlet) != _grid_digest(baseline_outlet)
+
+
+def test_v08_disabled_axisymmetric_policy_removes_transition_surface():
+    geometry = _geometry_for_v08(
+        transition_overrides={
+            "hub_bottom_outer.default": {
+                "enabled": False,
+                "treatment": "none",
+                "radius_mm": 0.0,
+            }
+        }
+    )
+
+    graph = geometry["surface_graph"]
+    surface_ids = {surface["id"] for surface in graph["surfaces"]}
+
+    assert "hub_bottom_outer_transition_surface" not in surface_ids
+    assert all(
+        site["edge_family"] != "hub_bottom_outer"
+        for site in graph["edge_treatment_sites"]
+    )
+
+
 def test_v08_closed_tip_to_shroud_policy_owns_tip_transition_surface():
     geometry = _geometry_for_v08(
         {

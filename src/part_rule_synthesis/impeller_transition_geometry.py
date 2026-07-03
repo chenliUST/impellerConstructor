@@ -55,6 +55,12 @@ class BladeEdgeSpec:
     axis: Literal["u0", "u1", "v1"]
 
 
+@dataclass(frozen=True)
+class AxisymmetricTransitionSpec:
+    edge_family: str
+    surface_id: str
+
+
 _BLADE_EDGE_SPECS = (
     BladeEdgeSpec(
         edge_family="blade_leading_edge",
@@ -89,6 +95,33 @@ _BLADE_TIP_TO_SHROUD_SPEC = BladeEdgeSpec(
     fillet_role="blade_tip_edge_fillet",
     chamfer_role="blade_tip_edge_chamfer",
     axis="v1",
+)
+
+_AXISYMMETRIC_TRANSITION_SPECS = (
+    AxisymmetricTransitionSpec(
+        edge_family="hub_top_outer",
+        surface_id="hub_top_outer_transition_surface",
+    ),
+    AxisymmetricTransitionSpec(
+        edge_family="hub_bottom_outer",
+        surface_id="hub_bottom_outer_transition_surface",
+    ),
+    AxisymmetricTransitionSpec(
+        edge_family="mounting_bore_top",
+        surface_id="mounting_bore_top_transition_surface",
+    ),
+    AxisymmetricTransitionSpec(
+        edge_family="mounting_bore_bottom",
+        surface_id="mounting_bore_bottom_transition_surface",
+    ),
+    AxisymmetricTransitionSpec(
+        edge_family="hood_inlet_lip",
+        surface_id="hood_chamfer_inlet_surface",
+    ),
+    AxisymmetricTransitionSpec(
+        edge_family="hood_outlet_lip",
+        surface_id="hood_chamfer_outlet_surface",
+    ),
 )
 
 
@@ -271,6 +304,34 @@ def _resolve_v08_transition_geometry(
                         "reason": str(exc),
                     }
                 )
+
+    surface_by_id = {surface["id"]: surface for surface in surfaces}
+    for spec in _AXISYMMETRIC_TRANSITION_SPECS:
+        policy = transition_policies.get(f"{spec.edge_family}.default")
+        if spec.surface_id not in surface_by_id:
+            continue
+        if not _policy_enabled(policy):
+            _remove_surfaces_by_edge_family_or_id(surfaces, spec.edge_family, spec.surface_id)
+            surface_by_id = {surface["id"]: surface for surface in surfaces}
+            continue
+        try:
+            site_dicts.append(
+                _resolve_axisymmetric_transition_site(
+                    surface_by_id[spec.surface_id],
+                    spec.edge_family,
+                    policy,
+                )
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            transition_failures.append(
+                {
+                    "edge_treatment_site_id": spec.edge_family,
+                    "edge_family": spec.edge_family,
+                    "transition_policy_id": str(policy.get("policy_id", f"{spec.edge_family}.default")),
+                    "status": "FAIL",
+                    "reason": str(exc),
+                }
+            )
 
     quality_checks = [
         {
@@ -476,6 +537,45 @@ def _resolve_blade_edge_site(
     }
 
 
+def _resolve_axisymmetric_transition_site(
+    surface: dict[str, Any],
+    edge_family: str,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    surface_id = str(surface["id"])
+    treatment = str(policy.get("treatment", "fillet"))
+    if treatment not in {"chamfer", "fillet"}:
+        raise ValueError(f"unsupported {edge_family} treatment: {treatment}")
+    radius = float(policy.get("radius_mm", 0.0))
+
+    resolved_grid = _scale_axisymmetric_band(
+        surface.get("uv_grid"),
+        treatment=treatment,
+        radius_mm=radius,
+        surface_id=surface_id,
+    )
+
+    surface["uv_grid"] = resolved_grid
+    surface["edge_treatment_site_id"] = edge_family
+    surface["edge_family"] = edge_family
+    surface["transition_policy_id"] = str(policy.get("policy_id", f"{edge_family}.default"))
+    surface["treatment"] = treatment
+    surface["radius_mm"] = radius
+    surface["transition_geometry"] = f"resolved_{treatment}_patch"
+    surface.setdefault("role", f"{edge_family}_{treatment}_transition")
+    surface["transition_quality"] = _transition_grid_quality(resolved_grid)
+
+    return {
+        "edge_treatment_site_id": edge_family,
+        "edge_family": edge_family,
+        "transition_policy_id": surface["transition_policy_id"],
+        "treatment": treatment,
+        "radius_mm": radius,
+        "adjacent_surface_ids": [],
+        "transition_surface_ids": [surface_id],
+    }
+
+
 def _copy_surface(surface: dict[str, Any]) -> dict[str, Any]:
     copied = {**surface}
     if "uv_grid" in copied:
@@ -668,6 +768,18 @@ def _remove_surfaces_by_edge_family(surfaces: list[dict[str, Any]], edge_family:
     surfaces[:] = [surface for surface in surfaces if surface.get("edge_family") != edge_family]
 
 
+def _remove_surfaces_by_edge_family_or_id(
+    surfaces: list[dict[str, Any]],
+    edge_family: str,
+    surface_id: str,
+) -> None:
+    surfaces[:] = [
+        surface
+        for surface in surfaces
+        if surface.get("edge_family") != edge_family and surface.get("id") != surface_id
+    ]
+
+
 def _blade_indices_from_pressure_surfaces(surfaces: list[dict[str, Any]]) -> list[int]:
     indices = []
     for surface in surfaces:
@@ -752,6 +864,53 @@ def _build_transition_grid(
     ]
 
 
+def _scale_axisymmetric_band(
+    grid: Any,
+    *,
+    treatment: str,
+    radius_mm: float,
+    surface_id: str,
+) -> list[list[list[float]]]:
+    _validate_uv_grid(grid, surface_id=surface_id)
+    u_count = len(grid)
+    v_count = len(grid[0])
+    if u_count < 2 or v_count < 2:
+        raise ValueError(f"{surface_id} uv_grid must contain at least 2 u rows and 2 v points")
+
+    radius_scale = max(0.0, min(float(radius_mm), 120.0))
+    treatment_scale = 0.035 if treatment == "chamfer" else 0.07
+    resolved_grid: list[list[list[float]]] = []
+    for row_index, row in enumerate(grid):
+        if u_count == 1:
+            u_t = 0.0
+        else:
+            u_t = row_index / (u_count - 1)
+        cross_band_weight = math.sin(math.pi * u_t)
+        resolved_row: list[list[float]] = []
+        for point_index, point in enumerate(row):
+            point3 = _point3_from_grid_point(
+                point,
+                surface_id=surface_id,
+                row_index=row_index,
+                point_index=point_index,
+            )
+            radial = _unit_xy_direction(point3)
+            circumferential_t = point_index / (v_count - 1)
+            axial_bias = (u_t - 0.5) * radius_scale * treatment_scale
+            radial_offset = cross_band_weight * radius_scale * treatment_scale
+            if treatment == "chamfer":
+                radial_offset *= 0.5 + 0.5 * circumferential_t
+            resolved_row.append(
+                [
+                    point3[0] + radial[0] * radial_offset,
+                    point3[1] + radial[1] * radial_offset,
+                    point3[2] + axial_bias,
+                ]
+            )
+        resolved_grid.append(resolved_row)
+    return resolved_grid
+
+
 def _unit_xy_midpoint_direction(first: Point3, second: Point3) -> Point3:
     midpoint = (
         (first[0] + second[0]) * 0.5,
@@ -762,6 +921,13 @@ def _unit_xy_midpoint_direction(first: Point3, second: Point3) -> Point3:
     if length <= 1.0e-9:
         return (1.0, 0.0, 0.0)
     return (midpoint[0] / length, midpoint[1] / length, 0.0)
+
+
+def _unit_xy_direction(point: Point3) -> Point3:
+    length = math.hypot(point[0], point[1])
+    if length <= 1.0e-9:
+        return (1.0, 0.0, 0.0)
+    return (point[0] / length, point[1] / length, 0.0)
 
 
 def _transition_grid_quality(grid: list[list[list[float]]]) -> dict[str, Any]:
