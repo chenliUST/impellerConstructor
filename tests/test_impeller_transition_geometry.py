@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
 from part_rule_synthesis.impeller_transition_geometry import (
     build_chamfer_section,
@@ -48,6 +50,12 @@ def _grid_digest(surface: dict) -> str:
     return json.dumps(surface["uv_grid"], sort_keys=True)
 
 
+def _assert_point_close(actual, expected, tolerance=1.0e-9):
+    assert len(actual) == len(expected)
+    for actual_value, expected_value in zip(actual, expected):
+        assert abs(actual_value - expected_value) <= tolerance
+
+
 def test_v08_blade_root_radius_override_changes_transition_geometry():
     baseline = _geometry_for_v08()
     enlarged = _geometry_for_v08(
@@ -90,9 +98,11 @@ def test_v08_blade_root_chamfer_override_changes_transition_geometry_and_role():
 
 
 def test_build_fillet_section_samples_requested_radius_arc():
+    first_trim_point = (8.0, 0.0, 0.0)
+    second_trim_point = (0.0, 8.0, 0.0)
     section = build_fillet_section(
-        first_trim_point=(8.0, 0.0, 0.0),
-        second_trim_point=(0.0, 8.0, 0.0),
+        first_trim_point=first_trim_point,
+        second_trim_point=second_trim_point,
         center=(8.0, 8.0, 0.0),
         radius_mm=8.0,
         sample_count=7,
@@ -102,7 +112,21 @@ def test_build_fillet_section_samples_requested_radius_arc():
     assert len(section.points) == 7
     assert section.treatment == "fillet"
     assert section.radius_mm == 8.0
+    _assert_point_close(section.points[0], first_trim_point)
+    _assert_point_close(section.points[-1], second_trim_point)
     assert max_radius_error(section.points, center=(8.0, 8.0, 0.0), radius_mm=8.0) <= 1.0e-6
+
+
+def test_build_fillet_section_rejects_trim_points_off_requested_radius():
+    with pytest.raises(ValueError, match="fillet trim points must lie on requested radius"):
+        build_fillet_section(
+            first_trim_point=(9.0, 0.0, 0.0),
+            second_trim_point=(0.0, 8.0, 0.0),
+            center=(8.0, 8.0, 0.0),
+            radius_mm=8.0,
+            sample_count=7,
+            edge_tangent=(0.0, 0.0, 1.0),
+        )
 
 
 def test_build_chamfer_section_samples_straight_line():

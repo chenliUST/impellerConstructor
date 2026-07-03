@@ -9,7 +9,7 @@ Point3 = tuple[float, float, float]
 Treatment = Literal["none", "chamfer", "fillet"]
 
 
-@dataclass(frozen=True)
+@dataclass
 class TransitionSection:
     treatment: Treatment
     radius_mm: float
@@ -17,7 +17,7 @@ class TransitionSection:
     quality: dict[str, Any]
 
 
-@dataclass(frozen=True)
+@dataclass
 class EdgeTreatmentSite:
     site_id: str
     edge_family: str
@@ -29,7 +29,7 @@ class EdgeTreatmentSite:
     feature_id: str
 
 
-@dataclass(frozen=True)
+@dataclass
 class TransitionResolution:
     surface_graph: dict[str, Any]
     edge_treatment_sites: list[EdgeTreatmentSite]
@@ -46,10 +46,22 @@ def build_fillet_section(
     sample_count: int,
     edge_tangent: Point3,
 ) -> TransitionSection:
+    """Build a sampled local XY-section fillet primitive for the initial V0.8 resolver.
+
+    The arc is sampled in the XY plane around ``center``. ``edge_tangent`` is used
+    only to choose orientation for an ambiguous half-circle section.
+    """
     if sample_count < 3:
         raise ValueError("fillet section sample_count must be at least 3")
     if radius_mm <= 0.0 or not math.isfinite(radius_mm):
         raise ValueError("fillet radius_mm must be positive and finite")
+    if _norm(edge_tangent) <= 1.0e-9:
+        raise ValueError("fillet section edge_tangent must be nonzero")
+    if (
+        abs(_xy_distance(first_trim_point, center) - radius_mm) > 1.0e-6
+        or abs(_xy_distance(second_trim_point, center) - radius_mm) > 1.0e-6
+    ):
+        raise ValueError("fillet trim points must lie on requested radius from center")
 
     start_angle = math.atan2(first_trim_point[1] - center[1], first_trim_point[0] - center[0])
     end_angle = math.atan2(second_trim_point[1] - center[1], second_trim_point[0] - center[0])
@@ -65,6 +77,8 @@ def build_fillet_section(
         )
         for t in _sample_parameters(sample_count)
     ]
+    points[0] = first_trim_point
+    points[-1] = second_trim_point
     return TransitionSection(
         treatment="fillet",
         radius_mm=float(radius_mm),
@@ -83,6 +97,7 @@ def build_chamfer_section(
     second_trim_point: Point3,
     sample_count: int,
 ) -> TransitionSection:
+    """Build a sampled local XY-section chamfer primitive for the initial V0.8 resolver."""
     if sample_count < 2:
         raise ValueError("chamfer section sample_count must be at least 2")
 
