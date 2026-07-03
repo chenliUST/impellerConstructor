@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Impeller V0.7 Native Surface Graph Sweep</title>
+    <script src="node_modules/gsap/dist/gsap.min.js"></script>
+    <script src="data/impeller_v07_sweep_data.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./node_modules/three/build/three.module.js"
+        }
+      }
+    </script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        margin: 0;
+        overflow: hidden;
+        background: #edf2ef;
+      }
+
+      body {
+        font-family: "IBM Plex Mono", monospace;
+        color: #17211d;
+      }
+
+      #root {
+        width: 1920px;
+        height: 1080px;
+        background: #edf2ef;
+        overflow: hidden;
+      }
+
+      .scene-content {
+        width: 100%;
+        height: 100%;
+        padding: 24px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        gap: 18px;
+      }
+
+      .panel {
+        background: #f8faf7;
+        border: 1px solid #b9c5be;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.74);
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .viewport {
+        display: grid;
+        grid-template-rows: 46px 1fr;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 0 18px;
+        border-bottom: 1px solid #cbd4cf;
+      }
+
+      .panel-title {
+        font-size: 21px;
+        font-weight: 800;
+      }
+
+      .panel-subtitle {
+        min-width: 0;
+        color: #5d6b65;
+        font-size: 14px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .dashboard {
+        padding: 16px 20px;
+        display: grid;
+        grid-template-rows: auto auto auto 1fr auto;
+        gap: 10px;
+      }
+
+      .dash-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .dash-top > div:first-child,
+      .case-line > div {
+        min-width: 0;
+      }
+
+      .eyebrow {
+        color: #5d6b65;
+        font-size: 13px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 5px 0 0;
+        font-size: 31px;
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+
+      .status-badge {
+        border: 1px solid #1f7a5a;
+        color: #1f7a5a;
+        padding: 7px 12px;
+        font-size: 17px;
+        font-weight: 800;
+        min-width: 64px;
+        text-align: center;
+        flex: 0 0 auto;
+      }
+
+      .case-line {
+        border-top: 1px solid #cbd4cf;
+        border-bottom: 1px solid #cbd4cf;
+        padding: 10px 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+        align-items: start;
+      }
+
+      .case-name {
+        font-size: 17px;
+        font-weight: 800;
+        line-height: 1.2;
+        white-space: normal;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+      }
+
+      .case-id {
+        margin-top: 4px;
+        color: #5d6b65;
+        font-size: 11px;
+        line-height: 1.25;
+        white-space: normal;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+      }
+
+      .progress {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) 52px;
+        align-items: center;
+        gap: 10px;
+        color: #5d6b65;
+        font-size: 13px;
+        padding-right: 4px;
+      }
+
+      #toLabel {
+        justify-self: end;
+        text-align: right;
+      }
+
+      .track {
+        height: 8px;
+        border: 1px solid #cbd4cf;
+        background: #e7ede9;
+      }
+
+      .fill {
+        height: 100%;
+        width: 0;
+        background: #b86721;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+      }
+
+      .metric {
+        border: 1px solid #cbd4cf;
+        padding: 10px;
+        min-height: 64px;
+      }
+
+      .metric-label {
+        color: #5d6b65;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      .metric-value {
+        margin-top: 6px;
+        font-size: 22px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .metric-value small {
+        font-size: 11px;
+        font-weight: 500;
+      }
+
+      .param-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        column-gap: 18px;
+        row-gap: 5px;
+        align-content: start;
+      }
+
+      .param {
+        display: grid;
+        grid-template-columns: 170px 62px 1fr;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: #17211d;
+      }
+
+      .param-name,
+      .param-value {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .param-value {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .bar {
+        height: 7px;
+        border: 1px solid #cbd4cf;
+        background: #eef2f0;
+      }
+
+      .bar span {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: #1f7a5a;
+      }
+
+      .footnotes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        color: #46534e;
+        font-size: 10.5px;
+        line-height: 1.22;
+        min-width: 0;
+      }
+
+      .footnotes div {
+        border-top: 1px solid #cbd4cf;
+        padding-top: 8px;
+        min-width: 0;
+        overflow-wrap: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="72" data-width="1920" data-height="1080">
+      <div class="scene-content" id="layout">
+        <section class="panel viewport" id="shadedPanel">
+          <header class="panel-head">
+            <div class="panel-title">Shaded model</div>
+            <div class="panel-subtitle">actual surface_graph shaded surfaces from the constructor</div>
+          </header>
+          <canvas id="shadeCanvas" width="910" height="460"></canvas>
+        </section>
+
+        <section class="panel viewport" id="meshPanel">
+          <header class="panel-head">
+            <div class="panel-title">Mesh view</div>
+            <div class="panel-subtitle">actual uv_grid triangle edges, no filled faces</div>
+          </header>
+          <canvas id="meshCanvas" width="910" height="460"></canvas>
+        </section>
+
+        <section class="panel viewport" id="wirePanel">
+          <header class="panel-head">
+            <div class="panel-title">Wireframe</div>
+            <div class="panel-subtitle">surface_graph wireframe derived from the same uv_grid</div>
+          </header>
+          <canvas id="wireCanvas" width="910" height="460"></canvas>
+        </section>
+
+        <aside class="panel dashboard" id="dashboard">
+          <div class="dash-top">
+            <div>
+              <div class="eyebrow">AxisymmetricThroughflowRadialBladedImpeller</div>
+              <h1>v0.7 native sweep</h1>
+            </div>
+            <div class="status-badge" id="status">PASS</div>
+          </div>
+
+          <div class="case-line">
+            <div>
+              <div class="case-name" id="caseName">Loading sweep</div>
+              <div class="case-id" id="caseId">waiting for surface_graph snapshots</div>
+            </div>
+            <div class="eyebrow" id="facets">radial / open</div>
+          </div>
+
+          <div class="progress">
+            <span id="fromLabel">01</span>
+            <div class="track"><div class="fill" id="progressFill"></div></div>
+            <span id="toLabel">02</span>
+          </div>
+
+          <div class="metric-grid">
+            <div class="metric">
+              <div class="metric-label">blades</div>
+              <div class="metric-value" id="bladeMetric">12</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">surfaces</div>
+              <div class="metric-value" id="surfaceMetric">0</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">source tris</div>
+              <div class="metric-value" id="sourceTriMetric">0</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">display tris</div>
+              <div class="metric-value" id="displayTriMetric">0</div>
+            </div>
+          </div>
+
+          <div class="param-grid" id="paramGrid"></div>
+
+          <div class="footnotes">
+            <div>Every displayed geometry sample is generated by the current v0.7 constructor and read from geometry.surface_graph uv_grid data.</div>
+            <div>Frame-to-frame discontinuities are not hidden by morphing; they indicate the sampled constructor path, topology switch, or parameter transition.</div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <script type="module">
+      import * as THREE from "three";
+
+      window.__timelines = window.__timelines || {};
+
+      const DATA = window.IMPELLER_V07_SWEEP_DATA;
+      const snapshots = DATA.snapshots || [];
+      const duration = DATA.duration_seconds || 72;
+      let activeSnapshotIndex = -1;
+      let activeSnapshot = snapshots[0];
+      let activeBounds = { center: new THREE.Vector3(), radius: 1000 };
+
+      const ui = {
+        status: document.getElementById("status"),
+        caseName: document.getElementById("caseName"),
+        caseId: document.getElementById("caseId"),
+        facets: document.getElementById("facets"),
+        fromLabel: document.getElementById("fromLabel"),
+        toLabel: document.getElementById("toLabel"),
+        progressFill: document.getElementById("progressFill"),
+        bladeMetric: document.getElementById("bladeMetric"),
+        surfaceMetric: document.getElementById("surfaceMetric"),
+        sourceTriMetric: document.getElementById("sourceTriMetric"),
+        displayTriMetric: document.getElementById("displayTriMetric"),
+        paramGrid: document.getElementById("paramGrid"),
+      };
+
+      const parameterRows = DATA.parameter_keys.map((key) => {
+        const row = document.createElement("div");
+        row.className = "param";
+        row.innerHTML = `<div class="param-name">${labelFor(key)}</div><div class="param-value">0</div><div class="bar"><span></span></div>`;
+        ui.paramGrid.appendChild(row);
+        return {
+          key,
+          value: row.querySelector(".param-value"),
+          bar: row.querySelector(".bar > span"),
+        };
+      });
+
+      let viewers = [];
+
+      function renderAtTime(time) {
+        if (!snapshots.length) return;
+        const global = clamp(time / duration, 0, 1);
+        const index = Math.min(snapshots.length - 1, Math.floor(global * snapshots.length));
+        if (index !== activeSnapshotIndex) {
+          activeSnapshotIndex = index;
+          activeSnapshot = snapshots[index];
+          activeBounds = surfaceBounds(activeSnapshot.surfaces || []);
+          for (const viewer of viewers) {
+            viewer.setSnapshot(activeSnapshot, activeBounds);
+          }
+          updateDashboard(activeSnapshot, index);
+        }
+        const cameraState = cameraStateFor(global, activeBounds);
+        for (const viewer of viewers) {
+          viewer.render(cameraState);
+        }
+      }
+
+      class SurfaceGraphViewport {
+        constructor(canvas, mode) {
+          this.canvas = canvas;
+          this.mode = mode;
+          this.scene = new THREE.Scene();
+          this.scene.background = new THREE.Color("#edf2ef");
+          this.camera = new THREE.PerspectiveCamera(45, canvas.width / canvas.height, 0.1, 100000);
+          this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, preserveDrawingBuffer: true });
+          this.renderer.setPixelRatio(1);
+          this.renderer.setSize(canvas.width, canvas.height, false);
+          this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+          this.scene.add(new THREE.HemisphereLight("#ffffff", "#8a928e", 2.4));
+          const keyLight = new THREE.DirectionalLight("#ffffff", 2.2);
+          keyLight.position.set(1.6, -2.3, 2.8);
+          this.scene.add(keyLight);
+          this.group = new THREE.Group();
+          this.scene.add(this.group);
+        }
+
+        setSnapshot(snapshot, bounds) {
+          disposeChildren(this.group);
+          this.group.clear();
+          for (const surface of snapshot.surfaces || []) {
+            const geometry = surfaceGridGeometry(surface.uv_grid || [], bounds.center);
+            if (!geometry) continue;
+            geometry.computeVertexNormals();
+            if (this.mode === "shaded") {
+              this.group.add(new THREE.Mesh(geometry, surfaceMaterial(surface)));
+            } else {
+              const wire = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), wireMaterial(surface, this.mode));
+              this.group.add(wire);
+            }
+          }
+        }
+
+        render(cameraState) {
+          this.camera.position.copy(cameraState.position);
+          this.camera.lookAt(0, 0, 0);
+          this.camera.near = Math.max(0.1, cameraState.radius / 200);
+          this.camera.far = Math.max(1000, cameraState.radius * 8);
+          this.camera.updateProjectionMatrix();
+          this.renderer.render(this.scene, this.camera);
+        }
+      }
+
+      viewers = [
+        new SurfaceGraphViewport(document.getElementById("shadeCanvas"), "shaded"),
+        new SurfaceGraphViewport(document.getElementById("meshCanvas"), "mesh"),
+        new SurfaceGraphViewport(document.getElementById("wireCanvas"), "wireframe"),
+      ];
+
+      renderAtTime(0);
+
+      const tl = gsap.timeline({ paused: true });
+      const playhead = { time: 0 };
+      tl.from("#layout", { opacity: 0, y: 18, duration: 0.5, ease: "power3.out" }, 0.15);
+      tl.from("#shadedPanel", { opacity: 0, x: -22, duration: 0.55, ease: "expo.out" }, 0.25);
+      tl.from("#meshPanel", { opacity: 0, x: 22, duration: 0.55, ease: "power2.out" }, 0.34);
+      tl.from("#wirePanel", { opacity: 0, y: 24, duration: 0.55, ease: "back.out(1.2)" }, 0.43);
+      tl.from("#dashboard", { opacity: 0, y: 24, duration: 0.55, ease: "circ.out" }, 0.52);
+      tl.to(playhead, { time: duration, duration, ease: "none", onUpdate: () => renderAtTime(playhead.time) }, 0);
+      window.__timelines["main"] = tl;
+
+      function surfaceGridGeometry(grid, center) {
+        if (!grid || grid.length < 2 || grid[0].length < 2) return null;
+        const positions = [];
+        const indices = [];
+        const vCount = grid[0].length;
+        for (const row of grid) {
+          for (const point of row) {
+            positions.push(point[0] - center.x, point[1] - center.y, point[2] - center.z);
+          }
+        }
+        for (let u = 0; u < grid.length - 1; u += 1) {
+          for (let v = 0; v < vCount - 1; v += 1) {
+            const a = u * vCount + v;
+            const b = (u + 1) * vCount + v;
+            const c = (u + 1) * vCount + v + 1;
+            const d = u * vCount + v + 1;
+            indices.push(a, b, d, b, c, d);
+          }
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setIndex(indices);
+        return geometry;
+      }
+
+      function surfaceMaterial(surface) {
+        const isEdgeClosure = surface.kind === "edge_closure_surface" || String(surface.role || "").includes("fillet");
+        const display = surface.display || {};
+        return new THREE.MeshStandardMaterial({
+          color: display.color || colorForSurface(surface),
+          roughness: 0.58,
+          metalness: 0.16,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: display.opacity ?? (isEdgeClosure ? 1.0 : 0.92),
+        });
+      }
+
+      function wireMaterial(surface, mode) {
+        const transition = String(surface.role || "").includes("fillet") || String(surface.role || "").includes("transition");
+        return new THREE.LineBasicMaterial({
+          color: transition ? "#f97316" : mode === "mesh" ? "#1f2933" : "#123241",
+          transparent: true,
+          opacity: transition ? 0.88 : mode === "mesh" ? 0.34 : 0.52,
+          depthTest: true,
+          depthWrite: false,
+        });
+      }
+
+      function colorForSurface(surface) {
+        const colors = {
+          hub: "#7aa58f",
+          hub_wall: "#7aa58f",
+          outer_hub_shell: "#7aa58f",
+          shroud: "#9db7c5",
+          tip_or_shroud_wall: "#9db7c5",
+          blade_pressure: "#6f9b85",
+          blade_suction: "#5d806f",
+          blade_leading_edge_closure: "#f59e0b",
+          blade_trailing_edge_closure: "#ef4444",
+          blade_root_hub_closure: "#22c55e",
+          blade_tip_closure: "#38bdf8",
+        };
+        return colors[surface.cfd_role] || colors[surface.role] || "#7aa58f";
+      }
+
+      function surfaceBounds(surfaces) {
+        const box = new THREE.Box3();
+        let hasPoint = false;
+        for (const surface of surfaces) {
+          for (const row of surface.uv_grid || []) {
+            for (const point of row) {
+              box.expandByPoint(new THREE.Vector3(point[0], point[1], point[2]));
+              hasPoint = true;
+            }
+          }
+        }
+        if (!hasPoint) return { center: new THREE.Vector3(), radius: 1000 };
+        const center = new THREE.Vector3();
+        const size = new THREE.Vector3();
+        box.getCenter(center);
+        box.getSize(size);
+        return { center, radius: Math.max(100, size.length() * 0.5) };
+      }
+
+      function cameraStateFor(global, bounds) {
+        const yaw = 0.72 + 0.18 * Math.sin(global * Math.PI * 1.25);
+        const pitch = 0.42 + 0.1 * Math.sin(global * Math.PI * 0.9 + 0.7);
+        const distance = bounds.radius * 2.45;
+        return {
+          radius: bounds.radius,
+          position: new THREE.Vector3(
+            Math.cos(yaw) * Math.cos(pitch) * distance,
+            Math.sin(yaw) * Math.cos(pitch) * distance,
+            Math.sin(pitch) * distance,
+          ),
+        };
+      }
+
+      function updateDashboard(snapshot, index) {
+        const status = snapshot.status || "PASS";
+        ui.status.textContent = status;
+        ui.status.style.borderColor = status === "PASS" ? "#1f7a5a" : "#a33b2d";
+        ui.status.style.color = status === "PASS" ? "#1f7a5a" : "#a33b2d";
+        ui.caseName.textContent = `${shortCaseName(snapshot.from?.name || snapshot.name)} -> ${shortCaseName(snapshot.to?.name || snapshot.name)}`;
+        ui.caseId.textContent = `native surface_graph sample ${index + 1}/${snapshots.length}; generated from current v0.7 constructor uv_grid`;
+        ui.facets.textContent = `${snapshot.derived?.flow_topology || ""} / ${snapshot.derived?.shroud_topology || ""} / ${snapshot.derived?.working_domain || ""}`;
+        ui.fromLabel.textContent = String(Math.max(1, snapshot.segment_index + 1)).padStart(2, "0");
+        ui.toLabel.textContent = String(Math.max(1, snapshot.segment_index + 2)).padStart(2, "0");
+        ui.progressFill.style.width = `${Math.round((index / Math.max(1, snapshots.length - 1)) * 100)}%`;
+        ui.bladeMetric.textContent = `${Math.round(snapshot.parameters.blade_count)} (${Number(snapshot.parameters.blade_count).toFixed(1)})`;
+        ui.surfaceMetric.textContent = `${snapshot.stats.surface_count.toLocaleString()}`;
+        ui.sourceTriMetric.textContent = `${snapshot.stats.source_triangle_count.toLocaleString()}`;
+        ui.displayTriMetric.textContent = `${snapshot.stats.display_triangle_count.toLocaleString()}`;
+        for (const row of parameterRows) {
+          const value = Number(snapshot.parameters[row.key] ?? 0);
+          const range = DATA.parameter_ranges[row.key] || { min: 0, max: 1 };
+          const norm = (value - range.min) / Math.max(0.00001, range.max - range.min);
+          row.value.textContent = formatParam(value);
+          row.bar.style.width = `${Math.max(0, Math.min(100, norm * 100)).toFixed(1)}%`;
+        }
+      }
+
+      function disposeChildren(group) {
+        group.traverse((child) => {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) child.material.dispose();
+        });
+      }
+
+      function formatParam(value) {
+        const abs = Math.abs(value);
+        if (abs >= 100) return value.toFixed(0);
+        if (abs >= 10) return value.toFixed(1);
+        return value.toFixed(2);
+      }
+
+      function labelFor(key) {
+        return key.replace(/_mm$/, "").replace(/_deg$/, "").replaceAll("_", " ");
+      }
+
+      function shortCaseName(name) {
+        return String(name || "")
+          .replace(/^Public\s+/i, "")
+          .replace(/^Reference\s+/i, "")
+          .replace(/^B-Rep\s+/i, "")
+          .replace(/\s+compressor\s+/i, " comp ")
+          .replace(/\s+turbofan\s+/i, " fan ")
+          .replace(/\s+liquid rocket turbopump\s+/i, " LRTP ")
+          .replace(/\s+throughflow\s+/i, " TF ");
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+    </script>
+  </body>
+</html>

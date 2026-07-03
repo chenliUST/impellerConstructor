@@ -527,6 +527,529 @@ def test_v06_tip_fillet_radius_participates_in_feasibility_check():
     assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
 
 
+def test_v07_transition_override_changes_blade_root_surface_role_and_radius():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": True,
+                    "treatment": "chamfer",
+                    "radius_mm": 6.0,
+                }
+            },
+        )
+
+    surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    root = surfaces["blade_0_root_transition_surface"]
+
+    assert root["role"] == "blade_root_chamfer"
+    assert root["treatment"] == "chamfer"
+    assert root["radius_mm"] == 6.0
+    assert root["transition_policy_id"] == "blade_root_to_hub.default"
+    assert "fillet" not in root["feature_id"]
+    assert root["cad_surface"]["feature_id"] == root["feature_id"]
+
+
+def test_v07_disabled_transition_removes_blade_root_transition_surfaces():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": False,
+                    "treatment": "none",
+                    "radius_mm": 0.0,
+                }
+            },
+        )
+
+    surface_ids = {surface["id"] for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_topology_checks = {
+        check["name"]: check["status"]
+        for check in run.manifest["geometry"]["validity"]["topology_checks"]
+    }
+    manifest_topology_checks = {
+        check["name"]: check["status"]
+        for check in run.manifest["geometry_validity"]["topology_checks"]
+    }
+
+    assert "blade_0_root_transition_surface" not in surface_ids
+    assert run.manifest["geometry"]["validity"]["status"] == "PASS"
+    assert run.manifest["geometry_validity"]["status"] == "PASS"
+    assert geometry_topology_checks["blade_edge_surfaces_present"] == "PASS"
+    assert geometry_topology_checks["blade_surface_closure_candidate"] == "PASS"
+    assert all(status != "FAIL" for status in manifest_topology_checks.values())
+
+
+def test_v07_enabled_root_transition_policy_radius_fails_feasibility_when_oversized():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": True,
+                    "treatment": "fillet",
+                    "radius_mm": 100.0,
+                }
+            },
+        )
+
+    surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_checks = {
+        check["name"]: check
+        for check in run.manifest["geometry"]["validity"]["geometry_checks"]
+    }
+    manifest_geometry_checks = {
+        check["name"]: check
+        for check in run.manifest["geometry_validity"]["geometry_checks"]
+    }
+
+    assert surfaces["blade_0_root_transition_surface"]["radius_mm"] == 100.0
+    assert run.manifest["transition_policies"]["blade_root_to_hub.default"]["radius_mm"] == 100.0
+    assert run.manifest["geometry"]["validity"]["status"] == "FAIL"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["status"] == "FAIL"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
+    assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["status"] == "FAIL"
+    assert manifest_geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] == 100.0
+
+
+def test_v07_hub_edge_treatments_are_policy_linked():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(engine.engine_id, {})
+
+    manifest = run.manifest
+    surfaces = {surface["id"]: surface for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    expected = {
+        "hub_bottom_outer_transition_surface": ("hub_bottom_outer", "fillet"),
+        "hub_top_outer_transition_surface": ("hub_top_outer", "fillet"),
+        "mounting_bore_top_transition_surface": ("mounting_bore_top", "chamfer"),
+        "mounting_bore_bottom_transition_surface": ("mounting_bore_bottom", "chamfer"),
+    }
+
+    for surface_id, (edge_family, treatment) in expected.items():
+        surface = surfaces[surface_id]
+        policy_id = f"{edge_family}.default"
+        policy = manifest["transition_policies"][policy_id]
+
+        assert surface["kind"] == "transition_surface"
+        assert surface["edge_family"] == edge_family
+        assert surface["transition_policy_id"] == policy_id
+        assert surface["treatment"] == policy["treatment"] == treatment
+        assert surface["radius_mm"] == policy["radius_mm"]
+        assert surface["role"] == f"{edge_family}_sampled_{treatment}_transition"
+        assert surface["cad_surface"]["feature_id"] == surface["feature_id"]
+        assert surface["cad_surface"]["source"] == "surface_graph.control_net_transition_surface"
+        assert surface["display"]["edge_highlight"] is True
+
+    edge_surfaces_by_family = {
+        edge["edge_family"]: edge["transition_surface_ids"]
+        for edge in edges
+        if edge.get("edge_family") in {"hub_top_outer", "mounting_bore_top"}
+    }
+
+    assert edge_surfaces_by_family["hub_top_outer"] == ["hub_top_outer_transition_surface"]
+    assert edge_surfaces_by_family["mounting_bore_top"] == ["mounting_bore_top_transition_surface"]
+
+
+def test_v07_closed_hood_outlet_chamfer_surface_is_policy_linked_without_renaming():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_closed_reference_v0_7")
+        run = service.instantiate(engine.engine_id, {})
+
+    manifest = run.manifest
+    surfaces = {surface["id"]: surface for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+    surface = surfaces["hood_chamfer_outlet_surface"]
+    policy = manifest["transition_policies"]["hood_outlet_lip.default"]
+
+    assert "hood_outlet_lip_transition_surface" not in surfaces
+    assert surface["kind"] == "transition_surface"
+    assert surface["edge_family"] == "hood_outlet_lip"
+    assert surface["transition_policy_id"] == "hood_outlet_lip.default"
+    assert surface["treatment"] == policy["treatment"] == "fillet"
+    assert surface["radius_mm"] == policy["radius_mm"]
+    assert surface["cfd_patch_group"] == "solid_context"
+
+
+def test_v07_hub_policy_override_radius_changes_transition_geometry():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        baseline = service.instantiate(engine.engine_id, {})
+        overridden = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "hub_bottom_outer.default": {
+                    "enabled": True,
+                    "treatment": "fillet",
+                    "radius_mm": 12.0,
+                }
+            },
+        )
+
+    baseline_surface = {
+        surface["id"]: surface
+        for surface in baseline.manifest["geometry"]["surface_graph"]["surfaces"]
+    }["hub_bottom_outer_transition_surface"]
+    overridden_surface = {
+        surface["id"]: surface
+        for surface in overridden.manifest["geometry"]["surface_graph"]["surfaces"]
+    }["hub_bottom_outer_transition_surface"]
+
+    assert baseline_surface["radius_mm"] == 3.0
+    assert overridden_surface["radius_mm"] == 12.0
+    assert overridden_surface["uv_grid"] != baseline_surface["uv_grid"]
+    assert overridden_surface["control_net"] != baseline_surface["control_net"]
+
+
+def test_v07_disabled_hub_policy_omits_transition_surface_and_keeps_validity_pass():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "hub_bottom_outer.default": {
+                    "enabled": False,
+                    "treatment": "none",
+                    "radius_mm": 0.0,
+                }
+            },
+        )
+
+    surfaces = {surface["id"] for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    hub_bottom_edges = [
+        edge
+        for edge in run.manifest["geometry"]["surface_graph"]["edges"]
+        if edge.get("edge_family") == "hub_bottom_outer"
+    ]
+
+    assert "hub_bottom_outer_transition_surface" not in surfaces
+    assert hub_bottom_edges == []
+    assert run.manifest["geometry"]["validity"]["status"] == "PASS"
+    assert run.manifest["geometry_validity"]["status"] == "PASS"
+
+
+def test_v07_closed_enabled_transition_policies_have_surface_or_edge_provenance():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_closed_reference_v0_7")
+        run = service.instantiate(engine.engine_id, {})
+
+    manifest = run.manifest
+    surfaces = manifest["geometry"]["surface_graph"]["surfaces"]
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    represented_families = {
+        surface["edge_family"]
+        for surface in surfaces
+        if surface.get("edge_family")
+    } | {
+        edge["edge_family"]
+        for edge in edges
+        if edge.get("edge_family") and edge.get("transition_surface_ids")
+    }
+
+    assert manifest["transition_policies"]["blade_tip_to_shroud.default"]["enabled"] is False
+    assert manifest["transition_policies"]["blade_tip_to_shroud.default"]["treatment"] == "none"
+    assert "hood_inlet_lip" in represented_families
+    assert "hood_outlet_lip" in represented_families
+    assert [
+        policy_id
+        for policy_id, policy in manifest["transition_policies"].items()
+        if policy["enabled"] and policy["edge_family"] not in represented_families
+    ] == []
+
+
+def test_v07_closed_blade_tip_to_shroud_override_is_represented():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_closed_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_tip_to_shroud.default": {
+                    "enabled": True,
+                    "treatment": "chamfer",
+                    "radius_mm": 9.0,
+                }
+            },
+        )
+
+    manifest = run.manifest
+    surfaces = {
+        surface["id"]: surface
+        for surface in manifest["geometry"]["surface_graph"]["surfaces"]
+    }
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    policy = manifest["transition_policies"]["blade_tip_to_shroud.default"]
+    tip_to_shroud_edges = [
+        edge
+        for edge in edges
+        if edge.get("edge_family") == "blade_tip_to_shroud"
+    ]
+    legacy_tip_edges = [
+        edge
+        for edge in edges
+        if edge.get("edge_family") == "blade_tip_or_shroud"
+        and "blade_0_tip_transition_surface" in edge.get("transition_surface_ids", [])
+    ]
+    tip_surface = surfaces["blade_0_tip_transition_surface"]
+    tip_surface_policy_id = tip_surface["transition_policy_id"]
+
+    assert policy["enabled"] is True
+    assert policy["treatment"] == "chamfer"
+    assert policy["radius_mm"] == 9.0
+    assert tip_surface["edge_family"] == "blade_tip_to_shroud"
+    assert tip_surface_policy_id == "blade_tip_to_shroud.default"
+    assert tip_surface["treatment"] == "chamfer"
+    assert tip_surface["radius_mm"] == 9.0
+    assert tip_to_shroud_edges
+    assert legacy_tip_edges
+    assert all(
+        edge["transition_policy_id"] == "blade_tip_to_shroud.default"
+        for edge in tip_to_shroud_edges
+    )
+    assert all("policy_alias_of" not in edge for edge in tip_to_shroud_edges)
+    assert all(
+        edge["transition_policy_id"] == tip_surface_policy_id
+        for edge in legacy_tip_edges
+    )
+    assert all(
+        edge.get("declared_policy_id") == "blade_tip_or_shroud.default"
+        for edge in legacy_tip_edges
+    )
+    assert all(
+        edge.get("policy_alias_of") == tip_surface_policy_id
+        for edge in legacy_tip_edges
+    )
+    assert all(edge.get("transition_surface_ids") for edge in tip_to_shroud_edges)
+    assert all(
+        transition_surface_id in surfaces
+        for edge in tip_to_shroud_edges
+        for transition_surface_id in edge["transition_surface_ids"]
+    )
+    assert all(
+        edge["transition_policy_id"] == surfaces[transition_surface_id]["transition_policy_id"]
+        for edge in edges
+        for transition_surface_id in edge.get("transition_surface_ids", [])
+        if transition_surface_id in surfaces
+        and surfaces[transition_surface_id].get("transition_policy_id")
+    )
+    assert run.manifest["geometry"]["validity"]["status"] == "PASS"
+
+
+def test_v07_staged_closed_tip_shroud_transition_references_do_not_dangle():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_closed_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {},
+            geometry_stage="blade_surfaces",
+            transition_overrides={
+                "blade_tip_to_shroud.default": {
+                    "enabled": True,
+                    "treatment": "chamfer",
+                    "radius_mm": 9.0,
+                }
+            },
+        )
+
+    manifest = run.manifest
+    surface_ids = {
+        surface["id"]
+        for surface in manifest["geometry"]["surface_graph"]["surfaces"]
+    }
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    dangling_transition_ids = [
+        transition_surface_id
+        for edge in edges
+        for transition_surface_id in edge.get("transition_surface_ids", [])
+        if transition_surface_id not in surface_ids
+    ]
+    topology_checks = {
+        check["name"]: check
+        for check in manifest["geometry"]["validity"]["topology_checks"]
+    }
+
+    assert "blade_0_tip_transition_surface" not in surface_ids
+    assert dangling_transition_ids == []
+    assert topology_checks["edge_transition_surface_references_present"]["status"] == "PASS"
+    assert manifest["geometry"]["validity"]["status"] == "PASS"
+
+
+def test_v06_hub_edge_ids_preserve_legacy_topology():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        runs = []
+        for preset_id in ["radial_open_reference_v0_6", "radial_closed_reference_v0_6"]:
+            engine = service.synthesize("impeller", preset_id)
+            runs.append(service.instantiate(engine.engine_id, {}))
+
+    for run in runs:
+        edge_ids = {edge["id"] for edge in run.manifest["geometry"]["surface_graph"]["edges"]}
+        surfaces = {surface["id"]: surface for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+
+        assert "hub_top_cap_outer_edge" not in edge_ids
+        assert "mounting_bore_top_edge" not in edge_ids
+        assert surfaces["hub_chamfer_top_cap_surface"]["role"] == "hub_chamfer"
+        assert surfaces["hub_chamfer_bore_top_surface"]["role"] == "hub_chamfer"
+
+
+def test_v07_disabled_root_transition_ignores_oversized_legacy_root_fillet_radius():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(
+            engine.engine_id,
+            {"root_fillet_radius_mm": 100.0},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": False,
+                    "treatment": "none",
+                    "radius_mm": 0.0,
+                }
+            },
+        )
+
+    surface_ids = {surface["id"] for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]}
+    geometry_checks = {
+        check["name"]: check
+        for check in run.manifest["geometry"]["validity"]["geometry_checks"]
+    }
+
+    assert "blade_0_root_transition_surface" not in surface_ids
+    assert run.manifest["geometry"]["validity"]["status"] == "PASS"
+    assert run.manifest["geometry_validity"]["status"] == "PASS"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["status"] == "PASS"
+    assert geometry_checks["fillet_radius_within_local_thickness_bounds"]["requested_max_mm"] < 100.0
+
+
+def test_v07_surface_graph_edges_include_family_and_policy_metadata():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from part_rule_synthesis.service import RuleSynthesisService
+
+    with TemporaryDirectory() as directory:
+        service = RuleSynthesisService(Path(directory))
+        engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+        run = service.instantiate(engine.engine_id, {})
+        staged_run = service.instantiate(engine.engine_id, {}, geometry_stage="blade_surfaces")
+
+    manifest = run.manifest
+    edges = manifest["geometry"]["surface_graph"]["edges"]
+    edge_ids = {edge["id"] for edge in edges}
+    surface_ids = {surface["id"] for surface in manifest["geometry"]["surface_graph"]["surfaces"]}
+    policies = manifest["transition_policies"]
+    geometry_kernel = manifest["geometry_kernel"]
+    staged_edges = staged_run.manifest["geometry"]["surface_graph"]["edges"]
+
+    assert "blade_root_to_hub.default" in policies
+    root_edges = [edge for edge in edges if edge.get("edge_family") == "blade_root_to_hub"]
+    hub_top_edges = [edge for edge in edges if edge.get("edge_family") == "hub_top_outer"]
+    bore_top_edges = [edge for edge in edges if edge.get("edge_family") == "mounting_bore_top"]
+    assert root_edges
+    assert "hub_top_cap_outer_edge" in edge_ids
+    assert "mounting_bore_top_edge" in edge_ids
+    assert [edge["transition_surface_ids"] for edge in hub_top_edges] == [["hub_top_outer_transition_surface"]]
+    assert [edge["transition_surface_ids"] for edge in bore_top_edges] == [["mounting_bore_top_transition_surface"]]
+    assert all(edge["transition_policy_id"] == "blade_root_to_hub.default" for edge in root_edges)
+    assert all(edge["transition_surface_ids"] for edge in root_edges)
+    assert manifest["edge_families"]["blade_root_to_hub"] == manifest["geometry"]["edge_families"]["blade_root_to_hub"]
+    assert manifest["geometry"]["transition_policies"]["blade_root_to_hub.default"] == policies["blade_root_to_hub.default"]
+    assert all(
+        transition_surface_id in surface_ids
+        for edge in edges
+        for transition_surface_id in edge.get("transition_surface_ids", [])
+    )
+    assert "blade_root_to_hub" in geometry_kernel["edge_families"]
+    kernel_policy = geometry_kernel["transition_policies"]["blade_root_to_hub.default"]
+    assert kernel_policy["treatment"] == policies["blade_root_to_hub.default"]["treatment"]
+    assert kernel_policy["radius_mm"] == policies["blade_root_to_hub.default"]["radius_mm"]
+    assert not [
+        edge
+        for edge in staged_edges
+        if edge.get("edge_family") == "blade_root_to_hub" and not edge.get("transition_surface_ids")
+    ]
+
+
 def test_axisymmetric_nurbs_blade_edges_are_visible_construction_lines_from_closure_surfaces():
     parameters = {
         "blade_count": 7,

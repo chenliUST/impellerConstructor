@@ -1,0 +1,255 @@
+{
+  "id": "public-rr-ultrafan-ogv-ring",
+  "name": "Public RR UltraFan OGV ring",
+  "tags": [
+    "public-data",
+    "axial",
+    "stator",
+    "ultrafan",
+    "v0.7"
+  ],
+  "run_id": "run-0b28bbde026d",
+  "status": "PASS",
+  "facets": {
+    "flow_topology": "axial",
+    "shroud_topology": "closed",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "working_domain": "fan_or_blower",
+    "passage_topology": "throughflow_bladed_channel"
+  },
+  "parameters": {
+    "blade_count": 44,
+    "inlet_radius_mm": 600,
+    "exit_radius_mm": 1778,
+    "inlet_blade_height_mm": 1178,
+    "outlet_blade_height_mm": 1148,
+    "hub_curve_height_mm": 520,
+    "mounting_bore_radius_mm": 260,
+    "blade_wrap_deg": 32,
+    "blade_lean_deg": 3,
+    "leading_edge_lean_deg": -8,
+    "trailing_edge_lean_deg": 8,
+    "leading_edge_sweep_mm": 25,
+    "trailing_edge_sweep_mm": -35,
+    "blade_thickness_mm": 28,
+    "root_fillet_radius_mm": 9,
+    "leading_edge_radius_mm": 4,
+    "trailing_edge_radius_mm": 2.5,
+    "tip_edge_radius_mm": 2.5,
+    "hub_wall_thickness_mm": 40,
+    "hub_bottom_thickness_mm": 55,
+    "hub_top_cap_thickness_mm": 18,
+    "hub_chamfer_radius_mm": 6,
+    "hood_wall_thickness_mm": 18,
+    "hood_chamfer_radius_mm": 5
+  },
+  "profile_overrides": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          600,
+          520
+        ],
+        [
+          603,
+          416
+        ],
+        [
+          608,
+          312
+        ],
+        [
+          612,
+          205
+        ],
+        [
+          616,
+          90
+        ],
+        [
+          620,
+          0
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          1778,
+          521
+        ],
+        [
+          1776,
+          417
+        ],
+        [
+          1774,
+          313
+        ],
+        [
+          1772,
+          206
+        ],
+        [
+          1770,
+          91
+        ],
+        [
+          1768,
+          1
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "curve_overrides": {
+    "blade_mean": {
+      "theta_center_u_curve": {
+        "coordinate_system": "u_theta_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.25,
+            5
+          ],
+          [
+            0.6,
+            19
+          ],
+          [
+            1,
+            32
+          ]
+        ]
+      },
+      "span_lean_u_curve": {
+        "coordinate_system": "u_lean_deg",
+        "control_points": [
+          [
+            0,
+            -8
+          ],
+          [
+            0.45,
+            3
+          ],
+          [
+            1,
+            8
+          ]
+        ]
+      }
+    },
+    "blade_edges": {
+      "leading_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            -0.025
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0.035
+          ]
+        ]
+      },
+      "trailing_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0.04
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            -0.045
+          ]
+        ]
+      }
+    },
+    "thickness": {
+      "thickness_u_curve": {
+        "coordinate_system": "u_thickness_mm",
+        "control_points": [
+          [
+            0,
+            28
+          ],
+          [
+            0.45,
+            24
+          ],
+          [
+            1,
+            15
+          ]
+        ]
+      }
+    }
+  },
+  "copied_exports": {
+    "step": "model_snapshots/public-rr-ultrafan-ogv-ring/public-rr-ultrafan-ogv-ring.step",
+    "stl": "model_snapshots/public-rr-ultrafan-ogv-ring/public-rr-ultrafan-ogv-ring.stl",
+    "obj": "model_snapshots/public-rr-ultrafan-ogv-ring/public-rr-ultrafan-ogv-ring.obj",
+    "manifest": "model_snapshots/public-rr-ultrafan-ogv-ring/public-rr-ultrafan-ogv-ring.manifest.json"
+  },
+  "surface_count": 278
+}

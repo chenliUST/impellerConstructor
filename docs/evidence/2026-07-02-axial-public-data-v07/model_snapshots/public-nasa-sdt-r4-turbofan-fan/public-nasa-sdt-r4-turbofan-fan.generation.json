@@ -1,0 +1,267 @@
+{
+  "id": "public-nasa-sdt-r4-turbofan-fan",
+  "name": "Public NASA SDT R4 turbofan fan",
+  "tags": [
+    "public-data",
+    "axial",
+    "fan",
+    "turbofan",
+    "v0.7"
+  ],
+  "run_id": "run-ffa59c9fd3cd",
+  "status": "PASS",
+  "facets": {
+    "flow_topology": "axial",
+    "shroud_topology": "open",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "working_domain": "fan_or_blower",
+    "passage_topology": "throughflow_bladed_channel"
+  },
+  "parameters": {
+    "blade_count": 22,
+    "inlet_radius_mm": 81,
+    "exit_radius_mm": 279.4,
+    "inlet_blade_height_mm": 198.4,
+    "outlet_blade_height_mm": 190,
+    "hub_curve_height_mm": 140,
+    "mounting_bore_radius_mm": 33,
+    "blade_wrap_deg": 86,
+    "blade_lean_deg": 24,
+    "leading_edge_lean_deg": 14,
+    "trailing_edge_lean_deg": -12,
+    "leading_edge_sweep_mm": 18,
+    "trailing_edge_sweep_mm": -22,
+    "blade_thickness_mm": 8,
+    "root_fillet_radius_mm": 2.4,
+    "leading_edge_radius_mm": 1.2,
+    "trailing_edge_radius_mm": 0.8,
+    "tip_edge_radius_mm": 0.8,
+    "hub_wall_thickness_mm": 10,
+    "hub_bottom_thickness_mm": 14,
+    "hub_top_cap_thickness_mm": 5,
+    "hub_chamfer_radius_mm": 1.5,
+    "hood_wall_thickness_mm": 4,
+    "hood_chamfer_radius_mm": 1
+  },
+  "profile_overrides": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          81,
+          140
+        ],
+        [
+          82.2,
+          112
+        ],
+        [
+          84,
+          84
+        ],
+        [
+          85.5,
+          54
+        ],
+        [
+          86.4,
+          24
+        ],
+        [
+          87,
+          0
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          279.4,
+          141
+        ],
+        [
+          279.2,
+          113
+        ],
+        [
+          278.9,
+          85
+        ],
+        [
+          278.6,
+          55
+        ],
+        [
+          278.3,
+          25
+        ],
+        [
+          278,
+          1
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "curve_overrides": {
+    "blade_mean": {
+      "theta_center_u_curve": {
+        "coordinate_system": "u_theta_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.15,
+            -8
+          ],
+          [
+            0.45,
+            -42
+          ],
+          [
+            0.75,
+            -72
+          ],
+          [
+            1,
+            -86
+          ]
+        ]
+      },
+      "span_lean_u_curve": {
+        "coordinate_system": "u_lean_deg",
+        "control_points": [
+          [
+            0,
+            14
+          ],
+          [
+            0.35,
+            30
+          ],
+          [
+            0.7,
+            20
+          ],
+          [
+            1,
+            -12
+          ]
+        ]
+      }
+    },
+    "blade_edges": {
+      "leading_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            -0.08
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0.11
+          ]
+        ]
+      },
+      "trailing_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0.1
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            -0.12
+          ]
+        ]
+      }
+    },
+    "thickness": {
+      "thickness_u_curve": {
+        "coordinate_system": "u_thickness_mm",
+        "control_points": [
+          [
+            0,
+            8
+          ],
+          [
+            0.35,
+            7.2
+          ],
+          [
+            0.7,
+            5.2
+          ],
+          [
+            1,
+            3.5
+          ]
+        ]
+      }
+    }
+  },
+  "copied_exports": {
+    "step": "model_snapshots/public-nasa-sdt-r4-turbofan-fan/public-nasa-sdt-r4-turbofan-fan.step",
+    "stl": "model_snapshots/public-nasa-sdt-r4-turbofan-fan/public-nasa-sdt-r4-turbofan-fan.stl",
+    "obj": "model_snapshots/public-nasa-sdt-r4-turbofan-fan/public-nasa-sdt-r4-turbofan-fan.obj",
+    "manifest": "model_snapshots/public-nasa-sdt-r4-turbofan-fan/public-nasa-sdt-r4-turbofan-fan.manifest.json"
+  },
+  "surface_count": 141
+}

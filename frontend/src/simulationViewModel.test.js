@@ -24,6 +24,7 @@ describe("simulation view model", () => {
     assert.equal(surfaceVisibleInView({ role: "construction_support_only" }, "cfd_full_360"), false);
     assert.equal(surfaceVisibleInView({ role: "mounting_bore" }, "cfd_full_360"), false);
     assert.equal(surfaceVisibleInView({ cfd_role: "blade_pressure" }, "cfd_full_360"), true);
+    assert.equal(surfaceVisibleInView({ cfd_role: "leading_edge_transition" }, "mesh"), true);
     assert.equal(surfaceVisibleInView({ role: "construction_support_only" }, "cad_review_360"), true);
   });
 
@@ -40,6 +41,39 @@ describe("simulation view model", () => {
 
     assert.equal(surfaceVisibleInView({ id: "hub_revolve_surface", cfd_role: "hub_wall" }, "cfd_full_360", manifest), true);
     assert.equal(surfaceVisibleInView({ id: "inner_hub_bottom_face", role: "inner_hub_bottom" }, "cfd_full_360", manifest), false);
+  });
+
+  test("surfaceVisibleInView keeps transition surfaces visible in mesh view outside the cfd whitelist", () => {
+    const manifest = {
+      simulation_manifests: {
+        cfd_full_360: {
+          patch_instances: {
+            hub: { source_type: "surface", surface_graph_id: "hub_revolve_surface" },
+          },
+        },
+        cfd_surface_mesh: {
+          transition_regions: [{ surface_graph_id: "blade_00_tip_blend" }],
+        },
+      },
+    };
+    const policyTransitionSurface = {
+      id: "blade_00_root_fillet",
+      transition_policy_id: "root.fillet.default",
+      edge_family: "blade_root_to_hub",
+    };
+    const manifestTransitionSurface = {
+      id: "blade_00_tip_blend",
+      edge_family: "blade_tip_or_shroud",
+    };
+    const genericEdgeSurface = {
+      id: "blade_00_root_edge_closure",
+      edge_family: "blade_root_to_hub",
+    };
+
+    assert.equal(surfaceVisibleInView(policyTransitionSurface, "mesh", manifest), true);
+    assert.equal(surfaceVisibleInView(manifestTransitionSurface, "mesh", manifest), true);
+    assert.equal(surfaceVisibleInView(genericEdgeSurface, "mesh", manifest), false);
+    assert.equal(surfaceVisibleInView(policyTransitionSurface, "cfd_full_360", manifest), false);
   });
 
   test("cfdPatchGroups and cfdPatchInstances return sorted arrays", () => {

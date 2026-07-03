@@ -1,0 +1,28 @@
+{
+  "ontology_version": "0.7",
+  "slice_id": "impeller.axisymmetric_throughflow_radial_bladed",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "definition": "V0.7 bounded-transition axisymmetric throughflow slice. The same hub/tip profile and boundary-guided blade-surface rules may be exercised as radial, mixed, or axial visual construction studies when the preset supplies appropriate profile and curve overrides.",
+  "in_scope": {
+    "part_family": ["impeller"],
+    "flow_topology": ["axial", "mixed", "radial"],
+    "passage_topology": ["throughflow_bladed_channel"],
+    "shroud_topology": ["open", "closed"],
+    "entry_topology": ["single_entry"],
+    "suction_topology": ["single_suction"],
+    "blade_exit_geometry": ["backward_curved"],
+    "blade_population": ["full_blade_set"],
+    "working_domain": ["pump", "compressor", "fan_or_blower", "unknown"],
+    "support_surface_model": ["axisymmetric_revolved_meridional_profiles"],
+    "blade_surface_model": ["boundary_guided_camber_surface_with_thickness"],
+    "simulation_views": ["cad_review_360", "cfd_full_360", "fea_solid"]
+  },
+  "out_of_scope": [
+    "periodic_single_passage_cfd",
+    "exact_industrial_brep_fillet",
+    "solver_adapter",
+    "mesh_adapter",
+    "inverse_loading_design",
+    "aerodynamically faithful axial compressor or turbofan performance design"
+  ]
+}

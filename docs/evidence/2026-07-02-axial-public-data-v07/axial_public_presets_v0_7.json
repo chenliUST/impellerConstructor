@@ -1,0 +1,315 @@
+{
+  "title": "Impeller Constructor V0.7 axial public-data approximation presets",
+  "created_on": "2026-07-02",
+  "frontend_worktree": "impellerConstructor/.worktrees/impeller-v0.6-brep",
+  "branch": "impeller-v0.7-bounded-transitions",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "dsl_version": "0.7",
+  "scope_note": "These are visual/geometry input datasets for the current V0.7 constructor. Public values are used where published; missing CAD-level dimensions are derived or assumed and marked below. Axial cylindrical hub/casing behavior is represented with near-cylindrical R-Z NURBS profile overrides, while blade twist is represented with nonlinear theta and span-lean curve overrides.",
+  "profile_override_basis": {
+    "kind": "nurbs_curve",
+    "degree": 3,
+    "coordinate_system": "rz_meridional_mm",
+    "weights": [1, 1, 1, 1, 1, 1],
+    "knots": [0, 0, 0, 0, 0.333333, 0.666667, 1, 1, 1, 1]
+  },
+  "cases": [
+    {
+      "id": "public-nasa-rotor67-axial-blisk",
+      "name": "Public NASA Rotor 67 axial blisk",
+      "part_interpretation": "axial fan/compressor rotor blisk, open tip",
+      "preset_id": "radial_open_reference_v0_7",
+      "facets": {
+        "flow_topology": "axial",
+        "shroud_topology": "open",
+        "suction_topology": "single_suction",
+        "blade_exit_geometry": "backward_curved",
+        "working_domain": "fan_or_blower",
+        "passage_topology": "throughflow_bladed_channel"
+      },
+      "public_sources": [
+        {
+          "label": "NASA Rotor 67 public report",
+          "url": "https://ntrs.nasa.gov/api/citations/20050196726/downloads/20050196726.pdf",
+          "used_values": {
+            "blade_count": 22,
+            "inlet_tip_diameter_cm": 51.14,
+            "exit_tip_diameter_cm": 48.50,
+            "inlet_hub_tip_ratio": 0.375,
+            "exit_hub_tip_ratio": 0.478
+          }
+        }
+      ],
+      "derived_values": {
+        "inlet_tip_radius_mm": 255.7,
+        "exit_tip_radius_mm": 242.5,
+        "inlet_hub_radius_mm": 95.9,
+        "exit_hub_radius_mm": 115.9,
+        "inlet_span_mm": 159.8,
+        "exit_span_mm": 126.6,
+        "axial_length_mm": 92
+      },
+      "parameters": {
+        "blade_count": 22,
+        "inlet_radius_mm": 95.9,
+        "exit_radius_mm": 255.7,
+        "inlet_blade_height_mm": 159.8,
+        "outlet_blade_height_mm": 126.6,
+        "hub_curve_height_mm": 92,
+        "mounting_bore_radius_mm": 36,
+        "blade_wrap_deg": 74,
+        "blade_lean_deg": 18,
+        "leading_edge_lean_deg": 8,
+        "trailing_edge_lean_deg": -10,
+        "leading_edge_sweep_mm": 8,
+        "trailing_edge_sweep_mm": -10,
+        "blade_thickness_mm": 4.8,
+        "root_fillet_radius_mm": 1.8,
+        "leading_edge_radius_mm": 0.8,
+        "trailing_edge_radius_mm": 0.45,
+        "tip_edge_radius_mm": 0.45,
+        "hub_wall_thickness_mm": 7,
+        "hub_bottom_thickness_mm": 10,
+        "hub_top_cap_thickness_mm": 4,
+        "hub_chamfer_radius_mm": 1,
+        "hood_wall_thickness_mm": 4,
+        "hood_chamfer_radius_mm": 1
+      },
+      "profile_overrides": {
+        "hub_profile": [[95.9, 92], [99, 72], [105, 48], [110, 25], [114, 10], [115.9, 0]],
+        "tip_or_shroud_profile": [[255.7, 93], [253.2, 73], [249.8, 49], [246.4, 26], [244.1, 11], [242.5, 1]]
+      },
+      "curve_overrides": {
+        "theta_center_u_curve": [[0, 0], [0.2, -7], [0.55, -38], [0.82, -61], [1, -74]],
+        "span_lean_u_curve": [[0, 8], [0.35, 24], [0.7, 12], [1, -10]],
+        "leading_edge_sweep_v_curve": [[0, -0.05], [0.5, 0], [1, 0.07]],
+        "trailing_edge_sweep_v_curve": [[0, 0.06], [0.5, 0], [1, -0.08]],
+        "thickness_u_curve": [[0, 4.8], [0.45, 3.9], [1, 2.4]]
+      },
+      "screenshot_path": "docs/evidence/2026-07-02-axial-public-data-v07/screenshots/public-nasa-rotor67-axial-blisk.png",
+      "frontend_run_id": "run-0f9907d9c350",
+      "validation_status": "PASS"
+    },
+    {
+      "id": "public-nasa-rotor37-compressor-blisk",
+      "name": "Public NASA Rotor 37 compressor blisk",
+      "part_interpretation": "high-load axial compressor rotor blisk, open tip",
+      "preset_id": "radial_open_reference_v0_7",
+      "facets": {
+        "flow_topology": "axial",
+        "shroud_topology": "open",
+        "suction_topology": "single_suction",
+        "blade_exit_geometry": "backward_curved",
+        "working_domain": "compressor",
+        "passage_topology": "throughflow_bladed_channel"
+      },
+      "public_sources": [
+        {
+          "label": "NASA Rotor 37 / Stage 37 public geometry summaries",
+          "url": "https://lava-wiki.meca.polymtl.ca/_media/public/modeles/rotor_37/rotor37.pdf",
+          "used_values": {
+            "rotor_blade_count": 36,
+            "representative_hub_tip_ratio": 0.7,
+            "representative_tip_radius_mm": 253.7
+          }
+        }
+      ],
+      "derived_values": {
+        "inlet_hub_radius_mm": 176.4,
+        "inlet_tip_radius_mm": 253.7,
+        "inlet_span_mm": 77.3,
+        "exit_span_mm": 75.6,
+        "axial_length_mm": 64
+      },
+      "parameters": {
+        "blade_count": 36,
+        "inlet_radius_mm": 176.4,
+        "exit_radius_mm": 253.7,
+        "inlet_blade_height_mm": 77.3,
+        "outlet_blade_height_mm": 75.6,
+        "hub_curve_height_mm": 64,
+        "mounting_bore_radius_mm": 70,
+        "blade_wrap_deg": 56,
+        "blade_lean_deg": 10,
+        "leading_edge_lean_deg": 5,
+        "trailing_edge_lean_deg": -8,
+        "leading_edge_sweep_mm": 4,
+        "trailing_edge_sweep_mm": -6,
+        "blade_thickness_mm": 2.8,
+        "root_fillet_radius_mm": 1.1,
+        "leading_edge_radius_mm": 0.45,
+        "trailing_edge_radius_mm": 0.3,
+        "tip_edge_radius_mm": 0.3,
+        "hub_wall_thickness_mm": 5,
+        "hub_bottom_thickness_mm": 7,
+        "hub_top_cap_thickness_mm": 3,
+        "hub_chamfer_radius_mm": 1,
+        "hood_wall_thickness_mm": 3,
+        "hood_chamfer_radius_mm": 1
+      },
+      "profile_overrides": {
+        "hub_profile": [[176.4, 64], [176.8, 51], [177.4, 38], [178, 24], [178.5, 12], [179, 0]],
+        "tip_or_shroud_profile": [[253.7, 65], [253.4, 52], [253, 39], [252.6, 25], [252.3, 13], [252, 1]]
+      },
+      "curve_overrides": {
+        "theta_center_u_curve": [[0, 0], [0.2, -6], [0.55, -29], [0.82, -48], [1, -56]],
+        "span_lean_u_curve": [[0, 5], [0.45, 16], [1, -8]],
+        "leading_edge_sweep_v_curve": [[0, -0.035], [0.5, 0], [1, 0.055]],
+        "trailing_edge_sweep_v_curve": [[0, 0.045], [0.5, 0], [1, -0.06]],
+        "thickness_u_curve": [[0, 2.8], [0.5, 2.2], [1, 1.4]]
+      },
+      "screenshot_path": "docs/evidence/2026-07-02-axial-public-data-v07/screenshots/public-nasa-rotor37-compressor-blisk.png",
+      "frontend_run_id": "run-cb00a9057ba2",
+      "validation_status": "PASS"
+    },
+    {
+      "id": "public-nasa-stage37-stator-ring",
+      "name": "Public NASA Stage 37 stator ring",
+      "part_interpretation": "axial compressor stator ring with inner hub and outer shroud",
+      "preset_id": "radial_closed_reference_v0_7",
+      "facets": {
+        "flow_topology": "axial",
+        "shroud_topology": "closed",
+        "suction_topology": "single_suction",
+        "blade_exit_geometry": "backward_curved",
+        "working_domain": "compressor",
+        "passage_topology": "throughflow_bladed_channel"
+      },
+      "public_sources": [
+        {
+          "label": "NASA Stage 37 public geometry summaries",
+          "url": "https://lava-wiki.meca.polymtl.ca/_media/public/modeles/rotor_37/rotor37.pdf",
+          "used_values": {
+            "stator_vane_count": 46,
+            "representative_hub_tip_ratio": 0.7,
+            "representative_tip_radius_mm": 253.7
+          }
+        }
+      ],
+      "derived_values": {
+        "hub_radius_mm": 176.4,
+        "tip_radius_mm": 253.7,
+        "span_mm": 77.3,
+        "axial_length_mm": 60
+      },
+      "parameters": {
+        "blade_count": 46,
+        "inlet_radius_mm": 176.4,
+        "exit_radius_mm": 253.7,
+        "inlet_blade_height_mm": 77.3,
+        "outlet_blade_height_mm": 75.6,
+        "hub_curve_height_mm": 60,
+        "mounting_bore_radius_mm": 82,
+        "blade_wrap_deg": 24,
+        "blade_lean_deg": 2,
+        "leading_edge_lean_deg": -4,
+        "trailing_edge_lean_deg": 5,
+        "leading_edge_sweep_mm": 2,
+        "trailing_edge_sweep_mm": -3,
+        "blade_thickness_mm": 2.3,
+        "root_fillet_radius_mm": 0.9,
+        "leading_edge_radius_mm": 0.35,
+        "trailing_edge_radius_mm": 0.25,
+        "tip_edge_radius_mm": 0.25,
+        "hub_wall_thickness_mm": 4.5,
+        "hub_bottom_thickness_mm": 6,
+        "hub_top_cap_thickness_mm": 3,
+        "hub_chamfer_radius_mm": 0.8,
+        "hood_wall_thickness_mm": 3,
+        "hood_chamfer_radius_mm": 0.8
+      },
+      "profile_overrides": {
+        "hub_profile": [[176.4, 60], [176.8, 48], [177.3, 36], [177.8, 23], [178.2, 11], [178.6, 0]],
+        "tip_or_shroud_profile": [[253.7, 61], [253.4, 49], [253, 37], [252.6, 24], [252.3, 12], [252, 1]]
+      },
+      "curve_overrides": {
+        "theta_center_u_curve": [[0, 0], [0.25, 4], [0.6, 15], [1, 24]],
+        "span_lean_u_curve": [[0, -6], [0.5, 2], [1, 5]],
+        "leading_edge_sweep_v_curve": [[0, -0.02], [0.5, 0], [1, 0.03]],
+        "trailing_edge_sweep_v_curve": [[0, 0.04], [0.5, 0], [1, -0.04]],
+        "thickness_u_curve": [[0, 2.3], [0.4, 2], [1, 1.2]]
+      },
+      "screenshot_path": "docs/evidence/2026-07-02-axial-public-data-v07/screenshots/public-nasa-stage37-stator-ring.png",
+      "frontend_run_id": "run-137e06059350",
+      "validation_status": "PASS"
+    },
+    {
+      "id": "public-nasa-sdt-r4-turbofan-fan",
+      "name": "Public NASA SDT R4 turbofan fan",
+      "part_interpretation": "turbofan first-stage fan rotor, open tip",
+      "preset_id": "radial_open_reference_v0_7",
+      "facets": {
+        "flow_topology": "axial",
+        "shroud_topology": "open",
+        "suction_topology": "single_suction",
+        "blade_exit_geometry": "backward_curved",
+        "working_domain": "fan_or_blower",
+        "passage_topology": "throughflow_bladed_channel"
+      },
+      "public_sources": [
+        {
+          "label": "NASA Source Diagnostic Test R4 fan public report",
+          "url": "https://ntrs.nasa.gov/api/citations/20050175875/downloads/20050175875.pdf",
+          "used_values": {
+            "fan_diameter_in": 22,
+            "rotor_blade_count": 22
+          }
+        },
+        {
+          "label": "Public low-hub-ratio turbofan fan patent range",
+          "url": "https://patents.google.com/patent/US20190024609A1/en",
+          "used_values": {
+            "representative_hub_tip_ratio": 0.29
+          }
+        }
+      ],
+      "derived_values": {
+        "tip_radius_mm": 279.4,
+        "hub_radius_mm": 81,
+        "span_mm": 198.4,
+        "hub_tip_ratio": 0.29,
+        "axial_length_mm": 140
+      },
+      "parameters": {
+        "blade_count": 22,
+        "inlet_radius_mm": 81,
+        "exit_radius_mm": 279.4,
+        "inlet_blade_height_mm": 198.4,
+        "outlet_blade_height_mm": 190,
+        "hub_curve_height_mm": 140,
+        "mounting_bore_radius_mm": 33,
+        "blade_wrap_deg": 86,
+        "blade_lean_deg": 24,
+        "leading_edge_lean_deg": 14,
+        "trailing_edge_lean_deg": -12,
+        "leading_edge_sweep_mm": 18,
+        "trailing_edge_sweep_mm": -22,
+        "blade_thickness_mm": 8,
+        "root_fillet_radius_mm": 2.4,
+        "leading_edge_radius_mm": 1.2,
+        "trailing_edge_radius_mm": 0.8,
+        "tip_edge_radius_mm": 0.8,
+        "hub_wall_thickness_mm": 10,
+        "hub_bottom_thickness_mm": 14,
+        "hub_top_cap_thickness_mm": 5,
+        "hub_chamfer_radius_mm": 1.5,
+        "hood_wall_thickness_mm": 4,
+        "hood_chamfer_radius_mm": 1
+      },
+      "profile_overrides": {
+        "hub_profile": [[81, 140], [82.2, 112], [84, 84], [85.5, 54], [86.4, 24], [87, 0]],
+        "tip_or_shroud_profile": [[279.4, 141], [279.2, 113], [278.9, 85], [278.6, 55], [278.3, 25], [278, 1]]
+      },
+      "curve_overrides": {
+        "theta_center_u_curve": [[0, 0], [0.15, -8], [0.45, -42], [0.75, -72], [1, -86]],
+        "span_lean_u_curve": [[0, 14], [0.35, 30], [0.7, 20], [1, -12]],
+        "leading_edge_sweep_v_curve": [[0, -0.08], [0.5, 0], [1, 0.11]],
+        "trailing_edge_sweep_v_curve": [[0, 0.1], [0.5, 0], [1, -0.12]],
+        "thickness_u_curve": [[0, 8], [0.35, 7.2], [0.7, 5.2], [1, 3.5]]
+      },
+      "screenshot_path": "docs/evidence/2026-07-02-axial-public-data-v07/screenshots/public-nasa-sdt-r4-turbofan-fan.png",
+      "frontend_run_id": "run-ffa59c9fd3cd",
+      "validation_status": "PASS"
+    }
+  ]
+}

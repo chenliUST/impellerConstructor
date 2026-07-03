@@ -32,6 +32,18 @@ $VersionCases = @(
         DslVersion = "0.5"
         Tag = $null
         Presets = @("radial_open_reference_v0_5", "radial_closed_reference_v0_5")
+    },
+    @{
+        Version = "v0_6"
+        DslVersion = "0.6"
+        Tag = $null
+        Presets = @("radial_open_reference_v0_6", "radial_closed_reference_v0_6")
+    },
+    @{
+        Version = "v0_7"
+        DslVersion = "0.7"
+        Tag = $null
+        Presets = @("radial_open_reference_v0_7", "radial_closed_reference_v0_7")
     }
 )
 
@@ -113,7 +125,7 @@ foreach ($case in $VersionCases) {
     }
 
     $worktreePath = Join-Path $worktreeRoot "$tag-$PID"
-    git worktree add --detach $worktreePath $tag | Out-Null
+    git -c core.longpaths=true worktree add --detach $worktreePath $tag | Out-Null
     try {
         Invoke-LineageSmoke -RepositoryPath $worktreePath -ExpectedDslVersion $case.DslVersion -PresetIds $case.Presets
     }

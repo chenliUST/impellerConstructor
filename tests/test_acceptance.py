@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from part_rule_synthesis.api import create_app
@@ -585,6 +586,127 @@ def test_acceptance_axisymmetric_nurbs_open_and_closed_presets_use_high_density_
         topology_checks = {check["name"]: check for check in manifest["geometry_validity"]["topology_checks"]}
         assert topology_checks["pressure_surface_hub_conformance"]["status"] == "PASS"
         assert topology_checks["pressure_surface_tip_conformance"]["status"] == "PASS"
+
+
+def test_acceptance_impeller_v07_accepts_transition_overrides(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_7"},
+    ).json()
+
+    response = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={
+            "parameters": {},
+            "transition_overrides": {
+                "blade_root_to_hub.default": {
+                    "treatment": "chamfer",
+                    "radius_mm": 6.0,
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    manifest = response.json()["manifest"]
+    assert manifest["transition_overrides"] == {
+        "blade_root_to_hub.default": {
+            "treatment": "chamfer",
+            "radius_mm": 6.0,
+        }
+    }
+    policy = manifest["transition_policies"]["blade_root_to_hub.default"]
+    assert policy["treatment"] == "chamfer"
+    assert policy["radius_mm"] == 6.0
+
+
+@pytest.mark.parametrize(
+    ("transition_overrides", "expected_detail"),
+    [
+        (
+            {"blade_tip_or_shroud.missing": {"treatment": "chamfer"}},
+            "unknown transition policy",
+        ),
+        (
+            {"blade_root_to_hub.default": {"radius": 6.0}},
+            "unknown transition override field",
+        ),
+        (
+            {"blade_root_to_hub.default": {"enabled": "false"}},
+            "enabled override must be a boolean",
+        ),
+        (
+            {"blade_root_to_hub.default": {"radius_mm": -1.0}},
+            "negative transition radius",
+        ),
+        (
+            {"blade_root_to_hub.default": {"radius_mm": True}},
+            "transition radius",
+        ),
+    ],
+)
+def test_acceptance_impeller_v07_rejects_invalid_transition_overrides(
+    tmp_path: Path,
+    transition_overrides: dict[str, object],
+    expected_detail: str,
+):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_7"},
+    ).json()
+
+    response = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={"parameters": {}, "transition_overrides": transition_overrides},
+    )
+
+    assert response.status_code in {400, 422}
+    assert expected_detail in str(response.json()["detail"])
+
+
+def test_acceptance_impeller_v07_rejects_non_finite_transition_radius(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_7"},
+    ).json()
+
+    response = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        content=(
+            '{"parameters": {}, "transition_overrides": {'
+            '"blade_root_to_hub.default": {"radius_mm": NaN}}}'
+        ),
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code in {400, 422}
+    assert "finite transition radius" in str(response.json()["detail"])
+
+
+def test_acceptance_impeller_pre_v07_rejects_non_empty_transition_overrides(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+    engine = client.post(
+        "/api/rule-engines/synthesize",
+        json={"part_family_id": "impeller", "preset_id": "radial_open_reference_v0_6"},
+    ).json()
+
+    response = client.post(
+        f"/api/rule-engines/{engine['engine_id']}/instantiate",
+        json={
+            "parameters": {},
+            "transition_overrides": {
+                "blade_root_to_hub.default": {
+                    "enabled": False,
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert "transition_overrides require edge_families" in response.json()["detail"]
 
 
 def test_acceptance_turbine_rotor_generates_deterministic_analysis_ready_exports(tmp_path: Path):

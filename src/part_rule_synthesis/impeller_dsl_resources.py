@@ -10,6 +10,15 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 ONTOLOGY_BASE = PACKAGE_ROOT / "ontology" / "impeller"
 DSL_BASE = PACKAGE_ROOT / "dsl" / "impeller" / "axisymmetric_throughflow_radial_bladed"
 DEFAULT_DSL_VERSION = "v0_2"
+SUPPORTED_V07_DEFAULT_TREATMENTS = {"none", "chamfer", "fillet"}
+V07_TRANSITION_RADIUS_PARAMETERS = {
+    "leading_edge_radius_mm",
+    "trailing_edge_radius_mm",
+    "root_fillet_radius_mm",
+    "tip_edge_radius_mm",
+    "hub_chamfer_radius_mm",
+    "hood_chamfer_radius_mm",
+}
 
 
 @dataclass(frozen=True)
@@ -159,7 +168,7 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
         raise ValueError("impeller DSL schema constructor family mismatch")
     if bundle.schema["dsl_version"] in {"0.2", "0.3"} and bundle.shape_control_schema["default_stage"] != 1:
         raise ValueError("impeller v0.2/v0.3 shape control must default to stage 1")
-    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6"} and "design_space" not in bundle.shape_controls:
+    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7"} and "design_space" not in bundle.shape_controls:
         raise ValueError("impeller v0.4+ shape controls must include design_space")
     if "hub_meridional_profile" not in bundle.shape_controls["target_entities"]:
         raise ValueError("default shape controls must include hub_meridional_profile")
@@ -180,6 +189,63 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
             raise ValueError(f"preset id mismatch: {preset_id}")
         if preset["constructor_id"] not in bundle.constructors:
             raise ValueError(f"preset {preset_id} references unknown constructor")
+    if bundle.schema["dsl_version"] == "0.7":
+        _validate_v07_edge_family_contracts(bundle)
+
+
+def _validate_v07_edge_family_contracts(bundle: ImpellerDslBundle) -> None:
+    for constructor_id, constructor in bundle.constructors.items():
+        edge_families = constructor.get("edge_families")
+        if not edge_families:
+            raise ValueError(f"constructor {constructor_id} missing required V0.7 edge_families")
+        if not isinstance(edge_families, dict):
+            raise ValueError(f"constructor {constructor_id} V0.7 edge_families must be an object")
+        for edge_family_id, edge_family in edge_families.items():
+            if not isinstance(edge_family, dict):
+                raise ValueError(f"constructor {constructor_id} edge family {edge_family_id} must be an object")
+            for field_name in ["default_treatment", "default_radius_parameter"]:
+                if field_name not in edge_family:
+                    raise ValueError(f"constructor {constructor_id} edge family {edge_family_id} missing {field_name}")
+            default_treatment = edge_family["default_treatment"]
+            if default_treatment not in SUPPORTED_V07_DEFAULT_TREATMENTS:
+                raise ValueError(
+                    f"constructor {constructor_id} edge family {edge_family_id} "
+                    f"has unsupported default_treatment {default_treatment}"
+                )
+            radius_parameter = edge_family["default_radius_parameter"]
+            if not isinstance(radius_parameter, str):
+                raise ValueError(
+                    f"constructor {constructor_id} edge family {edge_family_id} "
+                    "default_radius_parameter must be a string"
+                )
+            if radius_parameter not in V07_TRANSITION_RADIUS_PARAMETERS:
+                raise ValueError(
+                    f"constructor {constructor_id} edge family {edge_family_id} "
+                    f"default_radius_parameter {radius_parameter} "
+                    "is not an allowed V0.7 transition-radius parameter"
+                )
+
+    for preset_id, preset in bundle.presets.items():
+        constructor_id = preset["constructor_id"]
+        constructor = bundle.constructors[constructor_id]
+        parameter_values = preset.get("parameter_values", {})
+        for edge_family_id, edge_family in constructor["edge_families"].items():
+            radius_parameter = edge_family["default_radius_parameter"]
+            if radius_parameter not in parameter_values:
+                raise ValueError(
+                    f"preset {preset_id} missing edge-family radius parameter {radius_parameter} "
+                    f"for constructor {constructor_id} edge family {edge_family_id}"
+                )
+            if not _is_numeric_radius_value(parameter_values[radius_parameter]):
+                raise ValueError(
+                    f"preset {preset_id} edge-family radius parameter {radius_parameter} "
+                    f"for constructor {constructor_id} edge family {edge_family_id} "
+                    "must be numeric"
+                )
+
+
+def _is_numeric_radius_value(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _validate_shape_control_policies(bundle: ImpellerDslBundle) -> None:

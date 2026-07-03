@@ -1,0 +1,263 @@
+{
+  "id": "public-nasa-rotor67-axial-blisk",
+  "name": "Public NASA Rotor 67 axial blisk",
+  "tags": [
+    "public-data",
+    "axial",
+    "blisk",
+    "rotor",
+    "v0.7"
+  ],
+  "run_id": "run-0f9907d9c350",
+  "status": "PASS",
+  "facets": {
+    "flow_topology": "axial",
+    "shroud_topology": "open",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "working_domain": "fan_or_blower",
+    "passage_topology": "throughflow_bladed_channel"
+  },
+  "parameters": {
+    "blade_count": 22,
+    "inlet_radius_mm": 95.9,
+    "exit_radius_mm": 255.7,
+    "inlet_blade_height_mm": 159.8,
+    "outlet_blade_height_mm": 126.6,
+    "hub_curve_height_mm": 92,
+    "mounting_bore_radius_mm": 36,
+    "blade_wrap_deg": 74,
+    "blade_lean_deg": 18,
+    "leading_edge_lean_deg": 8,
+    "trailing_edge_lean_deg": -10,
+    "leading_edge_sweep_mm": 8,
+    "trailing_edge_sweep_mm": -10,
+    "blade_thickness_mm": 4.8,
+    "root_fillet_radius_mm": 1.8,
+    "leading_edge_radius_mm": 0.8,
+    "trailing_edge_radius_mm": 0.45,
+    "tip_edge_radius_mm": 0.45,
+    "hub_wall_thickness_mm": 7,
+    "hub_bottom_thickness_mm": 10,
+    "hub_top_cap_thickness_mm": 4,
+    "hub_chamfer_radius_mm": 1,
+    "hood_wall_thickness_mm": 4,
+    "hood_chamfer_radius_mm": 1
+  },
+  "profile_overrides": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          95.9,
+          92
+        ],
+        [
+          99,
+          72
+        ],
+        [
+          105,
+          48
+        ],
+        [
+          110,
+          25
+        ],
+        [
+          114,
+          10
+        ],
+        [
+          115.9,
+          0
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          255.7,
+          93
+        ],
+        [
+          253.2,
+          73
+        ],
+        [
+          249.8,
+          49
+        ],
+        [
+          246.4,
+          26
+        ],
+        [
+          244.1,
+          11
+        ],
+        [
+          242.5,
+          1
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "curve_overrides": {
+    "blade_mean": {
+      "theta_center_u_curve": {
+        "coordinate_system": "u_theta_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.2,
+            -7
+          ],
+          [
+            0.55,
+            -38
+          ],
+          [
+            0.82,
+            -61
+          ],
+          [
+            1,
+            -74
+          ]
+        ]
+      },
+      "span_lean_u_curve": {
+        "coordinate_system": "u_lean_deg",
+        "control_points": [
+          [
+            0,
+            8
+          ],
+          [
+            0.35,
+            24
+          ],
+          [
+            0.7,
+            12
+          ],
+          [
+            1,
+            -10
+          ]
+        ]
+      }
+    },
+    "blade_edges": {
+      "leading_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            -0.05
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0.07
+          ]
+        ]
+      },
+      "trailing_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0.06
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            -0.08
+          ]
+        ]
+      }
+    },
+    "thickness": {
+      "thickness_u_curve": {
+        "coordinate_system": "u_thickness_mm",
+        "control_points": [
+          [
+            0,
+            4.8
+          ],
+          [
+            0.45,
+            3.9
+          ],
+          [
+            1,
+            2.4
+          ]
+        ]
+      }
+    }
+  },
+  "copied_exports": {
+    "step": "model_snapshots/public-nasa-rotor67-axial-blisk/public-nasa-rotor67-axial-blisk.step",
+    "stl": "model_snapshots/public-nasa-rotor67-axial-blisk/public-nasa-rotor67-axial-blisk.stl",
+    "obj": "model_snapshots/public-nasa-rotor67-axial-blisk/public-nasa-rotor67-axial-blisk.obj",
+    "manifest": "model_snapshots/public-nasa-rotor67-axial-blisk/public-nasa-rotor67-axial-blisk.manifest.json"
+  },
+  "surface_count": 141
+}

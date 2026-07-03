@@ -15,11 +15,12 @@ export async function instantiateImpeller(
   profileOverrides = null,
   curveOverrides = null,
   geometryStage = "edge_closures",
+  transitionOverrides = null,
 ) {
   return requestJson(`${normalizeBase(apiBase)}/api/rule-engines/${encodeURIComponent(engineId)}/instantiate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildInstantiatePayload(parameters, profileOverrides, curveOverrides, geometryStage)),
+    body: JSON.stringify(buildInstantiatePayload(parameters, profileOverrides, curveOverrides, transitionOverrides, geometryStage)),
   });
 }
 

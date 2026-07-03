@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
+import { isTransitionSurface } from "../meshOverlayModel.js";
 import { patchBoundaryCurveIds, patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js";
 import { defaultVisibleLayers, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
 
@@ -15,6 +16,7 @@ export function ModelViewer({
   viewMode,
   setViewMode,
   simulationViewMode = "cad_review_360",
+  meshOverlayMode = "triangle_edges",
   selectedPatch = null,
   manifest = null,
   autoRotate,
@@ -97,7 +99,7 @@ export function ModelViewer({
 
   useEffect(() => {
     updateVisibility();
-  }, [viewMode, visibleLayers, simulationViewMode, selectedPatch, manifest]);
+  }, [viewMode, visibleLayers, simulationViewMode, meshOverlayMode, selectedPatch, manifest]);
 
   useEffect(() => {
     const selectedBoundaryIds = patchBoundaryCurveIds(manifest, selectedPatch);
@@ -120,7 +122,14 @@ export function ModelViewer({
     centerRef.current.copy(bounds.center);
     const selectedSurfaceIds = patchSurfaceIds(manifest, selectedPatch);
     const selectedBoundaryIds = patchBoundaryCurveIds(manifest, selectedPatch);
-    const shaded = createSurfaceGraphGroup(visibleSurfaceGraph, bounds.center, simulationViewMode, selectedSurfaceIds);
+    const shaded = createSurfaceGraphGroup(
+      visibleSurfaceGraph,
+      bounds.center,
+      simulationViewMode,
+      selectedSurfaceIds,
+      meshOverlayMode,
+      manifest,
+    );
     modelRef.current.shaded = shaded;
     sceneRef.current.add(shaded);
     renderConstructionLines(
@@ -130,7 +139,7 @@ export function ModelViewer({
     frameCamera(bounds.radius || 1000);
     updateVisibility();
     setStatus(simulationViewMode === "mesh" ? meshInspectionStatus(manifest) : "Surface graph rendered");
-  }, [surfaceGraph, simulationViewMode, selectedPatch, manifest]);
+  }, [surfaceGraph, simulationViewMode, meshOverlayMode, selectedPatch, manifest]);
 
   useEffect(() => {
     if (surfaceGraph?.surfaces?.length) {
@@ -194,10 +203,14 @@ export function ModelViewer({
     const constructionGroup = modelRef.current.constructionGroup;
     if (shaded) {
       const showShaded = viewMode !== "wireframe" && visibleLayers.shaded_surfaces !== false;
-      shaded.visible = showShaded;
+      const showMeshOverlay = simulationViewMode === "mesh" && meshOverlayMode !== "off" && viewMode !== "shaded";
+      shaded.visible = showShaded || showMeshOverlay;
       shaded.traverse((child) => {
         if (child.isMesh && child.userData.layer) {
           child.visible = showShaded && visibleLayers[child.userData.layer] !== false;
+        }
+        if (child.isLineSegments && child.userData.isMeshOverlay && child.userData.layer) {
+          child.visible = showMeshOverlay && visibleLayers[child.userData.layer] !== false;
         }
       });
     }
@@ -309,7 +322,14 @@ export function ModelViewer({
   );
 }
 
-function createSurfaceGraphGroup(surfaceGraph, center, simulationViewMode, selectedSurfaceIds = new Set()) {
+function createSurfaceGraphGroup(
+  surfaceGraph,
+  center,
+  simulationViewMode,
+  selectedSurfaceIds = new Set(),
+  meshOverlayMode = "triangle_edges",
+  manifest = null,
+) {
   const group = new THREE.Group();
   const colors = {
     hub: "#7aa58f",
@@ -328,7 +348,7 @@ function createSurfaceGraphGroup(surfaceGraph, center, simulationViewMode, selec
   };
 
   for (const surface of surfaceGraph.surfaces || []) {
-    if (!surfaceVisibleInView(surface, simulationViewMode)) {
+    if (!surfaceVisibleInView(surface, simulationViewMode, manifest)) {
       continue;
     }
     const grid = surface.uv_grid || [];
@@ -363,12 +383,33 @@ function createSurfaceGraphGroup(surfaceGraph, center, simulationViewMode, selec
                   : 0.92),
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.layer = layerForSurface(surface);
+    mesh.userData.layer = layerForSurface(surface, cfdSurfaceMeshManifest(manifest));
     mesh.userData.surfaceId = surfaceId;
     group.add(mesh);
+
+    if (simulationViewMode === "mesh" && meshOverlayMode !== "off") {
+      const overlay = createMeshEdgeOverlay(geometry, surface, cfdSurfaceMeshManifest(manifest));
+      group.add(overlay);
+    }
   }
 
   return group;
+}
+
+function createMeshEdgeOverlay(geometry, surface, meshManifest = null) {
+  const transitionSurface = isTransitionSurface(surface, meshManifest);
+  const material = new THREE.LineBasicMaterial({
+    color: transitionSurface ? "#f97316" : "#1f2933",
+    transparent: true,
+    opacity: transitionSurface ? 0.92 : 0.28,
+    depthTest: true,
+    depthWrite: false,
+  });
+  const overlay = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), material);
+  overlay.userData.isMeshOverlay = true;
+  overlay.userData.layer = transitionSurface ? "transition_mesh_edges" : "mesh_edges";
+  overlay.userData.surfaceId = surface.id || surface.surface_graph_id;
+  return overlay;
 }
 
 function isCfdInspectionView(simulationViewMode) {
@@ -383,6 +424,10 @@ function meshInspectionStatus(manifest) {
   const triangles = Number(meshManifest.triangle_count || 0);
   const degenerate = Number(meshManifest.degenerate_triangle_count || 0);
   return `CFD360 mesh inspection: ${triangles} triangles, ${degenerate} degenerate.`;
+}
+
+function cfdSurfaceMeshManifest(manifest) {
+  return manifest?.simulation_manifests?.cfd_surface_mesh;
 }
 
 function surfaceGridGeometry(grid, center) {

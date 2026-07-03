@@ -27,6 +27,7 @@ describe("frontend application files", () => {
       "src/components/MeshInspectionPanel.js",
       "src/components/ModelViewer.js",
       "src/components/ManifestPanel.js",
+      "src/meshOverlayModel.js",
       "src/meshViewModel.js",
       "src/simulationViewModel.js",
       "src/workspaceModel.js",
@@ -44,6 +45,27 @@ describe("frontend application files", () => {
     assert.doesNotMatch(viewerSource, /wireframe:\s*true/);
     assert.match(viewerSource, /LineSegments/);
     assert.match(appSource, /useState\(false\)/);
+  });
+
+  test("viewer exposes mesh overlay layers for CFD360 mesh inspection", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const panelSource = readFileSync(resolve(root, "src/components/MeshInspectionPanel.js"), "utf-8");
+    const overlaySource = readFileSync(resolve(root, "src/meshOverlayModel.js"), "utf-8");
+    const workspaceSource = readFileSync(resolve(root, "src/workspaceModel.js"), "utf-8");
+
+    assert.match(viewerSource, /meshOverlayMode\s*=\s*"triangle_edges"/);
+    assert.match(viewerSource, /WireframeGeometry/);
+    assert.match(viewerSource, /createSurfaceGraphGroup\(\s*visibleSurfaceGraph,\s*bounds\.center,\s*simulationViewMode,\s*selectedSurfaceIds,\s*meshOverlayMode,\s*manifest,\s*\)/);
+    assert.match(viewerSource, /surfaceVisibleInView\(surface,\s*simulationViewMode,\s*manifest\)/);
+    assert.doesNotMatch(viewerSource, /surfaceVisibleInView\(surface,\s*simulationViewMode\)/);
+    assert.match(viewerSource, /transition_mesh_edges/);
+    assert.match(viewerSource, /mesh_edges/);
+    assert.match(panelSource, /transitionRegionRows/);
+    assert.match(panelSource, /transition-region-row/);
+    assert.match(overlaySource, /triangle_edges/);
+    assert.match(overlaySource, /transitionSurfaceIds/);
+    assert.match(overlaySource, /isTransitionSurface/);
+    assert.match(workspaceSource, /transition_surfaces/);
   });
 
   test("parameter panel uses direct numeric inputs without range sliders", () => {
@@ -125,14 +147,19 @@ describe("frontend application files", () => {
       "src/components/ProfileCurveEditor.js",
       "src/components/BladeCurveEditor.js",
       "src/components/GenerationStagePanel.js",
+      "src/components/EdgeTreatmentPanel.js",
+      "src/edgeTreatmentModel.js",
+      "src/edgeTreatmentModel.test.js",
     ]) {
       assert.equal(existsSync(resolve(root, file)), true, `${file} should exist`);
     }
 
     assert.match(appSource, /profileOverrides/);
     assert.match(appSource, /curveOverrides/);
+    assert.match(appSource, /transitionOverrides/);
     assert.match(appSource, /geometryStage/);
     assert.match(appSource, /GenerationStagePanel/);
+    assert.match(appSource, /EdgeTreatmentPanel/);
   });
 
   test("curve editors expose engineering-unit numeric control-point inputs", () => {

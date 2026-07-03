@@ -1,0 +1,5 @@
+logs/
+model_snapshots/**/*.manifest.json
+model_snapshots/**/*.obj
+model_snapshots/**/*.step
+model_snapshots/**/*.stl

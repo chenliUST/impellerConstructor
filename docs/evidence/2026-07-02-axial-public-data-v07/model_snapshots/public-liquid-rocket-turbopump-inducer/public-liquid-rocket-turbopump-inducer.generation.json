@@ -1,0 +1,255 @@
+{
+  "id": "public-liquid-rocket-turbopump-inducer",
+  "name": "Public liquid rocket turbopump inducer",
+  "tags": [
+    "public-data",
+    "axial",
+    "inducer",
+    "pump",
+    "v0.7"
+  ],
+  "run_id": "run-913ddefa68d5",
+  "status": "PASS",
+  "facets": {
+    "flow_topology": "axial",
+    "shroud_topology": "open",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "working_domain": "pump",
+    "passage_topology": "throughflow_bladed_channel"
+  },
+  "parameters": {
+    "blade_count": 3,
+    "inlet_radius_mm": 35,
+    "exit_radius_mm": 72.5,
+    "inlet_blade_height_mm": 35,
+    "outlet_blade_height_mm": 32.5,
+    "hub_curve_height_mm": 120,
+    "mounting_bore_radius_mm": 4,
+    "blade_wrap_deg": 230,
+    "blade_lean_deg": 10,
+    "leading_edge_lean_deg": 4,
+    "trailing_edge_lean_deg": 14,
+    "leading_edge_sweep_mm": 10,
+    "trailing_edge_sweep_mm": -8,
+    "blade_thickness_mm": 2.5,
+    "root_fillet_radius_mm": 0.8,
+    "leading_edge_radius_mm": 0.35,
+    "trailing_edge_radius_mm": 0.25,
+    "tip_edge_radius_mm": 0.25,
+    "hub_wall_thickness_mm": 4,
+    "hub_bottom_thickness_mm": 6,
+    "hub_top_cap_thickness_mm": 2,
+    "hub_chamfer_radius_mm": 0.6,
+    "hood_wall_thickness_mm": 2,
+    "hood_chamfer_radius_mm": 0.5
+  },
+  "profile_overrides": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          10,
+          120
+        ],
+        [
+          15,
+          110
+        ],
+        [
+          25,
+          92
+        ],
+        [
+          34,
+          62
+        ],
+        [
+          39,
+          26
+        ],
+        [
+          42,
+          0
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          70,
+          121
+        ],
+        [
+          70.5,
+          111
+        ],
+        [
+          71,
+          93
+        ],
+        [
+          71.5,
+          63
+        ],
+        [
+          72,
+          27
+        ],
+        [
+          72.5,
+          1
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "curve_overrides": {
+    "blade_mean": {
+      "theta_center_u_curve": {
+        "coordinate_system": "u_theta_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.25,
+            -55
+          ],
+          [
+            0.6,
+            -150
+          ],
+          [
+            1,
+            -230
+          ]
+        ]
+      },
+      "span_lean_u_curve": {
+        "coordinate_system": "u_lean_deg",
+        "control_points": [
+          [
+            0,
+            4
+          ],
+          [
+            0.5,
+            9
+          ],
+          [
+            1,
+            14
+          ]
+        ]
+      }
+    },
+    "blade_edges": {
+      "leading_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            -0.12
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0.16
+          ]
+        ]
+      },
+      "trailing_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0.1
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            -0.14
+          ]
+        ]
+      }
+    },
+    "thickness": {
+      "thickness_u_curve": {
+        "coordinate_system": "u_thickness_mm",
+        "control_points": [
+          [
+            0,
+            2.5
+          ],
+          [
+            0.45,
+            2.1
+          ],
+          [
+            1,
+            1.2
+          ]
+        ]
+      }
+    }
+  },
+  "copied_exports": {
+    "step": "model_snapshots/public-liquid-rocket-turbopump-inducer/public-liquid-rocket-turbopump-inducer.step",
+    "stl": "model_snapshots/public-liquid-rocket-turbopump-inducer/public-liquid-rocket-turbopump-inducer.stl",
+    "obj": "model_snapshots/public-liquid-rocket-turbopump-inducer/public-liquid-rocket-turbopump-inducer.obj",
+    "manifest": "model_snapshots/public-liquid-rocket-turbopump-inducer/public-liquid-rocket-turbopump-inducer.manifest.json"
+  },
+  "surface_count": 27
+}

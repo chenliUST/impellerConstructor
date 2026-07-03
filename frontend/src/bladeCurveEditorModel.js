@@ -9,31 +9,53 @@ export function defaultBladeCurveControls(parameters = {}) {
   const exit = Number(parameters.exit_radius_mm ?? 620);
   const radialSpan = Math.max(1, exit - inlet);
   const thickness = Number(parameters.blade_thickness_mm ?? 18);
+  const leadingSweepOffset = leadingSweep / (2 * radialSpan);
+  const trailingSweepOffset = trailingSweep / (2 * radialSpan);
   return {
     blade_mean: {
       theta_center_u_curve: {
         coordinate_system: "u_theta_deg",
-        control_points: [[0, 0], [0.33, -wrap * 0.18], [0.66, -wrap * 0.68], [1, -wrap]],
+        control_points: [
+          [0, 0],
+          [0.167, -wrap * 0.05],
+          [0.333, -wrap * 0.18],
+          [0.5, -wrap * 0.43],
+          [0.667, -wrap * 0.68],
+          [0.833, -wrap * 0.9],
+          [1, -wrap],
+        ],
       },
       span_lean_u_curve: {
         coordinate_system: "u_lean_deg",
-        control_points: [[0, leadingLean], [0.5, lean], [1, trailingLean]],
+        control_points: [
+          [0, leadingLean],
+          [0.25, leadingLean * 0.5 + lean * 0.5],
+          [0.5, lean],
+          [0.75, trailingLean * 0.5 + lean * 0.5],
+          [1, trailingLean],
+        ],
       },
     },
     blade_edges: {
       leading_edge_sweep_v_curve: {
         coordinate_system: "v_support_u_offset",
-        control_points: [[0, round(-leadingSweep / (2 * radialSpan))], [0.5, 0], [1, round(leadingSweep / (2 * radialSpan))]],
+        control_points: supportOffsetCurve(-leadingSweepOffset, leadingSweepOffset),
       },
       trailing_edge_sweep_v_curve: {
         coordinate_system: "v_support_u_offset",
-        control_points: [[0, round(-trailingSweep / (2 * radialSpan))], [0.5, 0], [1, round(trailingSweep / (2 * radialSpan))]],
+        control_points: supportOffsetCurve(-trailingSweepOffset, trailingSweepOffset),
       },
     },
     thickness: {
       thickness_u_curve: {
         coordinate_system: "u_thickness_mm",
-        control_points: [[0, thickness], [0.5, thickness * 0.78], [1, thickness * 0.55]],
+        control_points: [
+          [0, thickness],
+          [0.25, thickness * 0.925],
+          [0.5, thickness * 0.78],
+          [0.75, thickness * 0.635],
+          [1, thickness * 0.55],
+        ],
       },
     },
   };
@@ -117,6 +139,16 @@ function cloneControls(controls) {
       ),
     ]),
   );
+}
+
+function supportOffsetCurve(startOffset, endOffset) {
+  return [
+    [0, round(startOffset)],
+    [0.25, round(startOffset * 0.5)],
+    [0.5, 0],
+    [0.75, round(endOffset * 0.5)],
+    [1, round(endOffset)],
+  ];
 }
 
 function round(value) {

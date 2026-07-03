@@ -3,15 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from part_rule_synthesis.impeller_cfd_manifest import build_cfd_full_360_manifest
+from part_rule_synthesis.impeller_bounded_brep_export import write_bounded_brep_step
 from part_rule_synthesis.impeller_brep_export import write_trimmed_brep_step
 from part_rule_synthesis.impeller_design_space import build_campaign_signature
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
+from part_rule_synthesis.impeller_mesh_export import write_surface_graph_obj
 from part_rule_synthesis.impeller_mesh_manifest import build_surface_mesh_manifest
 from part_rule_synthesis.impeller_surface_graph_export import write_surface_graph_exports
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
@@ -22,6 +25,7 @@ from part_rule_synthesis.impeller_taxonomy import (
     LEGACY_CENTRIFUGAL_IMPELLER_FACETS,
     ONTOLOGY,
 )
+from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 
 
 PRIMITIVES = {
@@ -126,6 +130,7 @@ class RuleSynthesisService:
         parameters: dict[str, Any],
         profile_overrides: dict[str, Any] | None = None,
         curve_overrides: dict[str, Any] | None = None,
+        transition_overrides: dict[str, Any] | None = None,
         geometry_stage: str = "full",
     ) -> ModelRun:
         dsl = self._engine(engine_id)
@@ -134,17 +139,29 @@ class RuleSynthesisService:
         normalized_geometry_stage = _normalize_geometry_stage(geometry_stage)
         normalized_profile_overrides = profile_overrides or {}
         normalized_curve_overrides = curve_overrides or {}
-        graph_hash = _stable_hash(
-            {
-                "dsl": dsl,
-                "parameters": bound,
-                "profile_overrides": normalized_profile_overrides,
-                "curve_overrides": normalized_curve_overrides,
-                "geometry_stage": normalized_geometry_stage,
-                "primitive_version": PRIMITIVES["version"],
-                "operation_graph": operation_graph,
-            }
-        )
+        normalized_transition_overrides = _normalize_transition_overrides(transition_overrides)
+        transition_policies = None
+        edge_families = dsl.get("edge_families", {})
+        if normalized_transition_overrides and not edge_families:
+            raise ValueError("transition_overrides require edge_families")
+        if edge_families:
+            transition_policies = resolve_transition_policies(
+                edge_families,
+                bound,
+                normalized_transition_overrides,
+            )
+        graph_payload = {
+            "dsl": dsl,
+            "parameters": bound,
+            "profile_overrides": normalized_profile_overrides,
+            "curve_overrides": normalized_curve_overrides,
+            "geometry_stage": normalized_geometry_stage,
+            "primitive_version": PRIMITIVES["version"],
+            "operation_graph": operation_graph,
+        }
+        if transition_policies is not None:
+            graph_payload["transition_overrides"] = normalized_transition_overrides
+        graph_hash = _stable_hash(graph_payload)
         run_id = f"run-{graph_hash[:12]}"
         run_dir = self.root / "model_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +173,8 @@ class RuleSynthesisService:
             curve_overrides=normalized_curve_overrides,
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
+            edge_families=edge_families,
+            transition_policies=transition_policies,
         )
         geometry_metadata = _geometry_metadata(
             dsl["part_family"],
@@ -165,6 +184,8 @@ class RuleSynthesisService:
             curve_overrides=normalized_curve_overrides,
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
+            edge_families=edge_families,
+            transition_policies=transition_policies,
         )
         geometry_kernel = _geometry_kernel_metadata(
             dsl["part_family"],
@@ -174,6 +195,8 @@ class RuleSynthesisService:
             curve_overrides=normalized_curve_overrides,
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
+            edge_families=edge_families,
+            transition_policies=transition_policies,
         )
         exports, export_manifests = _write_exports(
             run_dir,
@@ -187,7 +210,7 @@ class RuleSynthesisService:
             geometry_metadata=geometry_metadata,
             model_output_root=self.model_output_root,
         )
-        export_strategy = _export_strategy(dsl["part_family"], dsl_context=dsl)
+        export_strategy = _export_strategy(dsl["part_family"], dsl_context=dsl, export_manifests=export_manifests)
         simulation_manifests = {}
         if dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.4", "0.5"}:
             surface_graph = geometry_metadata.get("surface_graph", {})
@@ -197,7 +220,7 @@ class RuleSynthesisService:
                 cfd_view,
                 blade_count=int(bound.get("blade_count", 0)),
             )
-        if dsl["part_family"] == "impeller" and _dsl_version(dsl) == "0.6":
+        if dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.6", "0.7"}:
             simulation_manifests["cfd_surface_mesh"] = build_surface_mesh_manifest(
                 geometry_metadata.get("surface_graph", {}),
                 view_id="cfd_full_360",
@@ -238,6 +261,11 @@ class RuleSynthesisService:
             "export_manifests": export_manifests,
             "notice": "Research geometry; inferred regions are not released for operation.",
         }
+        if transition_policies is not None:
+            manifest["transition_overrides"] = normalized_transition_overrides
+            manifest["transition_policies"] = geometry_metadata.get("transition_policies", transition_policies)
+        if geometry_metadata.get("edge_families"):
+            manifest["edge_families"] = geometry_metadata["edge_families"]
         if manifest["dsl_version"] in {"0.4", "0.5"}:
             manifest["campaign_signature"] = build_campaign_signature(
                 _campaign_signature_runtime_context(dsl),
@@ -649,9 +677,16 @@ def _geometry_metadata(
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
     dsl_context: dict[str, Any] | None = None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     is_impeller = part_family in {"centrifugal_impeller", "impeller"}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {}) if is_impeller else {}
+    impeller_geometry_options = _impeller_geometry_options(dsl_context)
+    if edge_families:
+        impeller_geometry_options["edge_families"] = edge_families
+    if transition_policies is not None:
+        impeller_geometry_options["transition_policies"] = transition_policies
     impeller_geometry = (
         build_impeller_geometry(
             parameters,
@@ -659,14 +694,14 @@ def _geometry_metadata(
             profile_overrides=profile_overrides,
             curve_overrides=curve_overrides,
             geometry_stage=geometry_stage,
-            **_impeller_geometry_options(dsl_context),
+            **impeller_geometry_options,
         )
         if is_impeller
         else {}
     )
     blade_surface = impeller_geometry.get("blade_surface", {}) if is_impeller else {}
     curved_hub = is_impeller and parameters.get("hub_curve_height_mm", 0.0) > 0.0
-    return {
+    metadata = {
         "part_family": part_family,
         "authority": "research",
         "airfoil": _shared_airfoil() if is_impeller else _dsl_template(part_family)["airfoil"],
@@ -689,6 +724,11 @@ def _geometry_metadata(
         ),
         "parameters": parameters,
     }
+    if is_impeller and impeller_geometry.get("edge_families"):
+        metadata["edge_families"] = impeller_geometry["edge_families"]
+    if is_impeller and impeller_geometry.get("transition_policies"):
+        metadata["transition_policies"] = impeller_geometry["transition_policies"]
+    return metadata
 
 
 def _geometry_kernel_metadata(
@@ -699,17 +739,24 @@ def _geometry_kernel_metadata(
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
     dsl_context: dict[str, Any] | None = None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if part_family not in {"centrifugal_impeller", "impeller"}:
         return {}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {})
+    impeller_geometry_options = _impeller_geometry_options(dsl_context)
+    if edge_families:
+        impeller_geometry_options["edge_families"] = edge_families
+    if transition_policies is not None:
+        impeller_geometry_options["transition_policies"] = transition_policies
     geometry = build_impeller_geometry(
         parameters,
         resolved_facets,
         profile_overrides=profile_overrides,
         curve_overrides=curve_overrides,
         geometry_stage=geometry_stage,
-        **_impeller_geometry_options(dsl_context),
+        **impeller_geometry_options,
     )
     return geometry["kernel"]
 
@@ -722,17 +769,24 @@ def _geometry_validity_metadata(
     curve_overrides: dict[str, Any] | None = None,
     geometry_stage: str = "edge_closures",
     dsl_context: dict[str, Any] | None = None,
+    edge_families: dict[str, Any] | None = None,
+    transition_policies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if part_family not in {"centrifugal_impeller", "impeller"}:
         return {}
     resolved_facets = _resolved_impeller_facets(part_family, facets or {})
+    impeller_geometry_options = _impeller_geometry_options(dsl_context)
+    if edge_families:
+        impeller_geometry_options["edge_families"] = edge_families
+    if transition_policies is not None:
+        impeller_geometry_options["transition_policies"] = transition_policies
     geometry = build_impeller_geometry(
         parameters,
         resolved_facets,
         profile_overrides=profile_overrides,
         curve_overrides=curve_overrides,
         geometry_stage=geometry_stage,
-        **_impeller_geometry_options(dsl_context),
+        **impeller_geometry_options,
     )
     return geometry["validity"]
 
@@ -811,6 +865,14 @@ def _normalize_geometry_stage(stage: str | None) -> str:
     return normalized
 
 
+def _normalize_transition_overrides(overrides: dict[str, Any] | None) -> dict[str, Any]:
+    if overrides is None:
+        return {}
+    if not isinstance(overrides, Mapping):
+        raise ValueError("transition_overrides must be an object")
+    return dict(overrides)
+
+
 def _validation(part_family: str) -> dict[str, Any]:
     checks = (
         ["watertight_proxy", "embedded_contact_blade_root_hub", "named_regions_present"]
@@ -847,6 +909,62 @@ def _write_exports(
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
     export_contract = (dsl_context or {}).get("export_contract", {})
+    if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_bounded_brep":
+        surface_graph = (geometry_metadata or {}).get("surface_graph")
+        if not surface_graph:
+            raise RuntimeError("surface_graph_bounded_brep export requires geometry.surface_graph")
+        output_dir = _model_output_dir_for_run(run_dir, model_output_root)
+        stem = _safe_export_stem((dsl_context or {}).get("preset_id"), run_dir.name)
+        step = output_dir / f"{stem}.step"
+        stl = output_dir / f"{stem}.stl"
+        obj = output_dir / f"{stem}.obj"
+        manifest_copy = output_dir / f"{stem}.manifest.json"
+        intermediate_dir = run_dir / ".intermediate"
+        intermediate_dir.mkdir(parents=True, exist_ok=True)
+        mesh_step = intermediate_dir / f"{stem}.mesh.step"
+        bounded_surface_graph = _bounded_brep_supported_surface_graph(surface_graph)
+        brep_manifest = write_bounded_brep_step(
+            step,
+            part_family,
+            bounded_surface_graph["surface_graph"],
+            view_id=export_contract.get("default_view", "cad_review_360"),
+        )
+        mesh_manifests = write_surface_graph_exports(
+            mesh_step,
+            stl,
+            part_family,
+            surface_graph,
+            view_id=export_contract.get("default_view", "cad_review_360"),
+        )
+        obj_manifest = write_surface_graph_obj(
+            obj,
+            part_family,
+            surface_graph,
+            view_id=export_contract.get("default_view", "cad_review_360"),
+        )
+        brep_manifest = {
+            **brep_manifest,
+            "bounded_brep_status": "bounded_faces_unsewn",
+            "coverage_status": bounded_surface_graph["coverage_status"],
+            "cad_export_scope": "supported_bounded_brep_surfaces",
+            "unsupported_surface_policy": "excluded_with_manifest_accounting",
+            "total_surface_count": bounded_surface_graph["total_surface_count"],
+            "supported_surface_count": bounded_surface_graph["supported_surface_count"],
+            "surface_count": len(bounded_surface_graph["included_surface_ids"]),
+            "included_surface_ids": bounded_surface_graph["included_surface_ids"],
+            "excluded_surface_ids": bounded_surface_graph["excluded_surface_ids"],
+            "unsupported_surface_count": bounded_surface_graph["unsupported_surface_count"],
+            "unsupported_surface_kinds": bounded_surface_graph["excluded_surface_kinds"],
+            "diagnostic_step_exactness": export_contract.get(
+                "diagnostic_step_exactness",
+                "surface_graph_bounded_unsewn_brep_step",
+            ),
+            "limitations": bounded_surface_graph["limitations"],
+        }
+        return (
+            {"step": str(step), "stl": str(stl), "obj": str(obj), "manifest": str(manifest_copy)},
+            {"step": brep_manifest, "stl": mesh_manifests["stl"], "obj": obj_manifest},
+        )
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
         surface_graph = (geometry_metadata or {}).get("surface_graph")
         if not surface_graph:
@@ -993,14 +1111,95 @@ def _safe_export_stem(preset_id: str | None, run_id: str) -> str:
     return safe_run_id
 
 
+def _bounded_brep_supported_surface_graph(surface_graph: dict[str, Any]) -> dict[str, Any]:
+    included_surfaces: list[dict[str, Any]] = []
+    included_surface_ids: list[str] = []
+    excluded_surface_ids: list[str] = []
+    excluded_surface_kinds: dict[str, int] = {}
+    total_surface_count = len(surface_graph.get("surfaces", []))
+    for surface_index, surface in enumerate(surface_graph.get("surfaces", [])):
+        surface_id = str(surface.get("id") or surface.get("surface_graph_id") or f"surface_{surface_index}")
+        kind = str(surface.get("kind") or "")
+        if kind == "annular_plane_surface":
+            included_surfaces.append(surface)
+            included_surface_ids.append(surface_id)
+            continue
+        excluded_surface_ids.append(surface_id)
+        excluded_surface_kinds[kind or "missing"] = excluded_surface_kinds.get(kind or "missing", 0) + 1
+
+    limitations = []
+    if excluded_surface_ids:
+        limitations.append("unsupported_surface_kinds_excluded_from_bounded_brep_step")
+    return {
+        "surface_graph": {**surface_graph, "surfaces": included_surfaces},
+        "coverage_status": (
+            "partial_supported_surfaces" if excluded_surface_ids else "complete_supported_surfaces"
+        ),
+        "total_surface_count": total_surface_count,
+        "supported_surface_count": len(included_surfaces),
+        "unsupported_surface_count": len(excluded_surface_ids),
+        "included_surface_ids": included_surface_ids,
+        "excluded_surface_ids": excluded_surface_ids,
+        "excluded_surface_kinds": dict(sorted(excluded_surface_kinds.items())),
+        "limitations": limitations,
+    }
+
+
 def _model_output_dir_for_run(run_dir: Path, model_output_root: Path | None = None) -> Path:
     output_dir = Path(model_output_root) if model_output_root is not None else run_dir.parent.parent / "Model Output"
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
 
-def _export_strategy(part_family: str, dsl_context: dict[str, Any] | None = None) -> dict[str, str]:
+def _export_strategy(
+    part_family: str,
+    dsl_context: dict[str, Any] | None = None,
+    export_manifests: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     export_contract = (dsl_context or {}).get("export_contract", {})
+    if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_bounded_brep":
+        contract_step_exactness = export_contract.get(
+            "step_exactness",
+            export_contract.get(
+                "diagnostic_step_exactness",
+                "surface_graph_bounded_unsewn_brep_step",
+            ),
+        )
+        step_exactness = (export_manifests or {}).get("step", {}).get("export_exactness") or contract_step_exactness
+        target_step_exactness = export_contract.get("target_step_exactness", "surface_graph_trimmed_brep_step")
+        diagnostic_step_exactness = export_contract.get(
+            "diagnostic_step_exactness",
+            "surface_graph_bounded_unsewn_brep_step",
+        )
+        return {
+            "mode": "surface_graph_bounded_brep",
+            "cad_exports": "completed",
+            "source": "geometry.surface_graph",
+            "view": export_contract.get("default_view", "cad_review_360"),
+            "step_exactness": step_exactness,
+            "target_step_exactness": target_step_exactness,
+            "diagnostic_step_exactness": diagnostic_step_exactness,
+            "bounded_brep_status": "bounded_faces_unsewn",
+            "sewing_status": "not_attempted",
+            "coverage_status": "partial_supported_surfaces",
+            "cad_export_scope": "supported_bounded_brep_surfaces",
+            "unsupported_surface_policy": "excluded_with_manifest_accounting",
+            "export_contract": {
+                "mode": "surface_graph_bounded_brep",
+                "step_exactness": contract_step_exactness,
+                "target_step_exactness": target_step_exactness,
+                "diagnostic_step_exactness": diagnostic_step_exactness,
+                "bounded_brep_status": "bounded_faces_unsewn",
+                "sewing_status": "not_attempted",
+                "coverage_status": "partial_supported_surfaces",
+                "cad_export_scope": "supported_bounded_brep_surfaces",
+                "unsupported_surface_policy": "excluded_with_manifest_accounting",
+            },
+            "reason": (
+                "bounded STEP is completed for supported annular bounded surface_graph B-Rep faces; "
+                "unsupported surfaces and mesh artifacts are separate review outputs"
+            ),
+        }
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") == "surface_graph_brep":
         return {
             "mode": "surface_graph_brep",

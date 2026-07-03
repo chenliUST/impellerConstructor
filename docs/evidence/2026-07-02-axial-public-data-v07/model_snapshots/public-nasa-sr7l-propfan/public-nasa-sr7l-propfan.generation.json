@@ -1,0 +1,267 @@
+{
+  "id": "public-nasa-sr7l-propfan",
+  "name": "Public NASA SR-7L propfan",
+  "tags": [
+    "public-data",
+    "axial",
+    "propeller",
+    "propfan",
+    "v0.7"
+  ],
+  "run_id": "run-ac63c0a284bc",
+  "status": "PASS",
+  "facets": {
+    "flow_topology": "axial",
+    "shroud_topology": "open",
+    "suction_topology": "single_suction",
+    "blade_exit_geometry": "backward_curved",
+    "working_domain": "fan_or_blower",
+    "passage_topology": "throughflow_bladed_channel"
+  },
+  "parameters": {
+    "blade_count": 8,
+    "inlet_radius_mm": 220,
+    "exit_radius_mm": 1370,
+    "inlet_blade_height_mm": 1150,
+    "outlet_blade_height_mm": 1110,
+    "hub_curve_height_mm": 500,
+    "mounting_bore_radius_mm": 95,
+    "blade_wrap_deg": 130,
+    "blade_lean_deg": 36,
+    "leading_edge_lean_deg": 20,
+    "trailing_edge_lean_deg": -8,
+    "leading_edge_sweep_mm": 120,
+    "trailing_edge_sweep_mm": -160,
+    "blade_thickness_mm": 20,
+    "root_fillet_radius_mm": 6,
+    "leading_edge_radius_mm": 3,
+    "trailing_edge_radius_mm": 1.5,
+    "tip_edge_radius_mm": 1.5,
+    "hub_wall_thickness_mm": 24,
+    "hub_bottom_thickness_mm": 35,
+    "hub_top_cap_thickness_mm": 10,
+    "hub_chamfer_radius_mm": 4,
+    "hood_wall_thickness_mm": 8,
+    "hood_chamfer_radius_mm": 2
+  },
+  "profile_overrides": {
+    "hub_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          220,
+          500
+        ],
+        [
+          225,
+          400
+        ],
+        [
+          235,
+          300
+        ],
+        [
+          245,
+          190
+        ],
+        [
+          255,
+          80
+        ],
+        [
+          260,
+          0
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "tip_or_shroud_profile": {
+      "kind": "nurbs_curve",
+      "degree": 3,
+      "coordinate_system": "rz_meridional_mm",
+      "control_points": [
+        [
+          1370,
+          501
+        ],
+        [
+          1369,
+          401
+        ],
+        [
+          1368,
+          301
+        ],
+        [
+          1367,
+          191
+        ],
+        [
+          1366,
+          81
+        ],
+        [
+          1365,
+          1
+        ]
+      ],
+      "weights": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "knots": [
+        0,
+        0,
+        0,
+        0,
+        0.333333,
+        0.666667,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "curve_overrides": {
+    "blade_mean": {
+      "theta_center_u_curve": {
+        "coordinate_system": "u_theta_deg",
+        "control_points": [
+          [
+            0,
+            0
+          ],
+          [
+            0.2,
+            -15
+          ],
+          [
+            0.55,
+            -70
+          ],
+          [
+            0.85,
+            -115
+          ],
+          [
+            1,
+            -130
+          ]
+        ]
+      },
+      "span_lean_u_curve": {
+        "coordinate_system": "u_lean_deg",
+        "control_points": [
+          [
+            0,
+            20
+          ],
+          [
+            0.4,
+            42
+          ],
+          [
+            0.75,
+            30
+          ],
+          [
+            1,
+            -8
+          ]
+        ]
+      }
+    },
+    "blade_edges": {
+      "leading_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            -0.18
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            0.22
+          ]
+        ]
+      },
+      "trailing_edge_sweep_v_curve": {
+        "coordinate_system": "v_support_u_offset",
+        "control_points": [
+          [
+            0,
+            0.16
+          ],
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            -0.22
+          ]
+        ]
+      }
+    },
+    "thickness": {
+      "thickness_u_curve": {
+        "coordinate_system": "u_thickness_mm",
+        "control_points": [
+          [
+            0,
+            20
+          ],
+          [
+            0.35,
+            16
+          ],
+          [
+            0.7,
+            10
+          ],
+          [
+            1,
+            6
+          ]
+        ]
+      }
+    }
+  },
+  "copied_exports": {
+    "step": "model_snapshots/public-nasa-sr7l-propfan/public-nasa-sr7l-propfan.step",
+    "stl": "model_snapshots/public-nasa-sr7l-propfan/public-nasa-sr7l-propfan.stl",
+    "obj": "model_snapshots/public-nasa-sr7l-propfan/public-nasa-sr7l-propfan.obj",
+    "manifest": "model_snapshots/public-nasa-sr7l-propfan/public-nasa-sr7l-propfan.manifest.json"
+  },
+  "surface_count": 57
+}

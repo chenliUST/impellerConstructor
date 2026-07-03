@@ -9,10 +9,12 @@ import {
   presets,
   selectedPreset,
 } from "./appModel.js";
+import { buildTransitionOverridePayload } from "./edgeTreatmentModel.js";
 import { viewModeOptions } from "./simulationViewModel.js";
 import { defaultVisibleLayers } from "./workspaceModel.js";
 import { BladeCurveEditor } from "./components/BladeCurveEditor.js";
 import { CfdManifestPanel } from "./components/CfdManifestPanel.js";
+import { EdgeTreatmentPanel } from "./components/EdgeTreatmentPanel.js";
 import { GenerationStagePanel } from "./components/GenerationStagePanel.js";
 import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js";
 import { ManifestPanel } from "./components/ManifestPanel.js";
@@ -37,8 +39,9 @@ export function App() {
   const [selectedPatch, setSelectedPatch] = useState(null);
   const [autoRotate, setAutoRotate] = useState(false);
   const [visibleLayers, setVisibleLayers] = useState(defaultVisibleLayers);
-  const [profileOverrides, setProfileOverrides] = useState(null);
-  const [curveOverrides, setCurveOverrides] = useState(null);
+  const [profileOverrides, setProfileOverrides] = useState(() => clonePresetValue(firstPreset.profileOverrides));
+  const [curveOverrides, setCurveOverrides] = useState(() => clonePresetValue(firstPreset.curveOverrides));
+  const [transitionOverrides, setTransitionOverrides] = useState({});
   const [geometryStage, setGeometryStage] = useState("edge_closures");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -82,6 +85,7 @@ export function App() {
         profileOverrides,
         curveOverrides,
         geometryStage,
+        buildTransitionOverridePayload(transitionOverrides),
       );
       setManifest(run.manifest);
       setStlUrl(modelExportUrl(apiBase, run.run_id, "stl"));
@@ -101,8 +105,9 @@ export function App() {
     setManifest(null);
     setStlUrl("");
     setSelectedPatch(null);
-    setProfileOverrides(null);
-    setCurveOverrides(null);
+    setProfileOverrides(clonePresetValue(preset.profileOverrides));
+    setCurveOverrides(clonePresetValue(preset.curveOverrides));
+    setTransitionOverrides({});
     setGeometryStage("edge_closures");
   }
 
@@ -158,8 +163,9 @@ export function App() {
         onReset: () => {
           setParameters({ ...activePreset.parameters });
           setFacets({ ...activePreset.facets });
-          setProfileOverrides(null);
-          setCurveOverrides(null);
+          setProfileOverrides(clonePresetValue(activePreset.profileOverrides));
+          setCurveOverrides(clonePresetValue(activePreset.curveOverrides));
+          setTransitionOverrides({});
           setGeometryStage("edge_closures");
         },
         loading,
@@ -167,6 +173,11 @@ export function App() {
       h(GenerationStagePanel, {
         geometryStage,
         onChange: setGeometryStage,
+      }),
+      h(EdgeTreatmentPanel, {
+        manifest,
+        overrides: transitionOverrides,
+        onChange: setTransitionOverrides,
       }),
       h(ProfileCurveEditor, {
         manifest,
@@ -256,4 +267,8 @@ export function App() {
       }),
     }),
   );
+}
+
+function clonePresetValue(value) {
+  return value ? JSON.parse(JSON.stringify(value)) : null;
 }

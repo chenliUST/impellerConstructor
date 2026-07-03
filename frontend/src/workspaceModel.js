@@ -1,9 +1,16 @@
+import { isTransitionSurface } from "./meshOverlayModel.js";
+
 export const layerSchema = [
   { id: "shaded_surfaces", label: "Shaded surfaces" },
   { id: "hub_support", label: "Hub support" },
   { id: "tip_support", label: "Tip support" },
   { id: "blade_surfaces", label: "Blade surfaces" },
   { id: "edge_closures", label: "Edge closures" },
+  { id: "transition_surfaces", label: "Transition surfaces" },
+  { id: "mesh_edges", label: "Mesh edges" },
+  { id: "transition_mesh_edges", label: "Transition mesh edges" },
+  { id: "solid_context", label: "Solid context" },
+  { id: "fluid_boundary", label: "Fluid boundary" },
   { id: "surface_uv", label: "Surface UV" },
   { id: "blade_boundaries", label: "Blade boundaries" },
   { id: "passage_lines", label: "Passage lines" },
@@ -13,8 +20,17 @@ export function defaultVisibleLayers() {
   return Object.fromEntries(layerSchema.map((layer) => [layer.id, true]));
 }
 
-export function layerForSurface(surface = {}) {
+export function layerForSurface(surface = {}, meshManifest = null) {
   const cfdRole = surface.cfd_role || "";
+  if (isTransitionSurface(surface, meshManifest)) {
+    return "transition_surfaces";
+  }
+  if (surface.role === "solid_context" || cfdRole === "solid_context") {
+    return "solid_context";
+  }
+  if (surface.role === "fluid_boundary" || cfdRole === "fluid_boundary") {
+    return "fluid_boundary";
+  }
   if (surface.kind === "edge_closure_surface") {
     return "edge_closures";
   }
@@ -44,6 +60,8 @@ export function layerForSurface(surface = {}) {
   }
   return "shaded_surfaces";
 }
+
+export { isTransitionSurface } from "./meshOverlayModel.js";
 
 export function layerForConstructionFeature(feature) {
   const featureLayers = {

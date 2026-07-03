@@ -36,7 +36,39 @@ def build_surface_mesh_manifest(
             }
             for region in triangulation["triangle_regions"]
         ],
+        "transition_regions": build_transition_regions(surface_graph, triangulation["triangle_regions"]),
     }
+
+
+def build_transition_regions(
+    surface_graph: dict[str, Any],
+    triangle_regions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    surface_lookup = _surface_lookup(surface_graph)
+    edge_lookup = _edge_transition_lookup(surface_graph)
+    regions: list[dict[str, Any]] = []
+    for region in triangle_regions:
+        surface_id = region["surface_graph_id"]
+        surface = surface_lookup.get(surface_id, {})
+        edge_metadata = edge_lookup.get(surface_id, {})
+        edge_family = str(surface.get("edge_family") or edge_metadata.get("edge_family") or "")
+        transition_policy_id = str(
+            surface.get("transition_policy_id") or edge_metadata.get("transition_policy_id") or ""
+        )
+        if not edge_family and not transition_policy_id:
+            continue
+        regions.append(
+            {
+                "surface_graph_id": surface_id,
+                "feature_id": region["feature_id"],
+                "role": region["role"],
+                "edge_family": edge_family,
+                "transition_policy_id": transition_policy_id,
+                "triangle_start": region["triangle_start"],
+                "triangle_count": region["triangle_count"],
+            }
+        )
+    return regions
 
 
 def _triangle_area(points: list[list[float]]) -> float:
@@ -78,3 +110,34 @@ def _distance(first: tuple[float, float, float], second: tuple[float, float, flo
 
 def _length(vector: tuple[float, float, float]) -> float:
     return math.sqrt(vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2])
+
+
+def _surface_lookup(surface_graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(surface.get("id") or surface.get("surface_graph_id") or ""): surface
+        for surface in surface_graph.get("surfaces", [])
+        if isinstance(surface, dict)
+    }
+
+
+def _edge_transition_lookup(surface_graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for edge in surface_graph.get("edges", []):
+        if not isinstance(edge, dict):
+            continue
+        edge_family = str(edge.get("edge_family") or "")
+        transition_policy_id = str(edge.get("transition_policy_id") or "")
+        if not edge_family and not transition_policy_id:
+            continue
+        transition_surface_ids = edge.get("transition_surface_ids", [])
+        if not isinstance(transition_surface_ids, list):
+            continue
+        for surface_id in transition_surface_ids:
+            lookup.setdefault(
+                str(surface_id),
+                {
+                    "edge_family": edge_family,
+                    "transition_policy_id": transition_policy_id,
+                },
+            )
+    return lookup

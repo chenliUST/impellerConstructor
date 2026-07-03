@@ -1,6 +1,8 @@
 .worktrees/
 worktrees/
 .superpowers/
+.codex-local/
+Model Output/
 frontend/node_modules/
 runs/
 .pytest_cache/

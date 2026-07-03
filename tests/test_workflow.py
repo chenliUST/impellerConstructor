@@ -262,6 +262,10 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
     manifest = run.manifest
 
     assert manifest["dsl_version"] == "0.6"
+    assert "edge_families" not in manifest["geometry"]
+    assert "transition_policies" not in manifest["geometry"]
+    assert "edge_families" not in manifest["geometry_kernel"]
+    assert "transition_policies" not in manifest["geometry_kernel"]
     assert manifest["export_strategy"]["mode"] == "surface_graph_brep"
     step_manifest = manifest["export_manifests"]["step"]
     assert step_manifest["export_exactness"] == "surface_graph_support_face_brep_step"
@@ -293,6 +297,95 @@ def test_impeller_v06_exports_brep_step_and_model_output_files(tmp_path: Path):
     step_text = step_path.read_text(encoding="utf-8", errors="ignore")
     assert "ADVANCED_FACE" in step_text
     assert "TRIANGULATED_FACE_SET" not in step_text
+
+
+def test_impeller_v07_exports_bounded_step_and_no_default_mesh_step(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+    engine = service.synthesize("impeller", "radial_open_reference_v0_7")
+
+    run = service.instantiate(engine.engine_id, {})
+    manifest = run.manifest
+
+    assert manifest["dsl_version"] == "0.7"
+    assert manifest["export_strategy"]["mode"] == "surface_graph_bounded_brep"
+    assert manifest["export_strategy"]["cad_exports"] == "completed"
+    assert manifest["export_strategy"]["coverage_status"] == "partial_supported_surfaces"
+    assert manifest["export_strategy"]["cad_export_scope"] == "supported_bounded_brep_surfaces"
+    assert manifest["export_strategy"]["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
+    step_manifest = manifest["export_manifests"]["step"]
+    assert step_manifest["target_exactness"] == "surface_graph_trimmed_brep_step"
+    surface_count = len(manifest["geometry"]["surface_graph"]["surfaces"])
+    annular_plane_surfaces = [
+        surface
+        for surface in manifest["geometry"]["surface_graph"]["surfaces"]
+        if surface.get("kind") == "annular_plane_surface"
+    ]
+    assert step_manifest["coverage_status"] == "partial_supported_surfaces"
+    assert step_manifest["unsupported_surface_policy"] == "excluded_with_manifest_accounting"
+    assert step_manifest["total_surface_count"] == surface_count
+    assert step_manifest["supported_surface_count"] == len(annular_plane_surfaces)
+    assert step_manifest["unsupported_surface_count"] == surface_count - len(annular_plane_surfaces)
+    assert step_manifest["bounded_face_count"] == step_manifest["supported_surface_count"]
+    reimport_bbox = step_manifest["reimport_bbox"]
+    assert max(reimport_bbox["x_span_mm"], reimport_bbox["y_span_mm"], reimport_bbox["z_span_mm"]) < 5000.0
+    assert {"name": "finite_reimport_bbox", "status": "PASS"} in step_manifest["validation_checks"]
+    assert step_manifest["export_exactness"] == "surface_graph_trimmed_brep_step"
+    if len(annular_plane_surfaces) >= 2:
+        assert step_manifest["bounded_face_count"] >= 2
+    else:
+        # The current V0.7 bounded writer only promotes supported annular plane surfaces.
+        assert step_manifest["bounded_face_count"] > 0
+    assert set(manifest["exports"]) == {"step", "stl", "obj", "manifest"}
+    assert "mesh_step" not in manifest["exports"]
+    assert manifest["export_manifests"]["stl"]["export_exactness"] == "surface_graph_sampled_mesh"
+    assert manifest["export_manifests"]["obj"]["export_exactness"] == "surface_graph_obj_mesh"
+
+    step_path = Path(manifest["exports"]["step"])
+    obj_path = Path(manifest["exports"]["obj"])
+    assert step_path.exists()
+    assert obj_path.exists()
+    step_text = step_path.read_text(encoding="utf-8", errors="ignore")
+    obj_text = obj_path.read_text(encoding="utf-8")
+    assert "ADVANCED_FACE" in step_text
+    assert "TRIANGULATED_FACE_SET" not in step_text
+    assert "10000" not in step_text
+    assert "\nv " in obj_text
+    assert "\nf " in obj_text
+
+
+def test_impeller_v07_open_and_closed_workflows_include_transitions_bounded_step_and_obj(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+
+    for preset_id in ["radial_open_reference_v0_7", "radial_closed_reference_v0_7"]:
+        engine = service.synthesize("impeller", preset_id)
+        run = service.instantiate(engine.engine_id, {})
+        manifest = run.manifest
+
+        assert manifest["dsl_version"] == "0.7"
+        assert manifest["transition_policies"]
+        assert manifest["edge_families"]
+        assert manifest["geometry"]["transition_policies"]
+        assert manifest["geometry"]["edge_families"]
+        assert set(manifest["exports"]) == {"step", "stl", "obj", "manifest"}
+        for export_path in manifest["exports"].values():
+            assert Path(export_path).exists()
+
+        step_manifest = manifest["export_manifests"]["step"]
+        assert step_manifest["bounded_face_count"] > 0
+        assert step_manifest["reimport_bbox"]
+        assert {"name": "finite_reimport_bbox", "status": "PASS"} in step_manifest["validation_checks"]
+
+        obj_manifest = manifest["export_manifests"]["obj"]
+        assert obj_manifest["triangle_count"] > 0
+
+        mesh_manifest = manifest["simulation_manifests"]["cfd_surface_mesh"]
+        obj_transition_regions = obj_manifest["transition_regions"]
+        mesh_transition_regions = mesh_manifest["transition_regions"]
+        assert obj_transition_regions
+        assert len(obj_transition_regions) == len(mesh_transition_regions)
+        assert {region["surface_graph_id"] for region in obj_transition_regions} == {
+            region["surface_graph_id"] for region in mesh_transition_regions
+        }
 
 
 def test_api_default_v06_exports_copy_to_cwd_model_output(tmp_path: Path, monkeypatch):
