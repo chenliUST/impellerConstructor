@@ -44,6 +44,14 @@ def _geometry_for_v08(
     )
 
 
+def _geometry_for_v09(
+    transition_overrides: dict | None = None,
+    *,
+    preset_name: str = "radial_open_reference_v0_9",
+) -> dict:
+    return _geometry_for_v08(transition_overrides, preset_name=preset_name)
+
+
 def _surface_by_id(geometry: dict, surface_id: str) -> dict:
     return {
         surface["id"]: surface
@@ -850,6 +858,82 @@ def test_v08_disabled_blade_root_transition_restores_sharp_boundary():
     ]
     assert "hub_root" not in surfaces["blade_0_pressure_surface"].get("trimmed_boundaries", {})
     assert "hub_root" not in surfaces["blade_0_suction_surface"].get("trimmed_boundaries", {})
+
+
+def test_v09_blade_root_generates_pressure_and_suction_transition_surfaces():
+    geometry = _geometry_for_v09()
+
+    graph = geometry["surface_graph"]
+    surfaces = {surface["id"]: surface for surface in graph["surfaces"]}
+    pressure_root = surfaces["blade_0_pressure_root_transition_surface"]
+    suction_root = surfaces["blade_0_suction_root_transition_surface"]
+    pressure = surfaces["blade_0_pressure_surface"]
+    suction = surfaces["blade_0_suction_surface"]
+    hub = surfaces["hub_revolve_surface"]
+
+    assert graph["transition_geometry_status"] == "validated_transition_surface_graph"
+    assert "blade_0_root_transition_surface" not in surfaces
+    assert pressure_root["edge_treatment_site_id"] == "blade_0.pressure_root_to_hub"
+    assert suction_root["edge_treatment_site_id"] == "blade_0.suction_root_to_hub"
+    assert pressure_root["role"] == "blade_pressure_root_fillet"
+    assert suction_root["role"] == "blade_suction_root_fillet"
+    assert pressure_root["transition_geometry"] == "validated_fillet_patch"
+    assert suction_root["transition_geometry"] == "validated_fillet_patch"
+    assert pressure_root["transition_quality"]["convexity_status"] == "PASS"
+    assert suction_root["transition_quality"]["convexity_status"] == "PASS"
+    assert pressure["trimmed_boundaries"]["hub_root_pressure"]["edge_treatment_site_id"] == "blade_0.pressure_root_to_hub"
+    assert suction["trimmed_boundaries"]["hub_root_suction"]["edge_treatment_site_id"] == "blade_0.suction_root_to_hub"
+    assert {
+        region["edge_treatment_site_id"]
+        for region in hub["trim_exclusion_regions"]
+    } >= {"blade_0.pressure_root_to_hub", "blade_0.suction_root_to_hub"}
+    assert {
+        site["edge_treatment_site_id"]
+        for site in graph["edge_treatment_sites"]
+        if site["edge_family"] == "blade_root_to_hub"
+    } >= {"blade_0.pressure_root_to_hub", "blade_0.suction_root_to_hub"}
+
+
+def test_v09_blade_root_radius_override_changes_both_side_transition_surfaces():
+    baseline = _geometry_for_v09()
+    enlarged = _geometry_for_v09(
+        transition_overrides={
+            "blade_root_to_hub.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": 18.0,
+            }
+        }
+    )
+
+    for side in ["pressure", "suction"]:
+        surface_id = f"blade_0_{side}_root_transition_surface"
+        baseline_surface = _surface_by_id(baseline, surface_id)
+        enlarged_surface = _surface_by_id(enlarged, surface_id)
+        assert baseline_surface["radius_mm"] == 8.0
+        assert enlarged_surface["radius_mm"] == 18.0
+        assert _grid_digest(enlarged_surface) != _grid_digest(baseline_surface)
+
+
+def test_v09_disabled_blade_root_transition_generates_no_phantom_surfaces():
+    geometry = _geometry_for_v09(
+        transition_overrides={
+            "blade_root_to_hub.default": {
+                "enabled": False,
+                "treatment": "none",
+                "radius_mm": 0.0,
+            }
+        }
+    )
+
+    surfaces = {surface["id"]: surface for surface in geometry["surface_graph"]["surfaces"]}
+    assert not [
+        surface_id
+        for surface_id in surfaces
+        if surface_id.endswith("_root_transition_surface")
+    ]
+    assert "hub_root_pressure" not in surfaces["blade_0_pressure_surface"].get("trimmed_boundaries", {})
+    assert "hub_root_suction" not in surfaces["blade_0_suction_surface"].get("trimmed_boundaries", {})
 
 
 def test_v08_root_infeasible_radius_clears_stale_adjacent_trim_metadata():

@@ -19,6 +19,7 @@ def build_transition_aware_mesh(
     triangles: list[dict[str, Any]] = []
     regions: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    trimmed_cells: list[dict[str, Any]] = []
     included_surface_ids: list[str] = []
     excluded_surface_ids: list[str] = []
     surface_lookup = _surface_lookup(surface_graph)
@@ -37,8 +38,20 @@ def build_transition_aware_mesh(
 
         start = len(triangles)
         v_count = len(grid[0])
+        trim_regions = _trim_exclusion_regions(surface)
         for u_index in range(len(grid) - 1):
             for v_index in range(v_count - 1):
+                trim_region = _trim_region_for_cell(trim_regions, u_index, v_index)
+                if trim_region is not None:
+                    trimmed_cells.append(
+                        {
+                            "surface_graph_id": surface_id,
+                            "u_index": u_index,
+                            "v_index": v_index,
+                            **trim_region,
+                        }
+                    )
+                    continue
                 a = _point(grid[u_index][v_index])
                 b = _point(grid[u_index + 1][v_index])
                 c = _point(grid[u_index + 1][v_index + 1])
@@ -85,9 +98,10 @@ def build_transition_aware_mesh(
         site_lookup,
         edge_lookup,
     )
+    validated = surface_graph.get("transition_geometry_status") == "validated_transition_surface_graph"
     return {
-        "mesh_type": "transition_aware_surface_mesh",
-        "source": "transition_resolved_surface_graph",
+        "mesh_type": "validated_transition_aware_surface_mesh" if validated else "transition_aware_surface_mesh",
+        "source": "validated_transition_surface_graph" if validated else "transition_resolved_surface_graph",
         "view": view_id,
         "triangles": triangles,
         "triangle_count": len(triangles),
@@ -95,10 +109,78 @@ def build_transition_aware_mesh(
         "transition_regions": transition_regions,
         "included_surface_ids": included_surface_ids,
         "excluded_surface_ids": excluded_surface_ids,
+        "trimmed_cell_count": len(trimmed_cells),
+        "trimmed_cells": trimmed_cells,
+        "trimmed_cell_regions": _trimmed_cell_regions(trimmed_cells),
         "skipped_triangle_count": len(skipped),
         "skipped_triangle_reasons": dict(sorted(skipped_reasons.items())),
         "skipped_triangles": skipped,
     }
+
+
+def _trim_exclusion_regions(surface: dict[str, Any]) -> list[dict[str, Any]]:
+    regions = surface.get("trim_exclusion_regions", [])
+    if not isinstance(regions, list):
+        return []
+    normalized = []
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        normalized.append(
+            {
+                "edge_treatment_site_id": str(region.get("edge_treatment_site_id", "")),
+                "edge_family": str(region.get("edge_family", "")),
+                "transition_surface_id": str(region.get("transition_surface_id", "")),
+                "u_index_start": int(region.get("u_index_start", 0)),
+                "u_index_end": int(region.get("u_index_end", 0)),
+                "v_index_start": int(region.get("v_index_start", 0)),
+                "v_index_end": int(region.get("v_index_end", 0)),
+            }
+        )
+    return normalized
+
+
+def _trim_region_for_cell(
+    regions: list[dict[str, Any]],
+    u_index: int,
+    v_index: int,
+) -> dict[str, Any] | None:
+    for region in regions:
+        if (
+            region["u_index_start"] <= u_index < region["u_index_end"]
+            and region["v_index_start"] <= v_index < region["v_index_end"]
+        ):
+            return region
+    return None
+
+
+def _trimmed_cell_regions(trimmed_cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for cell in trimmed_cells:
+        key = (
+            cell["surface_graph_id"],
+            cell["edge_treatment_site_id"],
+            cell["edge_family"],
+            cell["transition_surface_id"],
+            cell["u_index_start"],
+            cell["u_index_end"],
+            cell["v_index_start"],
+            cell["v_index_end"],
+        )
+        if key not in grouped:
+            grouped[key] = {
+                "surface_graph_id": cell["surface_graph_id"],
+                "edge_treatment_site_id": cell["edge_treatment_site_id"],
+                "edge_family": cell["edge_family"],
+                "transition_surface_id": cell["transition_surface_id"],
+                "u_index_start": cell["u_index_start"],
+                "u_index_end": cell["u_index_end"],
+                "v_index_start": cell["v_index_start"],
+                "v_index_end": cell["v_index_end"],
+                "cell_count": 0,
+            }
+        grouped[key]["cell_count"] += 1
+    return list(grouped.values())
 
 
 def _transition_regions(

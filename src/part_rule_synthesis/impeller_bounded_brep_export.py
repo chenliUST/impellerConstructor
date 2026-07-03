@@ -11,6 +11,8 @@ BOUNDED_STEP_EXACTNESS = "surface_graph_trimmed_brep_step"
 DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS = "surface_graph_bounded_unsewn_brep_step"
 TRANSITION_RESOLVED_STEP_EXACTNESS = "transition_resolved_trimmed_brep_step"
 TRANSITION_RESOLVED_BOUNDED_UNSEWN_EXACTNESS = "transition_resolved_bounded_unsewn_brep_step"
+VALIDATED_TRANSITION_STEP_EXACTNESS = "surface_graph_trimmed_brep_step"
+VALIDATED_TRANSITION_BOUNDED_UNSEWN_EXACTNESS = "validated_bounded_unsewn_review_brep_step"
 FINITE_REIMPORT_BBOX_MAX_SPAN_MM = 5000.0
 _STEP_NUMBER_PATTERN = re.compile(
     r"(?<![#A-Za-z0-9_.])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?(?![A-Za-z0-9_.])"
@@ -86,6 +88,74 @@ def _face_from_surface_graph_surface(surface: dict[str, Any], surface_id: str):
     if kind == "cylindrical_surface":
         return _make_cylindrical_face(surface)
     return _make_bspline_face_from_uv_grid(surface, surface_id)
+
+
+def _face_records_from_surface_graph_surface(
+    surface: dict[str, Any],
+    surface_id: str,
+) -> tuple[list[tuple[Any, dict[str, Any]]], list[dict[str, Any]]]:
+    trim_regions = _trim_exclusion_regions(surface)
+    if not trim_regions:
+        return [_face_from_surface_graph_surface(surface, surface_id)], []
+    kind = str(surface.get("kind") or "")
+    if kind in {"annular_plane_surface", "cylindrical_surface"}:
+        return [_face_from_surface_graph_surface(surface, surface_id)], []
+    return _split_trim_excluded_sampled_surface_faces(surface, surface_id, trim_regions)
+
+
+def _split_trim_excluded_sampled_surface_faces(
+    surface: dict[str, Any],
+    surface_id: str,
+    trim_regions: list[dict[str, Any]],
+) -> tuple[list[tuple[Any, dict[str, Any]]], list[dict[str, Any]]]:
+    uv_grid = _rectangular_uv_grid(surface.get("uv_grid"), surface_id)
+    records: list[tuple[Any, dict[str, Any]]] = []
+    excluded_cells: list[dict[str, Any]] = []
+    excluded_cell_set: set[tuple[int, int]] = set()
+    for u_index in range(len(uv_grid) - 1):
+        for v_index in range(len(uv_grid[0]) - 1):
+            trim_region = _trim_region_for_cell(trim_regions, u_index, v_index)
+            if trim_region is not None:
+                excluded_cell_set.add((u_index, v_index))
+                excluded_cells.append(
+                    {
+                        "surface_graph_id": surface_id,
+                        "u_index": u_index,
+                        "v_index": v_index,
+                        **trim_region,
+                    }
+                )
+    for rectangle in _untrimmed_cell_rectangles(len(uv_grid), len(uv_grid[0]), excluded_cell_set):
+        u_start, u_end, v_start, v_end = rectangle
+        patch_grid = [
+            row[v_start : v_end + 1]
+            for row in uv_grid[u_start : u_end + 1]
+        ]
+        patch_surface = {
+            **surface,
+            "trim_exclusion_regions": [],
+            "uv_grid": patch_grid,
+        }
+        face, metadata = _make_bspline_face_from_uv_grid(
+            patch_surface,
+            f"{surface_id}[u{u_start}:{u_end},v{v_start}:{v_end}]",
+        )
+        records.append(
+            (
+                face,
+                {
+                    **metadata,
+                    "trim_split_patch": True,
+                    "u_index": u_start,
+                    "v_index": v_start,
+                    "u_index_start": u_start,
+                    "u_index_end": u_end,
+                    "v_index_start": v_start,
+                    "v_index_end": v_end,
+                },
+            )
+        )
+    return records, excluded_cells
 
 
 def _make_cylindrical_face(surface: dict[str, Any]):
@@ -288,6 +358,79 @@ def _sample_indices(count: int, max_count: int) -> list[int]:
     return sorted(indices)
 
 
+def _trim_exclusion_regions(surface: dict[str, Any]) -> list[dict[str, Any]]:
+    regions = surface.get("trim_exclusion_regions", [])
+    if not isinstance(regions, list):
+        return []
+    normalized = []
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        normalized.append(
+            {
+                "edge_treatment_site_id": str(region.get("edge_treatment_site_id", "")),
+                "edge_family": str(region.get("edge_family", "")),
+                "transition_surface_id": str(region.get("transition_surface_id", "")),
+                "u_index_start": int(region.get("u_index_start", 0)),
+                "u_index_end": int(region.get("u_index_end", 0)),
+                "v_index_start": int(region.get("v_index_start", 0)),
+                "v_index_end": int(region.get("v_index_end", 0)),
+            }
+        )
+    return normalized
+
+
+def _trim_region_for_cell(
+    regions: list[dict[str, Any]],
+    u_index: int,
+    v_index: int,
+) -> dict[str, Any] | None:
+    for region in regions:
+        if (
+            region["u_index_start"] <= u_index < region["u_index_end"]
+            and region["v_index_start"] <= v_index < region["v_index_end"]
+        ):
+            return region
+    return None
+
+
+def _untrimmed_cell_rectangles(
+    u_point_count: int,
+    v_point_count: int,
+    excluded_cells: set[tuple[int, int]],
+) -> list[tuple[int, int, int, int]]:
+    u_cell_count = max(0, u_point_count - 1)
+    v_cell_count = max(0, v_point_count - 1)
+    visited: set[tuple[int, int]] = set()
+    rectangles: list[tuple[int, int, int, int]] = []
+    for u_index in range(u_cell_count):
+        for v_index in range(v_cell_count):
+            if (u_index, v_index) in excluded_cells or (u_index, v_index) in visited:
+                continue
+            v_end_cell = v_index
+            while (
+                v_end_cell + 1 < v_cell_count
+                and (u_index, v_end_cell + 1) not in excluded_cells
+                and (u_index, v_end_cell + 1) not in visited
+            ):
+                v_end_cell += 1
+            u_end_cell = u_index
+            can_expand = True
+            while can_expand and u_end_cell + 1 < u_cell_count:
+                candidate_u = u_end_cell + 1
+                for candidate_v in range(v_index, v_end_cell + 1):
+                    if (candidate_u, candidate_v) in excluded_cells or (candidate_u, candidate_v) in visited:
+                        can_expand = False
+                        break
+                if can_expand:
+                    u_end_cell = candidate_u
+            for mark_u in range(u_index, u_end_cell + 1):
+                for mark_v in range(v_index, v_end_cell + 1):
+                    visited.add((mark_u, mark_v))
+            rectangles.append((u_index, u_end_cell + 1, v_index, v_end_cell + 1))
+    return rectangles
+
+
 def write_bounded_brep_step(
     step_path: Path,
     solid_name: str,
@@ -305,27 +448,34 @@ def write_bounded_brep_step(
     surface_kind_counts: Counter[str] = Counter()
     cad_surface_type_counts: Counter[str] = Counter()
     included_surface_ids: list[str] = []
+    trim_excluded_cells: list[dict[str, Any]] = []
+    trim_split_face_count = 0
     for surface_index, surface in enumerate(surface_graph.get("surfaces", [])):
         surface_id = str(surface.get("id") or surface.get("surface_graph_id") or f"surface_{surface_index}")
         kind = str(surface.get("kind") or "missing")
         surface_kind_counts[kind] += 1
 
-        face, face_metadata = _face_from_surface_graph_surface(surface, surface_id)
-        cad_surface_type_counts[str(face_metadata["cad_surface_type"])] += 1
-        faces.append(face)
-        included_surface_ids.append(surface_id)
-        face_regions.append(
-            {
-                "brep_face_id": f"face_{surface_index:04d}",
-                "face_index": surface_index,
-                "surface_graph_id": surface_id,
-                "feature_id": surface.get("feature_id"),
-                "role": surface.get("role"),
-                "kind": kind,
-                **_transition_region_metadata(surface),
-                **face_metadata,
-            }
-        )
+        records, excluded_cells = _face_records_from_surface_graph_surface(surface, surface_id)
+        trim_excluded_cells.extend(excluded_cells)
+        if len(records) > 1:
+            trim_split_face_count += len(records)
+        for face, face_metadata in records:
+            cad_surface_type_counts[str(face_metadata["cad_surface_type"])] += 1
+            faces.append(face)
+            if surface_id not in included_surface_ids:
+                included_surface_ids.append(surface_id)
+            face_regions.append(
+                {
+                    "brep_face_id": f"face_{len(face_regions):04d}",
+                    "face_index": len(face_regions),
+                    "surface_graph_id": surface_id,
+                    "feature_id": surface.get("feature_id"),
+                    "role": surface.get("role"),
+                    "kind": kind,
+                    **_transition_region_metadata(surface),
+                    **face_metadata,
+                }
+            )
 
     if not faces:
         raise ValueError("surface graph bounded brep export produced no faces")
@@ -360,20 +510,33 @@ def write_bounded_brep_step(
     complete_coverage = len(included_surface_ids) == len(surface_graph.get("surfaces", []))
     face_count_matches = reimport_face_count == len(faces)
     transition_resolved = surface_graph.get("transition_geometry_status") == "resolved_trimmed_surface_graph"
+    validated_transition = surface_graph.get("transition_geometry_status") == "validated_transition_surface_graph"
     export_exactness = (
         TRANSITION_RESOLVED_BOUNDED_UNSEWN_EXACTNESS
         if transition_resolved
+        else VALIDATED_TRANSITION_BOUNDED_UNSEWN_EXACTNESS
+        if validated_transition
         else DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS
     )
-    target_exactness = TRANSITION_RESOLVED_STEP_EXACTNESS if transition_resolved else BOUNDED_STEP_EXACTNESS
+    target_exactness = (
+        TRANSITION_RESOLVED_STEP_EXACTNESS
+        if transition_resolved
+        else VALIDATED_TRANSITION_STEP_EXACTNESS
+        if validated_transition
+        else BOUNDED_STEP_EXACTNESS
+    )
     coverage_status = (
         "complete_transition_resolved_surface_graph"
         if transition_resolved
+        else "complete_validated_transition_surface_graph"
+        if validated_transition
         else "complete_surface_graph_cad_surfaces"
     )
     cad_export_scope = (
         "all_transition_resolved_surface_graph_cad_surfaces"
         if transition_resolved
+        else "all_validated_transition_surface_graph_cad_surfaces"
+        if validated_transition
         else "all_surface_graph_cad_surfaces"
     )
 
@@ -394,9 +557,9 @@ def write_bounded_brep_step(
     failed_validation_checks = [
         str(check["name"]) for check in validation_checks if check.get("status") != "PASS"
     ]
-    if transition_resolved and failed_validation_checks:
+    if (transition_resolved or validated_transition) and failed_validation_checks:
         raise RuntimeError(
-            "transition-resolved bounded BREP export validation failed: "
+            "transition bounded BREP export validation failed: "
             + ", ".join(failed_validation_checks)
         )
 
@@ -406,7 +569,11 @@ def write_bounded_brep_step(
         "solid_name": solid_name,
         "export_exactness": export_exactness,
         "target_exactness": target_exactness,
-        **({"transition_geometry_status": surface_graph["transition_geometry_status"]} if transition_resolved else {}),
+        **(
+            {"transition_geometry_status": surface_graph["transition_geometry_status"]}
+            if transition_resolved or validated_transition
+            else {}
+        ),
         "step_writer": "occt_stepcontrol_writer",
         "bounded_face_count": len(faces),
         "reimport_face_count": reimport_face_count,
@@ -418,8 +585,11 @@ def write_bounded_brep_step(
         "unsupported_surface_policy": "fail_export",
         "total_surface_count": len(surface_graph.get("surfaces", [])),
         "supported_surface_count": len(faces),
-        "surface_count": len(faces),
+        "surface_count": len(included_surface_ids),
         "unsupported_surface_count": 0,
+        "trim_excluded_cell_count": len(trim_excluded_cells),
+        "trim_excluded_cells": trim_excluded_cells,
+        "trim_split_face_count": trim_split_face_count,
         "surface_kind_counts": dict(sorted(surface_kind_counts.items())),
         "cad_surface_type_counts": dict(sorted(cad_surface_type_counts.items())),
         "included_surface_ids": included_surface_ids,

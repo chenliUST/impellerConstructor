@@ -13,6 +13,10 @@ from part_rule_synthesis.impeller_cfd_manifest import build_cfd_full_360_manifes
 from part_rule_synthesis.impeller_bounded_brep_export import write_bounded_brep_step
 from part_rule_synthesis.impeller_brep_export import write_trimmed_brep_step
 from part_rule_synthesis.impeller_design_space import build_campaign_signature
+from part_rule_synthesis.impeller_geometry_validation import (
+    build_geometry_validation_report,
+    geometry_validation_blocks_export,
+)
 from part_rule_synthesis.impeller_kernel import build_impeller_geometry, blade_loft_wires, hub_loft_sections, shroud_z_levels
 from part_rule_synthesis.impeller_mesh_export import write_surface_graph_obj
 from part_rule_synthesis.impeller_mesh_manifest import build_surface_mesh_manifest
@@ -187,6 +191,12 @@ class RuleSynthesisService:
             edge_families=edge_families,
             transition_policies=transition_policies,
         )
+        geometry_validation_report = _v09_geometry_validation_report(
+            dsl,
+            bound,
+            geometry_metadata,
+            transition_policies,
+        )
         geometry_kernel = _geometry_kernel_metadata(
             dsl["part_family"],
             bound,
@@ -208,6 +218,7 @@ class RuleSynthesisService:
             geometry_stage=normalized_geometry_stage,
             dsl_context=dsl,
             geometry_metadata=geometry_metadata,
+            geometry_validation_report=geometry_validation_report,
             model_output_root=self.model_output_root,
         )
         export_strategy = _export_strategy(dsl["part_family"], dsl_context=dsl, export_manifests=export_manifests)
@@ -220,7 +231,7 @@ class RuleSynthesisService:
                 cfd_view,
                 blade_count=int(bound.get("blade_count", 0)),
             )
-        if dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.6", "0.7", "0.8"}:
+        if dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.6", "0.7", "0.8", "0.9"}:
             simulation_manifests["cfd_surface_mesh"] = build_surface_mesh_manifest(
                 geometry_metadata.get("surface_graph", {}),
                 view_id="cfd_full_360",
@@ -270,6 +281,20 @@ class RuleSynthesisService:
                 "mesh_strategy",
                 "transition_aware_surface_mesh",
             )
+            manifest["unsupported_transition_count"] = len(transition_failures)
+            manifest["transition_failure_count"] = len(transition_failures)
+        if manifest["dsl_version"] == "0.9":
+            manifest["geometry_version"] = "0.9"
+            manifest["transition_geometry_status"] = surface_graph.get("transition_geometry_status")
+            manifest["mesh_strategy"] = dsl.get("export_contract", {}).get(
+                "mesh_strategy",
+                "validated_transition_aware_surface_mesh",
+            )
+            manifest["geometry_validation_status"] = geometry_validation_report.get("geometry_validation_status")
+            manifest["geometry_validation_report"] = geometry_validation_report
+            manifest["kernel_capability_matrix_id"] = geometry_validation_report.get("kernel_capability_matrix_id")
+            manifest["capability_claim_level"] = geometry_validation_report.get("capability_claim_level")
+            manifest["unsupported_claims"] = geometry_validation_report.get("unsupported_claims", [])
             manifest["unsupported_transition_count"] = len(transition_failures)
             manifest["transition_failure_count"] = len(transition_failures)
         if transition_policies is not None:
@@ -802,6 +827,23 @@ def _geometry_validity_metadata(
     return geometry["validity"]
 
 
+def _v09_geometry_validation_report(
+    dsl: dict[str, Any],
+    parameters: dict[str, Any],
+    geometry_metadata: dict[str, Any],
+    transition_policies: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if dsl.get("part_family") != "impeller" or _dsl_version(dsl) != "0.9":
+        return {}
+    return build_geometry_validation_report(
+        parameters=parameters,
+        facets=dsl.get("facets", {}),
+        transition_policies=transition_policies or {},
+        surface_graph=geometry_metadata.get("surface_graph", {}),
+        capability_matrix_id=dsl.get("kernel_capability_matrix_id", "impeller_v0_9_kernel_capabilities"),
+    )
+
+
 def _impeller_geometry_options(dsl_context: dict[str, Any] | None) -> dict[str, Any]:
     dsl_context = dsl_context or {}
     return {
@@ -916,18 +958,25 @@ def _write_exports(
     geometry_stage: str = "edge_closures",
     dsl_context: dict[str, Any] | None = None,
     geometry_metadata: dict[str, Any] | None = None,
+    geometry_validation_report: dict[str, Any] | None = None,
     model_output_root: Path | None = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     step = run_dir / f"{part_family}.step"
     stl = run_dir / f"{part_family}.stl"
     export_contract = (dsl_context or {}).get("export_contract", {})
-    bounded_brep_modes = {"surface_graph_bounded_brep", "transition_resolved_bounded_brep"}
+    bounded_brep_modes = {
+        "surface_graph_bounded_brep",
+        "transition_resolved_bounded_brep",
+        "validated_transition_bounded_brep",
+    }
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") in bounded_brep_modes:
         surface_graph = (geometry_metadata or {}).get("surface_graph")
         if not surface_graph:
             raise RuntimeError(f"{export_contract.get('mode')} export requires geometry.surface_graph")
         if export_contract.get("mode") == "transition_resolved_bounded_brep":
             _raise_on_transition_failures(surface_graph, geometry_metadata or {})
+        if export_contract.get("mode") == "validated_transition_bounded_brep":
+            _raise_on_geometry_validation_failures(geometry_validation_report or {})
         bounded_surface_graph = None
         export_surface_graph = surface_graph
         if _uses_legacy_supported_surface_accounting(export_contract):
@@ -989,6 +1038,14 @@ def _write_exports(
         else:
             brep_manifest = {
                 **brep_manifest,
+                "export_exactness": export_contract.get(
+                    "step_exactness",
+                    brep_manifest.get("export_exactness", "surface_graph_bounded_unsewn_brep_step"),
+                ),
+                "target_exactness": export_contract.get(
+                    "target_step_exactness",
+                    brep_manifest.get("target_exactness", "surface_graph_trimmed_brep_step"),
+                ),
                 "bounded_brep_status": "bounded_faces_unsewn",
                 "coverage_status": export_contract.get("coverage_status", brep_manifest.get("coverage_status")),
                 "cad_export_scope": export_contract.get("cad_export_scope", brep_manifest.get("cad_export_scope")),
@@ -1195,6 +1252,35 @@ def _raise_on_transition_failures(surface_graph: dict[str, Any], geometry_metada
     )
 
 
+def _raise_on_geometry_validation_failures(report: dict[str, Any]) -> None:
+    if not geometry_validation_blocks_export(report):
+        return
+    failures = report.get("blocking_failures", [])
+    details = []
+    for failure in failures[:8]:
+        if not isinstance(failure, Mapping):
+            details.append(str(failure))
+            continue
+        identifiers = [
+            str(failure[key])
+            for key in (
+                "surface_graph_id",
+                "edge_treatment_site_id",
+                "edge_family",
+                "transition_policy_id",
+                "reason",
+            )
+            if failure.get(key) is not None
+        ]
+        details.append(" | ".join(identifiers) if identifiers else json.dumps(dict(failure), sort_keys=True))
+    if len(failures) > len(details):
+        details.append(f"{len(failures) - len(details)} additional validation failures")
+    raise RuntimeError(
+        "geometry validation blocked validated transition bounded B-Rep export "
+        f"({len(failures)}): {'; '.join(details)}"
+    )
+
+
 def _format_transition_failure(source_name: str, failure: Any) -> str:
     if not isinstance(failure, Mapping):
         return f"{source_name}: {failure}"
@@ -1309,34 +1395,38 @@ def _export_strategy(
     export_manifests: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     export_contract = (dsl_context or {}).get("export_contract", {})
-    bounded_brep_modes = {"surface_graph_bounded_brep", "transition_resolved_bounded_brep"}
+    bounded_brep_modes = {
+        "surface_graph_bounded_brep",
+        "transition_resolved_bounded_brep",
+        "validated_transition_bounded_brep",
+    }
     if part_family in {"centrifugal_impeller", "impeller"} and export_contract.get("mode") in bounded_brep_modes:
         mode = export_contract.get("mode", "surface_graph_bounded_brep")
-        default_step_exactness = (
-            "transition_resolved_bounded_unsewn_brep_step"
-            if mode == "transition_resolved_bounded_brep"
-            else "surface_graph_bounded_unsewn_brep_step"
-        )
-        default_target_exactness = (
-            "transition_resolved_trimmed_brep_step"
-            if mode == "transition_resolved_bounded_brep"
-            else "surface_graph_trimmed_brep_step"
-        )
-        default_coverage_status = (
-            "complete_transition_resolved_surface_graph"
-            if mode == "transition_resolved_bounded_brep"
-            else "complete_surface_graph_cad_surfaces"
-        )
-        default_cad_export_scope = (
-            "all_transition_resolved_surface_graph_cad_surfaces"
-            if mode == "transition_resolved_bounded_brep"
-            else "all_surface_graph_cad_surfaces"
-        )
-        default_unsupported_surface_policy = (
-            "fail_export"
-            if mode == "transition_resolved_bounded_brep"
-            else "fail_export"
-        )
+        default_step_exactness_by_mode = {
+            "surface_graph_bounded_brep": "surface_graph_bounded_unsewn_brep_step",
+            "transition_resolved_bounded_brep": "transition_resolved_bounded_unsewn_brep_step",
+            "validated_transition_bounded_brep": "validated_bounded_unsewn_review_brep_step",
+        }
+        default_target_exactness_by_mode = {
+            "surface_graph_bounded_brep": "surface_graph_trimmed_brep_step",
+            "transition_resolved_bounded_brep": "transition_resolved_trimmed_brep_step",
+            "validated_transition_bounded_brep": "surface_graph_trimmed_brep_step",
+        }
+        default_coverage_status_by_mode = {
+            "surface_graph_bounded_brep": "complete_surface_graph_cad_surfaces",
+            "transition_resolved_bounded_brep": "complete_transition_resolved_surface_graph",
+            "validated_transition_bounded_brep": "complete_validated_transition_surface_graph",
+        }
+        default_cad_export_scope_by_mode = {
+            "surface_graph_bounded_brep": "all_surface_graph_cad_surfaces",
+            "transition_resolved_bounded_brep": "all_transition_resolved_surface_graph_cad_surfaces",
+            "validated_transition_bounded_brep": "all_validated_transition_surface_graph_cad_surfaces",
+        }
+        default_step_exactness = default_step_exactness_by_mode[mode]
+        default_target_exactness = default_target_exactness_by_mode[mode]
+        default_coverage_status = default_coverage_status_by_mode[mode]
+        default_cad_export_scope = default_cad_export_scope_by_mode[mode]
+        default_unsupported_surface_policy = "fail_export"
         coverage_status = export_contract.get("coverage_status", default_coverage_status)
         cad_export_scope = export_contract.get("cad_export_scope", default_cad_export_scope)
         unsupported_surface_policy = export_contract.get(

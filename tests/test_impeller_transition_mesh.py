@@ -85,3 +85,77 @@ def test_transition_aware_mesh_reports_closed_hood_and_tip_transitions():
     assert "hood_inlet_lip" in edge_families
     assert "hood_outlet_lip" in edge_families
     assert "blade_tip_or_shroud" in edge_families
+
+
+def test_validated_transition_mesh_skips_trim_excluded_cells():
+    surface_graph = {
+        "transition_geometry_status": "validated_transition_surface_graph",
+        "surfaces": [
+            {
+                "id": "hub_revolve_surface",
+                "role": "hub",
+                "uv_grid": [
+                    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                    [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+                ],
+                "trim_exclusion_regions": [
+                    {
+                        "edge_treatment_site_id": "blade_0.pressure_root_to_hub",
+                        "edge_family": "blade_root_to_hub",
+                        "transition_surface_id": "blade_0_pressure_root_transition_surface",
+                        "u_index_start": 0,
+                        "u_index_end": 1,
+                        "v_index_start": 0,
+                        "v_index_end": 1,
+                    }
+                ],
+            },
+            {
+                "id": "blade_0_pressure_root_transition_surface",
+                "role": "blade_pressure_root_fillet",
+                "edge_family": "blade_root_to_hub",
+                "edge_treatment_site_id": "blade_0.pressure_root_to_hub",
+                "transition_policy_id": "blade_root_to_hub.default",
+                "treatment": "fillet",
+                "radius_mm": 8.0,
+                "uv_grid": [
+                    [[0.0, 0.0, 0.2], [1.0, 0.0, 0.2]],
+                    [[0.0, 1.0, 0.2], [1.0, 1.0, 0.2]],
+                ],
+            },
+        ],
+        "edge_treatment_sites": [
+            {
+                "edge_treatment_site_id": "blade_0.pressure_root_to_hub",
+                "edge_family": "blade_root_to_hub",
+                "transition_policy_id": "blade_root_to_hub.default",
+                "treatment": "fillet",
+                "radius_mm": 8.0,
+                "adjacent_surface_ids": ["hub_revolve_surface"],
+                "transition_surface_ids": ["blade_0_pressure_root_transition_surface"],
+            }
+        ],
+    }
+
+    mesh = build_transition_aware_mesh(surface_graph)
+
+    assert mesh["mesh_type"] == "validated_transition_aware_surface_mesh"
+    assert mesh["trimmed_cell_count"] == 1
+    assert mesh["trimmed_cell_regions"] == [
+        {
+            "surface_graph_id": "hub_revolve_surface",
+            "edge_treatment_site_id": "blade_0.pressure_root_to_hub",
+            "edge_family": "blade_root_to_hub",
+            "transition_surface_id": "blade_0_pressure_root_transition_surface",
+            "u_index_start": 0,
+            "u_index_end": 1,
+            "v_index_start": 0,
+            "v_index_end": 1,
+            "cell_count": 1,
+        }
+    ]
+    assert all(triangle["surface_graph_id"] != "hub_revolve_surface" for triangle in mesh["triangles"])
+    assert any(
+        region["surface_graph_id"] == "blade_0_pressure_root_transition_surface"
+        for region in mesh["triangle_regions"]
+    )

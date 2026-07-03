@@ -39,6 +39,14 @@ def write_surface_graph_exports(
         "surface_count": len(triangulation["included_surface_ids"]),
         "included_surface_ids": triangulation["included_surface_ids"],
         "excluded_surface_ids": triangulation["excluded_surface_ids"],
+        **(
+            {
+                "trimmed_cell_count": triangulation["trimmed_cell_count"],
+                "trimmed_cell_regions": triangulation["trimmed_cell_regions"],
+            }
+            if "trimmed_cell_count" in triangulation
+            else {}
+        ),
         "skipped_triangle_count": triangulation["skipped_triangle_count"],
         "skipped_triangle_reasons": triangulation["skipped_triangle_reasons"],
     }
@@ -62,7 +70,10 @@ def write_surface_graph_exports(
 
 
 def _mesh_for_surface_graph(surface_graph: dict[str, Any], view_id: str) -> dict[str, Any]:
-    if surface_graph.get("transition_geometry_status") == "resolved_trimmed_surface_graph":
+    if surface_graph.get("transition_geometry_status") in {
+        "resolved_trimmed_surface_graph",
+        "validated_transition_surface_graph",
+    }:
         from part_rule_synthesis.impeller_transition_mesh import build_transition_aware_mesh
 
         return build_transition_aware_mesh(surface_graph, view_id=view_id)

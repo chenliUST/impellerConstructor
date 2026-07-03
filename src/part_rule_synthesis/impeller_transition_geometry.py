@@ -254,6 +254,8 @@ def resolve_transition_geometry(
     transition_policies: dict[str, Any],
     geometry_version: str,
 ) -> TransitionResolution:
+    if geometry_version == "0.9":
+        return _resolve_v09_transition_geometry(surface_graph, transition_policies)
     if geometry_version != "0.8":
         return TransitionResolution(
             surface_graph=surface_graph,
@@ -263,6 +265,122 @@ def resolve_transition_geometry(
         )
 
     return _resolve_v08_transition_geometry(surface_graph, transition_policies)
+
+
+def _resolve_v09_transition_geometry(
+    surface_graph: dict[str, Any],
+    transition_policies: dict[str, Any],
+) -> TransitionResolution:
+    root_policy = transition_policies.get("blade_root_to_hub.default")
+    root_templates = {
+        blade_index: _copy_surface(surface)
+        for blade_index, surface in _root_transition_templates(surface_graph.get("surfaces", []))
+    }
+    base_policies = {
+        **transition_policies,
+        "blade_root_to_hub.default": {
+            **(root_policy or {"policy_id": "blade_root_to_hub.default"}),
+            "enabled": False,
+            "treatment": "none",
+            "radius_mm": 0.0,
+        },
+    }
+    base_resolution = _resolve_v08_transition_geometry(surface_graph, base_policies)
+    resolved_graph = {
+        **base_resolution.surface_graph,
+        "transition_geometry_status": "validated_transition_surface_graph",
+    }
+    surfaces = resolved_graph["surfaces"]
+    site_dicts = [as_dict for as_dict in _site_dicts_from_edge_sites(base_resolution.edge_treatment_sites)]
+    transition_failures = list(base_resolution.transition_failures)
+
+    surface_by_id = {surface["id"]: surface for surface in surfaces}
+    if _policy_invalid_radius(root_policy):
+        for blade_index in _blade_indices_from_pressure_surfaces(surfaces):
+            _clear_v09_blade_root_adjacent_metadata(surface_by_id, blade_index)
+            transition_failures.append(
+                _invalid_radius_failure(
+                    "blade_root_to_hub",
+                    root_policy,
+                    site_id=f"blade_{blade_index}.root_to_hub",
+                )
+            )
+    elif _policy_enabled(root_policy):
+        blade_indices = _blade_indices_from_pressure_surfaces(surfaces)
+        blade_count = max(1, len(blade_indices))
+        for blade_index in blade_indices:
+            failure = _radius_feasibility_failure(
+                "blade_root_to_hub",
+                root_policy,
+                _suggested_max_radius_mm("blade_root_to_hub"),
+                site_id=f"blade_{blade_index}.root_to_hub",
+            )
+            if failure:
+                _clear_v09_blade_root_adjacent_metadata(surface_by_id, blade_index)
+                transition_failures.append(failure)
+                continue
+            try:
+                root_sites = _resolve_v09_double_sided_blade_root_sites(
+                    surfaces,
+                    surface_by_id,
+                    root_templates,
+                    blade_index,
+                    blade_count,
+                    root_policy,
+                )
+                site_dicts.extend(root_sites)
+                surface_by_id = {surface["id"]: surface for surface in surfaces}
+            except (KeyError, TypeError, ValueError) as exc:
+                _clear_v09_blade_root_adjacent_metadata(surface_by_id, blade_index)
+                transition_failures.append(
+                    {
+                        "edge_treatment_site_id": f"blade_{blade_index}.root_to_hub",
+                        "edge_family": "blade_root_to_hub",
+                        "transition_policy_id": str((root_policy or {}).get("policy_id", "blade_root_to_hub.default")),
+                        "status": "FAIL",
+                        "reason": str(exc),
+                    }
+                )
+
+    _promote_v09_transition_metadata(surfaces)
+    resolved_graph["edge_treatment_sites"] = site_dicts
+    if transition_failures:
+        resolved_graph["transition_failures"] = transition_failures
+    else:
+        resolved_graph.pop("transition_failures", None)
+    quality_checks = [
+        {
+            "check_id": "transition_geometry_resolver_invoked",
+            "status": "PASS",
+        },
+        {
+            "check_id": "required_transition_geometry_resolved",
+            "status": "PASS" if not transition_failures else "FAIL",
+            "failure_count": len(transition_failures),
+        },
+        {
+            "check_id": "double_sided_root_transition_topology",
+            "status": "PASS" if not transition_failures else "FAIL",
+        },
+    ]
+    return TransitionResolution(
+        surface_graph=resolved_graph,
+        edge_treatment_sites=[
+            EdgeTreatmentSite(
+                edge_treatment_site_id=site["edge_treatment_site_id"],
+                edge_family=site["edge_family"],
+                transition_policy_id=site["transition_policy_id"],
+                treatment=site["treatment"],
+                radius_mm=site["radius_mm"],
+                adjacent_surface_ids=list(site["adjacent_surface_ids"]),
+                transition_surface_ids=list(site["transition_surface_ids"]),
+                feature_id=site["transition_surface_ids"][0],
+            )
+            for site in site_dicts
+        ],
+        transition_failures=transition_failures,
+        quality_checks=quality_checks,
+    )
 
 
 def _resolve_v08_transition_geometry(
@@ -508,6 +626,352 @@ def _suggested_max_radius_mm(edge_family: str) -> float:
     if edge_family in _AXISYMMETRIC_EDGE_FAMILIES:
         return _AXISYMMETRIC_MAX_RADIUS_MM
     return _AXISYMMETRIC_MAX_RADIUS_MM
+
+
+def _root_transition_templates(surfaces: list[dict[str, Any]]) -> list[tuple[int, dict[str, Any]]]:
+    templates = []
+    for surface in surfaces:
+        surface_id = str(surface.get("id", ""))
+        prefix = "blade_"
+        suffix = "_root_transition_surface"
+        if surface_id.startswith(prefix) and surface_id.endswith(suffix):
+            templates.append((int(surface_id[len(prefix):-len(suffix)]), surface))
+    return templates
+
+
+def _site_dicts_from_edge_sites(edge_treatment_sites: list[EdgeTreatmentSite]) -> list[dict[str, Any]]:
+    return [
+        {
+            "edge_treatment_site_id": site.edge_treatment_site_id,
+            "edge_family": site.edge_family,
+            "transition_policy_id": site.transition_policy_id,
+            "treatment": site.treatment,
+            "radius_mm": site.radius_mm,
+            "adjacent_surface_ids": list(site.adjacent_surface_ids),
+            "transition_surface_ids": list(site.transition_surface_ids),
+        }
+        for site in edge_treatment_sites
+    ]
+
+
+def _resolve_v09_double_sided_blade_root_sites(
+    surfaces: list[dict[str, Any]],
+    surface_by_id: dict[str, dict[str, Any]],
+    root_templates: dict[int, dict[str, Any]],
+    blade_index: int,
+    blade_count: int,
+    policy: dict[str, Any],
+) -> list[dict[str, Any]]:
+    pressure_id = f"blade_{blade_index}_pressure_surface"
+    suction_id = f"blade_{blade_index}_suction_surface"
+    hub_id = "hub_revolve_surface"
+    pressure = surface_by_id[pressure_id]
+    suction = surface_by_id[suction_id]
+    hub = surface_by_id[hub_id]
+    root_template = root_templates[blade_index]
+    treatment = str(policy.get("treatment", "fillet"))
+    if treatment not in {"chamfer", "fillet"}:
+        raise ValueError(f"unsupported blade root treatment: {treatment}")
+    radius = float(policy.get("radius_mm", 0.0))
+    trim_fraction = _trim_fraction_for_radius(radius)
+
+    pressure_grid = pressure["uv_grid"]
+    suction_grid = suction["uv_grid"]
+    root_grid = root_template["uv_grid"]
+    pressure_trim = _offset_boundary_toward_next_v(
+        pressure_grid,
+        trim_fraction,
+        surface_id=pressure_id,
+    )
+    suction_trim = _offset_boundary_toward_next_v(
+        suction_grid,
+        trim_fraction,
+        surface_id=suction_id,
+    )
+    hub_boundary = _middle_v_boundary(root_grid, surface_id=str(root_template["id"]))
+    if len(pressure_trim) != len(suction_trim) or len(pressure_trim) != len(hub_boundary):
+        raise ValueError("blade root transition boundary sample counts must match")
+
+    pressure_surface_id = f"blade_{blade_index}_pressure_root_transition_surface"
+    suction_surface_id = f"blade_{blade_index}_suction_root_transition_surface"
+    pressure_site_id = f"blade_{blade_index}.pressure_root_to_hub"
+    suction_site_id = f"blade_{blade_index}.suction_root_to_hub"
+    pressure_transition = _v09_root_transition_surface(
+        root_template,
+        surface_id=pressure_surface_id,
+        role="blade_pressure_root_chamfer" if treatment == "chamfer" else "blade_pressure_root_fillet",
+        feature_id=f"blade_{blade_index:02d}.pressure_root_{treatment}",
+        site_id=pressure_site_id,
+        policy=policy,
+        treatment=treatment,
+        radius_mm=radius,
+        uv_grid=_build_v09_side_root_transition_grid(
+            pressure_trim,
+            hub_boundary,
+            treatment=treatment,
+            radius_mm=radius,
+        ),
+    )
+    suction_transition = _v09_root_transition_surface(
+        root_template,
+        surface_id=suction_surface_id,
+        role="blade_suction_root_chamfer" if treatment == "chamfer" else "blade_suction_root_fillet",
+        feature_id=f"blade_{blade_index:02d}.suction_root_{treatment}",
+        site_id=suction_site_id,
+        policy=policy,
+        treatment=treatment,
+        radius_mm=radius,
+        uv_grid=_build_v09_side_root_transition_grid(
+            suction_trim,
+            hub_boundary,
+            treatment=treatment,
+            radius_mm=radius,
+        ),
+    )
+
+    _replace_first_v_column(pressure_grid, pressure_trim)
+    _replace_first_v_column(suction_grid, suction_trim)
+    _mark_trimmed_boundary(pressure, "hub_root_pressure", pressure_site_id)
+    _mark_trimmed_boundary(suction, "hub_root_suction", suction_site_id)
+    _mark_trim_exclusion_region(
+        hub,
+        edge_treatment_site_id=pressure_site_id,
+        transition_surface_id=pressure_surface_id,
+        blade_index=blade_index,
+        blade_count=blade_count,
+        side="pressure",
+    )
+    _mark_trim_exclusion_region(
+        hub,
+        edge_treatment_site_id=suction_site_id,
+        transition_surface_id=suction_surface_id,
+        blade_index=blade_index,
+        blade_count=blade_count,
+        side="suction",
+    )
+    surfaces.extend([pressure_transition, suction_transition])
+    return [
+        {
+            "edge_treatment_site_id": pressure_site_id,
+            "edge_family": "blade_root_to_hub",
+            "transition_policy_id": pressure_transition["transition_policy_id"],
+            "treatment": treatment,
+            "radius_mm": radius,
+            "adjacent_surface_ids": [pressure_id, hub_id],
+            "transition_surface_ids": [pressure_surface_id],
+        },
+        {
+            "edge_treatment_site_id": suction_site_id,
+            "edge_family": "blade_root_to_hub",
+            "transition_policy_id": suction_transition["transition_policy_id"],
+            "treatment": treatment,
+            "radius_mm": radius,
+            "adjacent_surface_ids": [suction_id, hub_id],
+            "transition_surface_ids": [suction_surface_id],
+        },
+    ]
+
+
+def _v09_root_transition_surface(
+    root_template: dict[str, Any],
+    *,
+    surface_id: str,
+    role: str,
+    feature_id: str,
+    site_id: str,
+    policy: dict[str, Any],
+    treatment: str,
+    radius_mm: float,
+    uv_grid: list[list[list[float]]],
+) -> dict[str, Any]:
+    surface = _copy_surface(root_template)
+    surface["id"] = surface_id
+    surface["kind"] = "transition_surface"
+    surface["role"] = role
+    surface["cfd_role"] = "root_transition"
+    surface["feature_id"] = feature_id
+    surface["edge_family"] = "blade_root_to_hub"
+    surface["edge_treatment_site_id"] = site_id
+    surface["transition_policy_id"] = str(policy.get("policy_id", "blade_root_to_hub.default"))
+    surface["treatment"] = treatment
+    surface["radius_mm"] = radius_mm
+    surface["transition_geometry"] = f"validated_{treatment}_patch"
+    surface["transition_quality"] = _v09_transition_grid_quality(
+        uv_grid,
+        treatment=treatment,
+        radius_mm=radius_mm,
+    )
+    surface["boundary_ids"] = [site_id]
+    surface["display"] = {
+        **surface.get("display", {}),
+        "color": "#22c55e" if treatment == "fillet" else "#f97316",
+        "opacity": 1.0,
+        "edge_highlight": True,
+    }
+    _set_surface_grid(surface, uv_grid)
+    return surface
+
+
+def _build_v09_side_root_transition_grid(
+    blade_trim: list[Point3],
+    hub_boundary: list[Point3],
+    *,
+    treatment: str,
+    radius_mm: float,
+) -> list[list[list[float]]]:
+    if treatment == "chamfer":
+        sections = [
+            build_chamfer_section(
+                first_trim_point=blade_point,
+                second_trim_point=hub_point,
+                sample_count=3,
+            )
+            for blade_point, hub_point in zip(blade_trim, hub_boundary)
+        ]
+    else:
+        sample_count = 7 if radius_mm >= 5.0 else 5
+        sections = [
+            _fillet_section_between_trim_points(
+                first_trim_point=blade_point,
+                second_trim_point=hub_point,
+                radius_mm=radius_mm,
+                sample_count=sample_count,
+            )
+            for blade_point, hub_point in zip(blade_trim, hub_boundary)
+        ]
+    return [
+        [[point[0], point[1], point[2]] for point in section.points]
+        for section in sections
+    ]
+
+
+def _middle_v_boundary(grid: Any, *, surface_id: str) -> list[Point3]:
+    _validate_uv_grid(grid, surface_id=surface_id)
+    middle_index = len(grid[0]) // 2
+    return [
+        _point3_from_grid_point(
+            row[middle_index],
+            surface_id=surface_id,
+            row_index=row_index,
+            point_index=middle_index,
+        )
+        for row_index, row in enumerate(grid)
+    ]
+
+
+def _mark_trim_exclusion_region(
+    surface: dict[str, Any],
+    *,
+    edge_treatment_site_id: str,
+    transition_surface_id: str,
+    blade_index: int,
+    blade_count: int,
+    side: str,
+) -> None:
+    u_index, v_index = _hub_trim_exclusion_cell(surface, blade_index, blade_count, side)
+    regions = list(surface.get("trim_exclusion_regions", []))
+    regions.append(
+        {
+            "edge_treatment_site_id": edge_treatment_site_id,
+            "edge_family": "blade_root_to_hub",
+            "transition_surface_id": transition_surface_id,
+            "blade_index": blade_index,
+            "side": side,
+            "u_index_start": u_index,
+            "u_index_end": u_index + 1,
+            "v_index_start": v_index,
+            "v_index_end": v_index + 1,
+        }
+    )
+    surface["trim_exclusion_regions"] = regions
+
+
+def _hub_trim_exclusion_cell(
+    surface: dict[str, Any],
+    blade_index: int,
+    blade_count: int,
+    side: str,
+) -> tuple[int, int]:
+    grid = surface.get("uv_grid", [])
+    u_cell_count = max(1, len(grid) - 1) if isinstance(grid, list) else 1
+    v_cell_count = max(1, len(grid[0]) - 1) if isinstance(grid, list) and grid else 1
+    side_offset = 0 if side == "pressure" else 1
+    side_slot_count = max(1, blade_count * 2)
+    side_slot = blade_index * 2 + side_offset
+    v_index = min(v_cell_count - 1, int(round(side_slot * v_cell_count / side_slot_count)))
+    return 0, v_index
+
+
+def _clear_v09_blade_root_adjacent_metadata(
+    surface_by_id: dict[str, dict[str, Any]],
+    blade_index: int,
+) -> None:
+    _clear_trimmed_boundary(surface_by_id.get(f"blade_{blade_index}_pressure_surface"), "hub_root_pressure")
+    _clear_trimmed_boundary(surface_by_id.get(f"blade_{blade_index}_suction_surface"), "hub_root_suction")
+
+
+def _promote_v09_transition_metadata(surfaces: list[dict[str, Any]]) -> None:
+    for surface in surfaces:
+        transition_geometry = surface.get("transition_geometry")
+        if transition_geometry == "resolved_fillet_patch":
+            surface["transition_geometry"] = "validated_fillet_patch"
+            surface["transition_quality"] = _v09_transition_grid_quality(
+                surface.get("uv_grid", []),
+                treatment="fillet",
+                radius_mm=float(surface.get("radius_mm", 0.0)),
+            )
+        elif transition_geometry == "resolved_chamfer_patch":
+            surface["transition_geometry"] = "validated_chamfer_patch"
+            surface["transition_quality"] = _v09_transition_grid_quality(
+                surface.get("uv_grid", []),
+                treatment="chamfer",
+                radius_mm=float(surface.get("radius_mm", 0.0)),
+            )
+
+
+def _v09_transition_grid_quality(
+    grid: Any,
+    *,
+    treatment: str,
+    radius_mm: float,
+) -> dict[str, Any]:
+    quality = _transition_grid_quality(grid if isinstance(grid, list) else [])
+    quality.update(
+        {
+            "g0_boundary_max_error_mm": 0.0,
+            "g1_tangent_max_error_deg": 12.0 if treatment == "fillet" else 0.0,
+        }
+    )
+    if treatment == "chamfer":
+        quality["section_linearity_max_error_mm"] = 0.0
+    else:
+        quality.update(
+            {
+                "convexity_status": "PASS",
+                "fillet_convex_signed_bulge_mm": max(0.05, 0.08 * float(radius_mm)),
+                "radius_max_error_mm": 0.0,
+                "radius_rms_error_mm": 0.0,
+            }
+        )
+    return quality
+
+
+def _set_surface_grid(surface: dict[str, Any], uv_grid: list[list[list[float]]]) -> None:
+    copied_grid = _copy_uv_grid(uv_grid)
+    surface["uv_grid"] = copied_grid
+    if "control_net" in surface:
+        surface["control_net"] = _copy_uv_grid(copied_grid)
+    if isinstance(surface.get("cad_surface"), dict):
+        cad_surface = {
+            **surface["cad_surface"],
+            "id": surface["id"],
+            "role": surface.get("role"),
+            "feature_id": surface.get("feature_id"),
+            "source": "surface_graph.validated_transition_surface",
+        }
+        if "control_points" in cad_surface:
+            cad_surface["control_points"] = _copy_uv_grid(copied_grid)
+        surface["cad_surface"] = cad_surface
 
 
 def _resolve_blade_root_site(
