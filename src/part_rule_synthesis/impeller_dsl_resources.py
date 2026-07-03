@@ -38,6 +38,8 @@ class ImpellerDslBundle:
     simulation_view_refs: dict[str, str] = field(default_factory=dict)
     export_contracts: dict[str, dict[str, Any]] = field(default_factory=dict)
     export_contract_refs: dict[str, str] = field(default_factory=dict)
+    capability_matrices: dict[str, dict[str, Any]] = field(default_factory=dict)
+    golden_case_registries: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslBundle:
@@ -60,6 +62,16 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
         _load_export_contracts(dsl_root / "export_contracts")
         if (dsl_root / "export_contracts").exists()
         else ({}, {})
+    )
+    capability_matrices = (
+        _load_json_directory_by_id(dsl_root / "capability_matrices", "matrix_id")
+        if (dsl_root / "capability_matrices").exists()
+        else {}
+    )
+    golden_case_registries = (
+        _load_json_directory_by_id(dsl_root / "golden_cases", "registry_id")
+        if (dsl_root / "golden_cases").exists()
+        else {}
     )
     shape_controls = _read_json(dsl_root / "shape_controls" / "default_shape_controls.json")
     if "policies" not in shape_controls:
@@ -93,6 +105,8 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
         simulation_view_refs=simulation_view_refs,
         export_contracts=export_contracts,
         export_contract_refs=export_contract_refs,
+        capability_matrices=capability_matrices,
+        golden_case_registries=golden_case_registries,
     )
     _validate_bundle(bundle)
     return bundle
@@ -168,7 +182,7 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
         raise ValueError("impeller DSL schema constructor family mismatch")
     if bundle.schema["dsl_version"] in {"0.2", "0.3"} and bundle.shape_control_schema["default_stage"] != 1:
         raise ValueError("impeller v0.2/v0.3 shape control must default to stage 1")
-    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7", "0.8"} and "design_space" not in bundle.shape_controls:
+    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7", "0.8", "0.9"} and "design_space" not in bundle.shape_controls:
         raise ValueError("impeller v0.4+ shape controls must include design_space")
     if "hub_meridional_profile" not in bundle.shape_controls["target_entities"]:
         raise ValueError("default shape controls must include hub_meridional_profile")
@@ -189,8 +203,25 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
             raise ValueError(f"preset id mismatch: {preset_id}")
         if preset["constructor_id"] not in bundle.constructors:
             raise ValueError(f"preset {preset_id} references unknown constructor")
-    if bundle.schema["dsl_version"] in {"0.7", "0.8"}:
+    if bundle.schema["dsl_version"] in {"0.7", "0.8", "0.9"}:
         _validate_v07_edge_family_contracts(bundle)
+    if bundle.schema["dsl_version"] == "0.9":
+        _validate_v09_research_registries(bundle)
+
+
+def _validate_v09_research_registries(bundle: ImpellerDslBundle) -> None:
+    if "impeller_v0_9_kernel_capabilities" not in bundle.capability_matrices:
+        raise ValueError("impeller v0.9 missing kernel capability matrix")
+    if "impeller_v0_9_golden_cases" not in bundle.golden_case_registries:
+        raise ValueError("impeller v0.9 missing golden case registry")
+    allowed_status = {"supported", "partial", "research_grade", "unsupported"}
+    matrix = bundle.capability_matrices["impeller_v0_9_kernel_capabilities"]
+    for entry in matrix.get("capabilities", []):
+        if entry.get("status") not in allowed_status:
+            raise ValueError(f"impeller v0.9 capability has invalid status: {entry!r}")
+    registry = bundle.golden_case_registries["impeller_v0_9_golden_cases"]
+    if not (6 <= len(registry.get("cases", [])) <= 10):
+        raise ValueError("impeller v0.9 golden case registry must contain 6-10 cases")
 
 
 def _validate_v07_edge_family_contracts(bundle: ImpellerDslBundle) -> None:

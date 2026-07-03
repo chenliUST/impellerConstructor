@@ -7,7 +7,7 @@ from part_rule_synthesis.impeller_shape_control import normalize_shape_control_s
 from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 
 
-IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4", "v0_5", "v0_6", "v0_7", "v0_8")
+IMPELLER_DSL_VERSIONS = ("v0_2", "v0_3", "v0_4", "v0_5", "v0_6", "v0_7", "v0_8", "v0_9")
 
 IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
     "blade_count": {"min": 2, "max": 64},
@@ -83,7 +83,7 @@ def compile_impeller_runtime_preset(
         "loss_schema": bundle.loss_schema,
         "source_refs": preset.get("source_refs", []),
     }
-    if dsl_version in {"0.7", "0.8"}:
+    if dsl_version in {"0.7", "0.8", "0.9"}:
         edge_families = constructor.get("edge_families", {})
         runtime["edge_families"] = edge_families
         runtime["transition_policy_defaults"] = resolve_transition_policies(edge_families, parameters)
@@ -93,6 +93,15 @@ def compile_impeller_runtime_preset(
             "resolved_trimmed_surface_graph",
         )
         runtime["mesh_strategy"] = export_contract.get("mesh_strategy")
+    if dsl_version == "0.9":
+        runtime["geometry_version"] = preset.get("geometry_version", "0.9")
+        runtime["transition_geometry_status"] = preset.get(
+            "transition_geometry_status",
+            "validated_transition_surface_graph",
+        )
+        runtime["mesh_strategy"] = export_contract.get("mesh_strategy")
+        runtime["kernel_capability_matrix_id"] = "impeller_v0_9_kernel_capabilities"
+        runtime["golden_case_registry_id"] = "impeller_v0_9_golden_cases"
     return runtime
 
 
@@ -226,7 +235,7 @@ def _selected_rules(
     constructor: dict[str, Any],
     simulation_views: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
-    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7", "0.8"}:
+    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7", "0.8", "0.9"}:
         view_ids = simulation_views or constructor.get("simulation_views", {})
         export_contract_ids = constructor.get("export_contracts", {})
         return [

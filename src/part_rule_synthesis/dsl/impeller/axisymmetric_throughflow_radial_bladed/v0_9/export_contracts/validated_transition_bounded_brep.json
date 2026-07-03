@@ -1,0 +1,24 @@
+{
+  "contract_id": "validated_transition_bounded_brep",
+  "contract_version": "0.9",
+  "mode": "validated_transition_bounded_brep",
+  "default_view": "cad_review_360",
+  "step_exactness": "validated_bounded_unsewn_review_brep_step",
+  "target_step_exactness": "surface_graph_trimmed_brep_step",
+  "bounded_brep_status": "bounded_faces_unsewn",
+  "coverage_status": "complete_validated_transition_surface_graph",
+  "cad_export_scope": "all_validated_transition_surface_graph_cad_surfaces",
+  "unsupported_surface_policy": "fail_export",
+  "mesh_strategy": "validated_transition_aware_surface_mesh",
+  "requires": [
+    "validated_transition_surface_graph",
+    "double_sided_root_transition_surfaces",
+    "trim_exclusion_regions",
+    "transition_validation_report",
+    "validated_transition_aware_surface_mesh",
+    "bounded_faces",
+    "complete_surface_graph_coverage",
+    "finite_bounding_box",
+    "occt_reimport_check_when_available"
+  ]
+}
