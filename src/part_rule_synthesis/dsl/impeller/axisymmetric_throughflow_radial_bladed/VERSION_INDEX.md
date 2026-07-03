@@ -18,7 +18,7 @@ The versions are not replacements for one another. They are research checkpoints
 | `v0_5` | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful export contract, STL/STEP region provenance, AP242 tessellated STEP, 12-blade default baseline, and honest STEP fidelity labels. |
 | `v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | NURBS/analytic B-Rep support-face STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
 | `v0_7` | `radial_open_reference_v0_7`, `radial_closed_reference_v0_7` | Bounded B-Rep export contract, edge-family transition defaults, and runtime transition policy metadata. |
-| `v0_8` | `radial_open_reference_v0_8`, `radial_closed_reference_v0_8` | Additive transition-resolved B-Rep resource contract metadata and runtime transition-geometry status. |
+| `v0_8` | `radial_open_reference_v0_8`, `radial_closed_reference_v0_8` | Transition-resolved fillet/chamfer surface patches, trimming metadata, transition-aware mesh, routed STL/OBJ/STEP manifests, and frontend inspection controls. |
 
 ## Folder Contract
 
@@ -65,7 +65,7 @@ Legacy v0.4 studies remain loadable:
 engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
 ```
 
-v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests. v0.7 is implemented by the `v0_7/` folder, runtime compiler support, bounded B-Rep export contract resources, edge-family transition defaults, and lineage tests. v0.8 is implemented by the `v0_8/` folder, runtime compiler support, transition-resolved B-Rep contract resources, and lineage tests.
+v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests. v0.7 is implemented by the `v0_7/` folder, runtime compiler support, bounded B-Rep export contract resources, edge-family transition defaults, and lineage tests. v0.8 is implemented by the `v0_8/` folder, runtime compiler support, transition-resolved B-Rep contract resources, transition resolver routing, transition-aware mesh/export paths, frontend inspection controls, and lineage/workflow tests.
 
 ## Historical Git Tags
 
@@ -133,9 +133,15 @@ src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_7
 
 ## v0.8 Evidence
 
-The v0.8 resource line introduces additive transition-resolved contract metadata while
-preserving the v0.7 baseline geometry implementation:
+The v0.8 line is the first transition-resolved impeller geometry checkpoint. It routes
+the base `surface_graph` through a resolver that creates supported fillet/chamfer
+transition patches, records adjacent trimming metadata, feeds the transition-aware mesh,
+and sends the same resolved graph into STL/OBJ/STEP manifests and frontend inspection.
+The evidence also records the remaining boundary: bounded unsewn B-Rep shell, sampled
+transition geometry, and no solver-ready volume mesh.
 
 ```text
+docs/evidence/2026-07-03-impeller-v0-8-transition-resolved-geometry/README.md
+docs/superpowers/specs/2026-07-03-impeller-v0-8-transition-resolved-geometry-design.md
 src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_8/CHANGELOG.md
 ```
