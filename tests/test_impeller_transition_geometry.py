@@ -82,6 +82,7 @@ def test_v07_manifest_does_not_claim_transition_resolved_geometry():
     )
 
     assert geometry["surface_graph"].get("transition_geometry_status") != "resolved_trimmed_surface_graph"
+    assert "checks" not in geometry["validity"]
 
 
 def test_v08_blade_root_radius_override_changes_transition_geometry():

@@ -2563,6 +2563,9 @@ def _merge_transition_quality_checks(
     validity: dict[str, Any],
     quality_checks: list[dict[str, Any]],
 ) -> None:
+    if not quality_checks:
+        return
+
     checks = list(validity.get("checks", []))
     if not checks:
         checks.extend(validity.get("geometry_checks", []))
