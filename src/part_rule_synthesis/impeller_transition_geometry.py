@@ -45,6 +45,44 @@ class TransitionResolution:
     quality_checks: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class BladeEdgeSpec:
+    edge_family: str
+    surface_suffix: str
+    site_suffix: str
+    fillet_role: str
+    chamfer_role: str
+    axis: Literal["u0", "u1", "v1"]
+
+
+_BLADE_EDGE_SPECS = (
+    BladeEdgeSpec(
+        edge_family="blade_leading_edge",
+        surface_suffix="leading_transition_surface",
+        site_suffix="leading_edge",
+        fillet_role="blade_leading_edge_fillet",
+        chamfer_role="blade_leading_edge_chamfer",
+        axis="u0",
+    ),
+    BladeEdgeSpec(
+        edge_family="blade_trailing_edge",
+        surface_suffix="trailing_transition_surface",
+        site_suffix="trailing_edge",
+        fillet_role="blade_trailing_edge_fillet",
+        chamfer_role="blade_trailing_edge_chamfer",
+        axis="u1",
+    ),
+    BladeEdgeSpec(
+        edge_family="blade_tip_or_shroud",
+        surface_suffix="tip_transition_surface",
+        site_suffix="tip_or_shroud",
+        fillet_role="blade_tip_edge_fillet",
+        chamfer_role="blade_tip_edge_chamfer",
+        axis="v1",
+    ),
+)
+
+
 def build_fillet_section(
     *,
     first_trim_point: Point3,
@@ -203,6 +241,28 @@ def _resolve_v08_transition_geometry(
     else:
         _remove_surfaces_by_edge_family(surfaces, "blade_root_to_hub")
 
+    surface_by_id = {surface["id"]: surface for surface in surfaces}
+    blade_indices = _blade_indices_from_pressure_surfaces(surfaces)
+    for spec in _BLADE_EDGE_SPECS:
+        policy = transition_policies.get(f"{spec.edge_family}.default")
+        if not _policy_enabled(policy):
+            _remove_surfaces_by_edge_family(surfaces, spec.edge_family)
+            surface_by_id = {surface["id"]: surface for surface in surfaces}
+            continue
+        for blade_index in blade_indices:
+            try:
+                site_dicts.append(_resolve_blade_edge_site(surface_by_id, blade_index, policy, spec))
+            except (KeyError, TypeError, ValueError) as exc:
+                transition_failures.append(
+                    {
+                        "edge_treatment_site_id": f"blade_{blade_index}.{spec.site_suffix}",
+                        "edge_family": spec.edge_family,
+                        "transition_policy_id": str(policy.get("policy_id", f"{spec.edge_family}.default")),
+                        "status": "FAIL",
+                        "reason": str(exc),
+                    }
+                )
+
     quality_checks = [
         {
             "check_id": "transition_geometry_resolver_invoked",
@@ -323,6 +383,77 @@ def _resolve_blade_root_site(
     }
 
 
+def _resolve_blade_edge_site(
+    surface_by_id: dict[str, dict[str, Any]],
+    blade_index: int,
+    policy: dict[str, Any],
+    spec: BladeEdgeSpec,
+) -> dict[str, Any]:
+    pressure_id = f"blade_{blade_index}_pressure_surface"
+    suction_id = f"blade_{blade_index}_suction_surface"
+    transition_id = f"blade_{blade_index}_{spec.surface_suffix}"
+    site_id = f"blade_{blade_index}.{spec.site_suffix}"
+
+    pressure = surface_by_id[pressure_id]
+    suction = surface_by_id[suction_id]
+    transition = surface_by_id[transition_id]
+    treatment = str(policy.get("treatment", "fillet"))
+    if treatment not in {"chamfer", "fillet"}:
+        raise ValueError(f"unsupported {spec.edge_family} treatment: {treatment}")
+    radius = float(policy.get("radius_mm", 0.0))
+    trim_fraction = _trim_fraction_for_radius(radius)
+
+    pressure_grid = pressure["uv_grid"]
+    suction_grid = suction["uv_grid"]
+    pressure_trim = _offset_boundary_for_axis(
+        pressure_grid,
+        trim_fraction,
+        axis=spec.axis,
+        surface_id=pressure_id,
+    )
+    suction_trim = _offset_boundary_for_axis(
+        suction_grid,
+        trim_fraction,
+        axis=spec.axis,
+        surface_id=suction_id,
+    )
+    if len(pressure_trim) != len(suction_trim):
+        raise ValueError(
+            f"{pressure_id} and {suction_id} uv_grid {spec.axis} boundary sample counts must match"
+        )
+
+    transition_grid = _build_transition_grid(
+        pressure_trim,
+        suction_trim,
+        treatment=treatment,
+        radius_mm=radius,
+    )
+    _replace_boundary_for_axis(pressure_grid, pressure_trim, axis=spec.axis)
+    _replace_boundary_for_axis(suction_grid, suction_trim, axis=spec.axis)
+
+    transition["uv_grid"] = transition_grid
+    transition["edge_treatment_site_id"] = site_id
+    transition["edge_family"] = spec.edge_family
+    transition["transition_policy_id"] = str(policy.get("policy_id", f"{spec.edge_family}.default"))
+    transition["treatment"] = treatment
+    transition["radius_mm"] = radius
+    transition["transition_geometry"] = f"resolved_{treatment}_patch"
+    transition["role"] = spec.chamfer_role if treatment == "chamfer" else spec.fillet_role
+    transition["transition_quality"] = _transition_grid_quality(transition_grid)
+
+    _mark_trimmed_boundary(pressure, spec.site_suffix, site_id)
+    _mark_trimmed_boundary(suction, spec.site_suffix, site_id)
+    return {
+        "edge_treatment_site_id": site_id,
+        "edge_family": spec.edge_family,
+        "transition_policy_id": transition["transition_policy_id"],
+        "treatment": treatment,
+        "radius_mm": radius,
+        "adjacent_surface_ids": [pressure_id, suction_id],
+        "transition_surface_ids": [transition_id],
+    }
+
+
 def _copy_surface(surface: dict[str, Any]) -> dict[str, Any]:
     copied = {**surface}
     if "uv_grid" in copied:
@@ -396,6 +527,77 @@ def _offset_boundary_toward_next_v(
     return boundary
 
 
+def _offset_boundary_for_axis(
+    grid: list[list[list[float]]],
+    fraction: float,
+    *,
+    axis: Literal["u0", "u1", "v1"],
+    surface_id: str,
+) -> list[Point3]:
+    _validate_uv_grid(grid, surface_id=surface_id)
+    if axis == "u0":
+        if len(grid) < 2:
+            raise ValueError(f"{surface_id} uv_grid must contain at least 2 u rows")
+        return [
+            _lerp_point(
+                _point3_from_grid_point(point, surface_id=surface_id, row_index=0, point_index=point_index),
+                _point3_from_grid_point(grid[1][point_index], surface_id=surface_id, row_index=1, point_index=point_index),
+                fraction,
+            )
+            for point_index, point in enumerate(grid[0])
+        ]
+    if axis == "u1":
+        if len(grid) < 2:
+            raise ValueError(f"{surface_id} uv_grid must contain at least 2 u rows")
+        last_row_index = len(grid) - 1
+        previous_row_index = len(grid) - 2
+        return [
+            _lerp_point(
+                _point3_from_grid_point(point, surface_id=surface_id, row_index=last_row_index, point_index=point_index),
+                _point3_from_grid_point(
+                    grid[previous_row_index][point_index],
+                    surface_id=surface_id,
+                    row_index=previous_row_index,
+                    point_index=point_index,
+                ),
+                fraction,
+            )
+            for point_index, point in enumerate(grid[last_row_index])
+        ]
+    if axis == "v1":
+        return [
+            _lerp_point(
+                _point3_from_grid_point(row[-1], surface_id=surface_id, row_index=row_index, point_index=len(row) - 1),
+                _point3_from_grid_point(row[-2], surface_id=surface_id, row_index=row_index, point_index=len(row) - 2),
+                fraction,
+            )
+            for row_index, row in enumerate(grid)
+        ]
+    raise ValueError(f"unsupported boundary axis: {axis}")
+
+
+def _validate_uv_grid(grid: Any, *, surface_id: str) -> None:
+    if not isinstance(grid, list) or not grid:
+        raise ValueError(f"{surface_id} uv_grid must contain at least 1 u row")
+    expected_v_count: int | None = None
+    for row_index, row in enumerate(grid):
+        if not isinstance(row, list) or len(row) < 2:
+            raise ValueError(
+                f"{surface_id} uv_grid row {row_index} must contain at least 2 v points"
+            )
+        if expected_v_count is None:
+            expected_v_count = len(row)
+        elif len(row) != expected_v_count:
+            raise ValueError(f"{surface_id} uv_grid rows must contain consistent v point counts")
+        for point_index, point in enumerate(row):
+            _point3_from_grid_point(
+                point,
+                surface_id=surface_id,
+                row_index=row_index,
+                point_index=point_index,
+            )
+
+
 def _point3_from_grid_point(
     point: Any,
     *,
@@ -413,6 +615,25 @@ def _point3_from_grid_point(
 def _replace_first_v_column(grid: list[list[list[float]]], boundary: list[Point3]) -> None:
     for row, point in zip(grid, boundary):
         row[0] = [point[0], point[1], point[2]]
+
+
+def _replace_boundary_for_axis(
+    grid: list[list[list[float]]],
+    boundary: list[Point3],
+    *,
+    axis: Literal["u0", "u1", "v1"],
+) -> None:
+    if axis == "u0":
+        grid[0] = [[point[0], point[1], point[2]] for point in boundary]
+        return
+    if axis == "u1":
+        grid[-1] = [[point[0], point[1], point[2]] for point in boundary]
+        return
+    if axis == "v1":
+        for row, point in zip(grid, boundary):
+            row[-1] = [point[0], point[1], point[2]]
+        return
+    raise ValueError(f"unsupported boundary axis: {axis}")
 
 
 def _mark_trimmed_boundary(surface: dict[str, Any], key: str, site_id: str) -> None:
@@ -473,6 +694,40 @@ def _fillet_section_between_trim_points(
             "sample_count": sample_count,
         },
     )
+
+
+def _build_transition_grid(
+    pressure_trim: list[Point3],
+    suction_trim: list[Point3],
+    *,
+    treatment: str,
+    radius_mm: float,
+) -> list[list[list[float]]]:
+    if treatment == "chamfer":
+        sample_count = 3
+        sections = [
+            build_chamfer_section(
+                first_trim_point=first,
+                second_trim_point=second,
+                sample_count=sample_count,
+            )
+            for first, second in zip(pressure_trim, suction_trim)
+        ]
+    else:
+        sample_count = 7 if radius_mm >= 5.0 else 5
+        sections = [
+            _fillet_section_between_trim_points(
+                first_trim_point=first,
+                second_trim_point=second,
+                radius_mm=radius_mm,
+                sample_count=sample_count,
+            )
+            for first, second in zip(pressure_trim, suction_trim)
+        ]
+    return [
+        [[point[0], point[1], point[2]] for point in section.points]
+        for section in sections
+    ]
 
 
 def _unit_xy_midpoint_direction(first: Point3, second: Point3) -> Point3:

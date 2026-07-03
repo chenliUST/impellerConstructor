@@ -148,6 +148,115 @@ def test_v08_blade_root_transition_records_site_and_trimmed_adjacency():
     assert hub["trimmed_boundaries"]["blade_0_root"]["edge_treatment_site_id"] == "blade_0.root_to_hub"
 
 
+@pytest.mark.parametrize(
+    ("policy_id", "surface_id", "baseline_radius", "override_radius"),
+    [
+        ("blade_leading_edge.default", "blade_0_leading_transition_surface", 3.0, 9.0),
+        ("blade_trailing_edge.default", "blade_0_trailing_transition_surface", 2.0, 8.0),
+        ("blade_tip_or_shroud.default", "blade_0_tip_transition_surface", 2.0, 7.0),
+    ],
+)
+def test_v08_blade_edge_radius_overrides_change_transition_geometry(
+    policy_id,
+    surface_id,
+    baseline_radius,
+    override_radius,
+):
+    baseline = _geometry_for_v08()
+    enlarged = _geometry_for_v08(
+        transition_overrides={
+            policy_id: {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": override_radius,
+            }
+        },
+    )
+
+    baseline_surface = _surface_by_id(baseline, surface_id)
+    enlarged_surface = _surface_by_id(enlarged, surface_id)
+
+    assert baseline_surface["radius_mm"] == baseline_radius
+    assert enlarged_surface["radius_mm"] == override_radius
+    assert _grid_digest(enlarged_surface) != _grid_digest(baseline_surface)
+
+
+@pytest.mark.parametrize(
+    ("policy_id", "surface_id", "expected_role", "radius"),
+    [
+        (
+            "blade_leading_edge.default",
+            "blade_0_leading_transition_surface",
+            "blade_leading_edge_chamfer",
+            3.0,
+        ),
+        (
+            "blade_trailing_edge.default",
+            "blade_0_trailing_transition_surface",
+            "blade_trailing_edge_chamfer",
+            2.0,
+        ),
+        (
+            "blade_tip_or_shroud.default",
+            "blade_0_tip_transition_surface",
+            "blade_tip_edge_chamfer",
+            2.0,
+        ),
+    ],
+)
+def test_v08_blade_edge_chamfer_overrides_change_geometry_and_role(
+    policy_id,
+    surface_id,
+    expected_role,
+    radius,
+):
+    baseline = _geometry_for_v08()
+    chamfered = _geometry_for_v08(
+        transition_overrides={
+            policy_id: {
+                "enabled": True,
+                "treatment": "chamfer",
+                "radius_mm": radius,
+            }
+        },
+    )
+
+    baseline_surface = _surface_by_id(baseline, surface_id)
+    chamfered_surface = _surface_by_id(chamfered, surface_id)
+
+    assert chamfered_surface["role"] == expected_role
+    assert chamfered_surface["treatment"] == "chamfer"
+    assert _grid_digest(chamfered_surface) != _grid_digest(baseline_surface)
+
+
+def test_v08_blade_edge_transition_records_site_and_trimmed_adjacency():
+    geometry = _geometry_for_v08()
+
+    graph = geometry["surface_graph"]
+    surfaces = {surface["id"]: surface for surface in graph["surfaces"]}
+    leading = surfaces["blade_0_leading_transition_surface"]
+    pressure = surfaces["blade_0_pressure_surface"]
+    suction = surfaces["blade_0_suction_surface"]
+
+    assert leading["edge_treatment_site_id"] == "blade_0.leading_edge"
+    assert leading["edge_family"] == "blade_leading_edge"
+    assert leading["transition_policy_id"] == "blade_leading_edge.default"
+    assert leading["transition_geometry"] == "resolved_fillet_patch"
+    assert leading["transition_quality"]["has_resolved_patch"]
+    assert {
+        "edge_treatment_site_id": "blade_0.leading_edge",
+        "edge_family": "blade_leading_edge",
+        "transition_policy_id": "blade_leading_edge.default",
+        "treatment": "fillet",
+        "radius_mm": 3.0,
+        "adjacent_surface_ids": ["blade_0_pressure_surface", "blade_0_suction_surface"],
+        "transition_surface_ids": ["blade_0_leading_transition_surface"],
+        "feature_id": "blade_0_leading_transition_surface",
+    } in graph["edge_treatment_sites"]
+    assert pressure["trimmed_boundaries"]["leading_edge"]["edge_treatment_site_id"] == "blade_0.leading_edge"
+    assert suction["trimmed_boundaries"]["leading_edge"]["edge_treatment_site_id"] == "blade_0.leading_edge"
+
+
 def test_v08_disabled_blade_root_transition_restores_sharp_boundary():
     geometry = _geometry_for_v08(
         transition_overrides={
@@ -166,8 +275,8 @@ def test_v08_disabled_blade_root_transition_restores_sharp_boundary():
         for surface_id in surfaces
         if surface_id.startswith("blade_") and surface_id.endswith("_root_transition_surface")
     ]
-    assert "trimmed_boundaries" not in surfaces["blade_0_pressure_surface"]
-    assert "trimmed_boundaries" not in surfaces["blade_0_suction_surface"]
+    assert "hub_root" not in surfaces["blade_0_pressure_surface"].get("trimmed_boundaries", {})
+    assert "hub_root" not in surfaces["blade_0_suction_surface"].get("trimmed_boundaries", {})
 
 
 def test_v08_malformed_blade_root_grid_records_failure_without_partial_trim():
