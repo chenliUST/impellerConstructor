@@ -388,6 +388,46 @@ def test_impeller_v07_open_and_closed_workflows_include_transitions_bounded_step
         }
 
 
+def test_impeller_v08_open_workflow_exports_transition_resolved_artifacts(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+
+    engine = service.synthesize("impeller", "radial_open_reference_v0_8")
+    run = service.instantiate(engine.engine_id, {})
+    manifest = run.manifest
+    graph = manifest["geometry"]["surface_graph"]
+
+    assert manifest["dsl_version"] == "0.8"
+    assert manifest["geometry_version"] == "0.8"
+    assert manifest["transition_geometry_status"] == "resolved_trimmed_surface_graph"
+    assert graph["transition_geometry_status"] == "resolved_trimmed_surface_graph"
+    assert manifest["mesh_strategy"] == "transition_aware_surface_mesh"
+    assert manifest["unsupported_transition_count"] == 0
+    assert manifest["transition_failure_count"] == 0
+
+    mesh_manifest = manifest["simulation_manifests"]["cfd_surface_mesh"]
+    assert mesh_manifest["mesh_type"] == "transition_aware_surface_mesh"
+    assert any(region["edge_family"] == "blade_root_to_hub" for region in mesh_manifest["transition_regions"])
+
+    for export_key in ["stl", "obj"]:
+        export_manifest = manifest["export_manifests"][export_key]
+        assert export_manifest["mesh_type"] == "transition_aware_surface_mesh"
+        assert any(region["edge_family"] == "blade_root_to_hub" for region in export_manifest["transition_regions"])
+
+    step_manifest = manifest["export_manifests"]["step"]
+    assert step_manifest["export_exactness"] == "transition_resolved_bounded_unsewn_brep_step"
+    assert step_manifest["target_exactness"] == "transition_resolved_trimmed_brep_step"
+    assert step_manifest["transition_geometry_status"] == "resolved_trimmed_surface_graph"
+    assert step_manifest["coverage_status"] == "complete_transition_resolved_surface_graph"
+    assert step_manifest["cad_export_scope"] == "all_transition_resolved_surface_graph_cad_surfaces"
+    assert any(region.get("edge_family") == "blade_root_to_hub" for region in step_manifest["face_regions"])
+    assert manifest["export_strategy"]["mode"] == "transition_resolved_bounded_brep"
+    assert manifest["export_strategy"]["step_exactness"] == "transition_resolved_bounded_unsewn_brep_step"
+    assert manifest["export_strategy"]["target_step_exactness"] == "transition_resolved_trimmed_brep_step"
+    assert set(manifest["exports"]) == {"step", "stl", "obj", "manifest"}
+    for export_path in manifest["exports"].values():
+        assert Path(export_path).exists()
+
+
 def test_api_default_v06_exports_copy_to_cwd_model_output(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PART_RULE_SYNTHESIS_ROOT", raising=False)
