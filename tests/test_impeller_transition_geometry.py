@@ -10,6 +10,7 @@ from part_rule_synthesis.impeller_transition_geometry import (
     build_fillet_section,
     max_distance_from_line,
     max_radius_error,
+    resolve_transition_geometry,
 )
 from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 from part_rule_synthesis.service import (
@@ -140,6 +141,8 @@ def test_v08_blade_root_transition_records_site_and_trimmed_adjacency():
     assert root["edge_family"] == "blade_root_to_hub"
     assert root["transition_policy_id"] == "blade_root_to_hub.default"
     assert root["transition_geometry"] == "resolved_fillet_patch"
+    assert graph["edge_treatment_sites"][0]["edge_treatment_site_id"] == "blade_0.root_to_hub"
+    assert graph["edge_treatment_sites"][0]["transition_surface_ids"] == ["blade_0_root_transition_surface"]
     assert pressure["trimmed_boundaries"]["hub_root"]["edge_treatment_site_id"] == "blade_0.root_to_hub"
     assert suction["trimmed_boundaries"]["hub_root"]["edge_treatment_site_id"] == "blade_0.root_to_hub"
     assert hub["trimmed_boundaries"]["blade_0_root"]["edge_treatment_site_id"] == "blade_0.root_to_hub"
@@ -158,9 +161,73 @@ def test_v08_disabled_blade_root_transition_restores_sharp_boundary():
 
     graph = geometry["surface_graph"]
     surfaces = {surface["id"]: surface for surface in graph["surfaces"]}
-    assert "blade_0_root_transition_surface" not in surfaces
+    assert not [
+        surface_id
+        for surface_id in surfaces
+        if surface_id.startswith("blade_") and surface_id.endswith("_root_transition_surface")
+    ]
     assert "trimmed_boundaries" not in surfaces["blade_0_pressure_surface"]
     assert "trimmed_boundaries" not in surfaces["blade_0_suction_surface"]
+
+
+def test_v08_malformed_blade_root_grid_records_failure_without_partial_trim():
+    surface_graph = {
+        "surfaces": [
+            {
+                "id": "blade_0_pressure_surface",
+                "uv_grid": [
+                    [[10.0, 0.0, 0.0]],
+                    [[10.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "blade_0_suction_surface",
+                "uv_grid": [
+                    [[9.0, 0.0, 0.0], [8.0, 0.0, 0.0]],
+                    [[9.0, 1.0, 0.0], [8.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "blade_0_root_transition_surface",
+                "edge_family": "blade_root_to_hub",
+                "uv_grid": [],
+            },
+            {
+                "id": "hub_revolve_surface",
+                "uv_grid": [],
+            },
+        ],
+    }
+
+    resolution = resolve_transition_geometry(
+        surface_graph,
+        transition_policies={
+            "blade_root_to_hub.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": 8.0,
+            }
+        },
+        geometry_version="0.8",
+    )
+
+    surfaces = {
+        surface["id"]: surface
+        for surface in resolution.surface_graph["surfaces"]
+    }
+    assert resolution.transition_failures == [
+        {
+            "edge_treatment_site_id": "blade_0.root_to_hub",
+            "edge_family": "blade_root_to_hub",
+            "transition_policy_id": "blade_root_to_hub.default",
+            "status": "FAIL",
+            "reason": "blade_0_pressure_surface uv_grid row 0 must contain at least 2 v points",
+        }
+    ]
+    assert resolution.edge_treatment_sites == []
+    assert "trimmed_boundaries" not in surfaces["blade_0_pressure_surface"]
+    assert "trimmed_boundaries" not in surfaces["blade_0_suction_surface"]
+    assert surfaces["blade_0_pressure_surface"]["uv_grid"] == surface_graph["surfaces"][0]["uv_grid"]
 
 
 def test_build_fillet_section_samples_requested_radius_arc():

@@ -19,14 +19,22 @@ class TransitionSection:
 
 @dataclass
 class EdgeTreatmentSite:
-    site_id: str
+    edge_treatment_site_id: str
     edge_family: str
     transition_policy_id: str
     treatment: Treatment
     radius_mm: float
-    adjacent_surface_ids: tuple[str, ...]
-    transition_surface_id: str
+    adjacent_surface_ids: list[str]
+    transition_surface_ids: list[str]
     feature_id: str
+
+    @property
+    def site_id(self) -> str:
+        return self.edge_treatment_site_id
+
+    @property
+    def transition_surface_id(self) -> str:
+        return self.transition_surface_ids[0]
 
 
 @dataclass
@@ -182,7 +190,7 @@ def _resolve_v08_transition_geometry(
         for blade_index in _blade_indices_from_pressure_surfaces(surfaces):
             try:
                 site_dicts.append(_resolve_blade_root_site(surface_by_id, blade_index, policy))
-            except (KeyError, ValueError) as exc:
+            except (KeyError, TypeError, ValueError) as exc:
                 transition_failures.append(
                     {
                         "edge_treatment_site_id": f"blade_{blade_index}.root_to_hub",
@@ -209,13 +217,13 @@ def _resolve_v08_transition_geometry(
         surface_graph=resolved_graph,
         edge_treatment_sites=[
             EdgeTreatmentSite(
-                site_id=site["edge_treatment_site_id"],
+                edge_treatment_site_id=site["edge_treatment_site_id"],
                 edge_family=site["edge_family"],
                 transition_policy_id=site["transition_policy_id"],
                 treatment=site["treatment"],
                 radius_mm=site["radius_mm"],
-                adjacent_surface_ids=tuple(site["adjacent_surface_ids"]),
-                transition_surface_id=site["transition_surface_ids"][0],
+                adjacent_surface_ids=list(site["adjacent_surface_ids"]),
+                transition_surface_ids=list(site["transition_surface_ids"]),
                 feature_id=site["transition_surface_ids"][0],
             )
             for site in site_dicts
@@ -248,10 +256,20 @@ def _resolve_blade_root_site(
 
     pressure_grid = pressure["uv_grid"]
     suction_grid = suction["uv_grid"]
-    pressure_trim = _offset_boundary_toward_next_v(pressure_grid, trim_fraction)
-    suction_trim = _offset_boundary_toward_next_v(suction_grid, trim_fraction)
-    _replace_first_v_column(pressure_grid, pressure_trim)
-    _replace_first_v_column(suction_grid, suction_trim)
+    pressure_trim = _offset_boundary_toward_next_v(
+        pressure_grid,
+        trim_fraction,
+        surface_id=pressure_id,
+    )
+    suction_trim = _offset_boundary_toward_next_v(
+        suction_grid,
+        trim_fraction,
+        surface_id=suction_id,
+    )
+    if len(pressure_trim) != len(suction_trim):
+        raise ValueError(
+            f"{pressure_id} and {suction_id} uv_grid u row counts must match"
+        )
 
     if treatment == "chamfer":
         root_grid = [
@@ -279,6 +297,8 @@ def _resolve_blade_root_site(
             for first, second in zip(pressure_trim, suction_trim)
         ]
 
+    _replace_first_v_column(pressure_grid, pressure_trim)
+    _replace_first_v_column(suction_grid, suction_trim)
     root["uv_grid"] = root_grid
     root["edge_treatment_site_id"] = site_id
     root["edge_family"] = "blade_root_to_hub"
@@ -325,8 +345,53 @@ def _trim_fraction_for_radius(radius_mm: float) -> float:
     return max(0.02, min(0.35, radius_mm / 120.0))
 
 
-def _offset_boundary_toward_next_v(grid: list[list[list[float]]], fraction: float) -> list[Point3]:
-    return [_lerp_point(tuple(row[0]), tuple(row[1]), fraction) for row in grid]
+def _offset_boundary_toward_next_v(
+    grid: list[list[list[float]]],
+    fraction: float,
+    *,
+    surface_id: str,
+) -> list[Point3]:
+    if not isinstance(grid, list) or not grid:
+        raise ValueError(f"{surface_id} uv_grid must contain at least 1 u row")
+
+    boundary = []
+    for row_index, row in enumerate(grid):
+        if not isinstance(row, list) or len(row) < 2:
+            raise ValueError(
+                f"{surface_id} uv_grid row {row_index} must contain at least 2 v points"
+            )
+        boundary.append(
+            _lerp_point(
+                _point3_from_grid_point(
+                    row[0],
+                    surface_id=surface_id,
+                    row_index=row_index,
+                    point_index=0,
+                ),
+                _point3_from_grid_point(
+                    row[1],
+                    surface_id=surface_id,
+                    row_index=row_index,
+                    point_index=1,
+                ),
+                fraction,
+            )
+        )
+    return boundary
+
+
+def _point3_from_grid_point(
+    point: Any,
+    *,
+    surface_id: str,
+    row_index: int,
+    point_index: int,
+) -> Point3:
+    if not isinstance(point, (list, tuple)) or len(point) < 3:
+        raise ValueError(
+            f"{surface_id} uv_grid row {row_index} point {point_index} must contain 3 coordinates"
+        )
+    return (float(point[0]), float(point[1]), float(point[2]))
 
 
 def _replace_first_v_column(grid: list[list[list[float]]], boundary: list[Point3]) -> None:
