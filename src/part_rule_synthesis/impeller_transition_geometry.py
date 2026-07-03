@@ -323,6 +323,7 @@ def _resolve_v08_transition_geometry(
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:
+            _clear_transition_success_metadata(surface_by_id[spec.surface_id])
             transition_failures.append(
                 {
                     "edge_treatment_site_id": spec.edge_family,
@@ -580,6 +581,18 @@ def _resolve_axisymmetric_transition_site(
         "adjacent_surface_ids": [],
         "transition_surface_ids": [surface_id],
     }
+
+
+def _clear_transition_success_metadata(surface: dict[str, Any]) -> None:
+    for metadata_key in (
+        "edge_treatment_site_id",
+        "transition_policy_id",
+        "treatment",
+        "radius_mm",
+        "transition_geometry",
+        "transition_quality",
+    ):
+        surface.pop(metadata_key, None)
 
 
 def _copy_surface(surface: dict[str, Any]) -> dict[str, Any]:

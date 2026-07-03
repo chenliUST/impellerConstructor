@@ -536,6 +536,62 @@ def test_v08_axisymmetric_non_finite_grid_records_failure_without_success_metada
     assert resolved_surface["uv_grid"] == surface_graph["surfaces"][0]["uv_grid"]
 
 
+def test_v08_axisymmetric_failure_clears_stale_success_metadata():
+    surface_graph = {
+        "surfaces": [
+            {
+                "id": "hub_top_outer_transition_surface",
+                "edge_family": "hub_top_outer",
+                "role": "hub_top_outer_sampled_fillet_transition",
+                "uv_grid": [
+                    [[float("nan"), 0.0, 397.0], [148.0, 0.0, 398.0]],
+                    [[149.0, 0.0, 399.0], [150.0, 0.0, 400.0]],
+                ],
+                "edge_treatment_site_id": "hub_top_outer",
+                "transition_policy_id": "hub_top_outer.default",
+                "treatment": "fillet",
+                "radius_mm": 3.0,
+                "transition_geometry": "resolved_fillet_patch",
+                "transition_quality": {"has_resolved_patch": True},
+            }
+        ],
+    }
+
+    resolution = resolve_transition_geometry(
+        surface_graph,
+        transition_policies={
+            "hub_top_outer.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": 3.0,
+            }
+        },
+        geometry_version="0.8",
+    )
+
+    quality_checks = {
+        check["check_id"]: check["status"]
+        for check in resolution.quality_checks
+    }
+    resolved_surface = resolution.surface_graph["surfaces"][0]
+
+    assert resolution.transition_failures
+    assert quality_checks["required_transition_geometry_resolved"] == "FAIL"
+    assert resolved_surface["id"] == "hub_top_outer_transition_surface"
+    assert resolved_surface["edge_family"] == "hub_top_outer"
+    assert resolved_surface["role"] == "hub_top_outer_sampled_fillet_transition"
+    assert resolved_surface["uv_grid"] == surface_graph["surfaces"][0]["uv_grid"]
+    for metadata_key in [
+        "edge_treatment_site_id",
+        "transition_policy_id",
+        "treatment",
+        "radius_mm",
+        "transition_geometry",
+        "transition_quality",
+    ]:
+        assert metadata_key not in resolved_surface
+
+
 def test_v08_axisymmetric_resolution_synchronizes_control_net_and_cad_control_points():
     geometry = _geometry_for_v08(
         transition_overrides={
