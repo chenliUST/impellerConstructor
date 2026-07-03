@@ -8,6 +8,7 @@ import {
   isTransitionSurface,
   meshOverlayControlVisible,
   meshOverlayOptions,
+  viewerVisibilityForMeshOverlay,
 } from "../meshOverlayModel.js";
 import { patchBoundaryCurveIds, patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js";
 import { defaultVisibleLayers, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
@@ -209,8 +210,12 @@ export function ModelViewer({
     const shaded = modelRef.current.shaded;
     const constructionGroup = modelRef.current.constructionGroup;
     if (shaded) {
-      const showShaded = viewMode !== "wireframe" && visibleLayers.shaded_surfaces !== false;
-      const showMeshOverlay = simulationViewMode === "mesh" && activeMeshOverlayMode !== "off" && viewMode !== "shaded";
+      const { showShaded, showMeshOverlay } = viewerVisibilityForMeshOverlay({
+        simulationViewMode,
+        viewMode,
+        meshOverlayMode: activeMeshOverlayMode,
+        visibleLayers,
+      });
       shaded.visible = showShaded || showMeshOverlay;
       shaded.traverse((child) => {
         if (child.isMesh && child.userData.layer) {

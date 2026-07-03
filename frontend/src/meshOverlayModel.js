@@ -16,6 +16,24 @@ export function meshOverlayControlVisible(simulationViewMode) {
   return simulationViewMode === "mesh";
 }
 
+export function viewerVisibilityForMeshOverlay({
+  simulationViewMode,
+  viewMode,
+  meshOverlayMode = "triangle_edges",
+  visibleLayers = {},
+} = {}) {
+  const activeMeshOverlayMode = effectiveMeshOverlayMode(simulationViewMode, meshOverlayMode);
+  const shadedSurfacesEnabled = visibleLayers.shaded_surfaces !== false;
+  const showMeshOverlay = simulationViewMode === "mesh" && activeMeshOverlayMode !== "off" && viewMode !== "shaded";
+  const showWireframeFallback =
+    simulationViewMode === "mesh" && viewMode === "wireframe" && activeMeshOverlayMode === "off";
+
+  return {
+    showShaded: shadedSurfacesEnabled && (viewMode !== "wireframe" || showWireframeFallback),
+    showMeshOverlay,
+  };
+}
+
 export function transitionRegionRows(meshManifest = {}) {
   return transitionRegionEntries(meshManifest).map((region) => ({
     edgeFamily: region.edge_family || region.edgeFamily || region.id || "",

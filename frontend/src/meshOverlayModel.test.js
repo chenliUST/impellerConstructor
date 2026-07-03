@@ -8,6 +8,7 @@ import {
   meshOverlayOptions,
   transitionRegionRows,
   transitionSurfaceIds,
+  viewerVisibilityForMeshOverlay,
 } from "./meshOverlayModel.js";
 
 describe("mesh overlay model", () => {
@@ -26,6 +27,39 @@ describe("mesh overlay model", () => {
     assert.equal(meshOverlayControlVisible("mesh"), true);
     assert.equal(meshOverlayControlVisible("cad_review_360"), false);
     assert.equal(meshOverlayControlVisible("cfd_full_360"), false);
+  });
+
+  test("viewer visibility falls back to shaded surfaces when mesh wireframe overlay is off", () => {
+    assert.deepEqual(
+      viewerVisibilityForMeshOverlay({
+        simulationViewMode: "mesh",
+        viewMode: "wireframe",
+        meshOverlayMode: "off",
+        visibleLayers: { shaded_surfaces: true },
+      }),
+      { showShaded: true, showMeshOverlay: false },
+    );
+  });
+
+  test("viewer visibility preserves mesh overlay behavior for shaded and combined modes", () => {
+    assert.deepEqual(
+      viewerVisibilityForMeshOverlay({
+        simulationViewMode: "mesh",
+        viewMode: "combined",
+        meshOverlayMode: "triangle_edges",
+        visibleLayers: { shaded_surfaces: true },
+      }),
+      { showShaded: true, showMeshOverlay: true },
+    );
+    assert.deepEqual(
+      viewerVisibilityForMeshOverlay({
+        simulationViewMode: "mesh",
+        viewMode: "shaded",
+        meshOverlayMode: "triangle_edges",
+        visibleLayers: { shaded_surfaces: true },
+      }),
+      { showShaded: true, showMeshOverlay: false },
+    );
   });
 
   test("transitionRegionRows maps mesh manifest transition regions", () => {
