@@ -230,6 +230,59 @@ def test_v08_malformed_blade_root_grid_records_failure_without_partial_trim():
     assert surfaces["blade_0_pressure_surface"]["uv_grid"] == surface_graph["surfaces"][0]["uv_grid"]
 
 
+@pytest.mark.parametrize("malformed_pressure_grid", [None, [None]])
+def test_v08_uncopyable_blade_root_grid_records_failure_without_partial_trim(malformed_pressure_grid):
+    surface_graph = {
+        "surfaces": [
+            {
+                "id": "blade_0_pressure_surface",
+                "uv_grid": malformed_pressure_grid,
+            },
+            {
+                "id": "blade_0_suction_surface",
+                "uv_grid": [
+                    [[9.0, 0.0, 0.0], [8.0, 0.0, 0.0]],
+                    [[9.0, 1.0, 0.0], [8.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "blade_0_root_transition_surface",
+                "edge_family": "blade_root_to_hub",
+                "uv_grid": [],
+            },
+            {
+                "id": "hub_revolve_surface",
+                "uv_grid": [],
+            },
+        ],
+    }
+
+    resolution = resolve_transition_geometry(
+        surface_graph,
+        transition_policies={
+            "blade_root_to_hub.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": 8.0,
+            }
+        },
+        geometry_version="0.8",
+    )
+
+    surfaces = {
+        surface["id"]: surface
+        for surface in resolution.surface_graph["surfaces"]
+    }
+    quality_checks = {
+        check["check_id"]: check["status"]
+        for check in resolution.quality_checks
+    }
+    assert resolution.transition_failures
+    assert quality_checks["required_transition_geometry_resolved"] == "FAIL"
+    assert "trimmed_boundaries" not in surfaces["blade_0_pressure_surface"]
+    assert "trimmed_boundaries" not in surfaces["blade_0_suction_surface"]
+
+
 def test_build_fillet_section_samples_requested_radius_arc():
     first_trim_point = (8.0, 0.0, 0.0)
     second_trim_point = (0.0, 8.0, 0.0)

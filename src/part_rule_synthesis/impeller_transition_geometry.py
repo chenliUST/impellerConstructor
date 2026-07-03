@@ -326,10 +326,26 @@ def _resolve_blade_root_site(
 def _copy_surface(surface: dict[str, Any]) -> dict[str, Any]:
     copied = {**surface}
     if "uv_grid" in copied:
-        copied["uv_grid"] = [[list(point) for point in row] for row in copied["uv_grid"]]
+        copied["uv_grid"] = _copy_uv_grid(copied["uv_grid"])
     if "display" in copied:
         copied["display"] = dict(copied["display"])
     return copied
+
+
+def _copy_uv_grid(uv_grid: Any) -> Any:
+    if not isinstance(uv_grid, list):
+        return uv_grid
+
+    copied_grid = []
+    for row in uv_grid:
+        if not isinstance(row, list):
+            copied_grid.append(row)
+            continue
+        copied_grid.append([
+            list(point) if isinstance(point, (list, tuple)) else point
+            for point in row
+        ])
+    return copied_grid
 
 
 def _policy_enabled(policy: dict[str, Any] | None) -> bool:
