@@ -165,10 +165,10 @@ function evaluateHermite(points, slopes, t) {
 export const presets = [
   {
     id: "axisymmetric-nurbs-open-throughflow",
-    presetId: "radial_open_reference_v0_7",
-    name: "B-Rep open throughflow v0.7",
+    presetId: "radial_open_reference_v0_9",
+    name: "B-Rep open throughflow v0.9",
     summary: "Open impeller: bounded transition topology, mesh inspection, CFD full-360 manifest, and STEP/STL exports.",
-    tags: ["open", "B-Rep", "v0.7", "mesh inspection", "export"],
+    tags: ["open", "B-Rep", "v0.9", "mesh inspection", "export"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -207,10 +207,10 @@ export const presets = [
   },
   {
     id: "axisymmetric-nurbs-closed-throughflow",
-    presetId: "radial_closed_reference_v0_7",
-    name: "B-Rep closed throughflow v0.7",
+    presetId: "radial_closed_reference_v0_9",
+    name: "B-Rep closed throughflow v0.9",
     summary: "Closed impeller: bounded transition topology, mesh inspection, CFD full-360 manifest, and STEP/STL exports.",
-    tags: ["closed", "B-Rep", "v0.7", "mesh inspection", "export"],
+    tags: ["closed", "B-Rep", "v0.9", "mesh inspection", "export"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -249,10 +249,10 @@ export const presets = [
   },
   {
     id: "public-nasa-rotor67-axial-blisk",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Public NASA Rotor 67 axial blisk",
     summary: "Axial blisk approximation using public NASA Rotor 67 annulus and blade-count data.",
-    tags: ["public-data", "axial", "blisk", "rotor", "v0.7"],
+    tags: ["public-data", "axial", "blisk", "rotor", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -302,10 +302,10 @@ export const presets = [
   },
   {
     id: "public-nasa-rotor37-compressor-blisk",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Public NASA Rotor 37 compressor blisk",
     summary: "High-load axial compressor blisk approximation using public NASA Rotor 37 stage data.",
-    tags: ["public-data", "axial", "blisk", "compressor", "v0.7"],
+    tags: ["public-data", "axial", "blisk", "compressor", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -355,10 +355,10 @@ export const presets = [
   },
   {
     id: "public-nasa-stage37-stator-ring",
-    presetId: "radial_closed_reference_v0_7",
+    presetId: "radial_closed_reference_v0_9",
     name: "Public NASA Stage 37 stator ring",
     summary: "Axial compressor stator ring approximation using public NASA Stage 37 vane-count and annulus data.",
-    tags: ["public-data", "axial", "stator", "ring", "v0.7"],
+    tags: ["public-data", "axial", "stator", "ring", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -408,10 +408,10 @@ export const presets = [
   },
   {
     id: "public-nasa-sdt-r4-turbofan-fan",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Public NASA SDT R4 turbofan fan",
     summary: "First-stage turbofan fan approximation from the public NASA 22-inch Source Diagnostic Test fan.",
-    tags: ["public-data", "axial", "fan", "turbofan", "v0.7"],
+    tags: ["public-data", "axial", "fan", "turbofan", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -461,10 +461,10 @@ export const presets = [
   },
   {
     id: "public-rr-ultrafan-cti-fan",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Public RR UltraFan CTi fan",
     summary: "UltraFan front-fan approximation anchored on the public 140-inch fan system and CTi fan-blade demonstrator data.",
-    tags: ["public-data", "axial", "fan", "ultrafan", "v0.7"],
+    tags: ["public-data", "axial", "fan", "ultrafan", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -514,10 +514,10 @@ export const presets = [
   },
   {
     id: "public-rr-ultrafan-ogv-ring",
-    presetId: "radial_closed_reference_v0_7",
+    presetId: "radial_closed_reference_v0_9",
     name: "Public RR UltraFan OGV ring",
     summary: "UltraFan-scale outlet-guide-vane ring approximation using the public 140-inch fan annulus as the outer-radius anchor.",
-    tags: ["public-data", "axial", "stator", "ultrafan", "v0.7"],
+    tags: ["public-data", "axial", "stator", "ultrafan", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -567,10 +567,10 @@ export const presets = [
   },
   {
     id: "public-liquid-rocket-turbopump-inducer",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Public liquid rocket turbopump inducer",
     summary: "Axial screw-inducer approximation based on public liquid-rocket turbopump inducer references.",
-    tags: ["public-data", "axial", "inducer", "pump", "v0.7"],
+    tags: ["public-data", "axial", "inducer", "pump", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -620,10 +620,10 @@ export const presets = [
   },
   {
     id: "public-nasa-sr7l-propfan",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Public NASA SR-7L propfan",
     summary: "Eight-blade advanced propeller/propfan approximation using public NASA SR-7L geometry references.",
-    tags: ["public-data", "axial", "propeller", "propfan", "v0.7"],
+    tags: ["public-data", "axial", "propeller", "propfan", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -673,10 +673,10 @@ export const presets = [
   },
   {
     id: "reference-spur-gear-tooth-ring",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Reference spur gear tooth ring",
     summary: "Mechanical analogy preset: a straight-tooth gear-like ring generated with the same radial blade pattern rules.",
-    tags: ["mechanical-analogy", "gear", "radial", "v0.7"],
+    tags: ["mechanical-analogy", "gear", "radial", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "radial",
@@ -726,10 +726,10 @@ export const presets = [
   },
   {
     id: "reference-axial-turbine-rotor",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Reference axial turbine rotor",
-    summary: "Mechanical analogy preset: an axial turbine rotor-like bladed disk using the V0.7 hub/tip and twisted blade curves.",
-    tags: ["mechanical-analogy", "turbine", "axial", "rotor", "v0.7"],
+    summary: "Mechanical analogy preset: an axial turbine rotor-like bladed disk using the v0.9 hub/tip and twisted blade curves.",
+    tags: ["mechanical-analogy", "turbine", "axial", "rotor", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",
@@ -779,10 +779,10 @@ export const presets = [
   },
   {
     id: "reference-double-start-worm",
-    presetId: "radial_open_reference_v0_7",
+    presetId: "radial_open_reference_v0_9",
     name: "Reference double-start worm",
     summary: "Mechanical analogy preset: a worm screw represented as two high-wrap helical blades on a shaft.",
-    tags: ["mechanical-analogy", "worm", "screw", "v0.7"],
+    tags: ["mechanical-analogy", "worm", "screw", "v0.9"],
     partFamilyId: "impeller",
     facets: {
       flow_topology: "axial",

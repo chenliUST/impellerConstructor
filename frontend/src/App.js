@@ -8,7 +8,7 @@ import {
   overridesAfterParameterChange,
   presets,
   selectedPreset,
-} from "./appModel.js";
+} from "./appModel.js?v=0.9.0";
 import { buildTransitionOverridePayload } from "./edgeTreatmentModel.js";
 import { viewModeOptions } from "./simulationViewModel.js";
 import { defaultVisibleLayers } from "./workspaceModel.js";

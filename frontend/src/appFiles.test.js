@@ -10,7 +10,17 @@ describe("frontend application files", () => {
     const html = readFileSync(resolve(root, "index.html"), "utf-8");
 
     assert.match(html, /type="importmap"/);
-    assert.match(html, /src="\/src\/main\.js"/);
+    assert.match(html, /src="\/src\/main\.js(?:\?v=[^"]+)?"/);
+  });
+
+  test("browser entry cache-busts the v0.9 preset catalog modules", () => {
+    const html = readFileSync(resolve(root, "index.html"), "utf-8");
+    const mainSource = readFileSync(resolve(root, "src/main.js"), "utf-8");
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+
+    assert.match(html, /src="\/src\/main\.js\?v=0\.9/);
+    assert.match(mainSource, /from "\.\/App\.js\?v=0\.9/);
+    assert.match(appSource, /from "\.\/appModel\.js\?v=0\.9/);
   });
 
   test("application shell files exist", () => {
@@ -105,6 +115,16 @@ describe("frontend application files", () => {
     assert.match(panelSource, /export_manifests/);
     assert.match(panelSource, /export_exactness/);
     assert.match(panelSource, /surface_graph_faithful/);
+  });
+
+  test("manifest panel exposes v0.9 geometry validation signals", () => {
+    const panelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(panelSource, /geometry_validation_report/);
+    assert.match(panelSource, /geometry_validation_status/);
+    assert.match(panelSource, /blocking_failures/);
+    assert.match(panelSource, /transition_validation_summary/);
+    assert.match(panelSource, /capability_claim_level/);
   });
 
   test("viewer gives blade boundary construction lines and named boundaries dedicated layers", () => {

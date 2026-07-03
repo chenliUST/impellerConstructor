@@ -16,6 +16,13 @@ export function ManifestPanel({ manifest, exportLinks, before = null }) {
   const exportManifests = manifest?.export_manifests || {};
   const stlExport = exportManifests.stl || {};
   const stepExport = exportManifests.step || {};
+  const geometryValidationReport = manifest?.geometry_validation_report || {};
+  const geometryValidationStatus =
+    manifest?.geometry_validation_status || geometryValidationReport.geometry_validation_status || "Unknown";
+  const transitionValidationSummary = geometryValidationReport.transition_validation_summary || {};
+  const blockingValidationFailures = geometryValidationReport.blocking_failures || [];
+  const capabilityClaimLevel =
+    manifest?.capability_claim_level || geometryValidationReport.capability_claim_level || "unset";
 
   return h(
     "aside",
@@ -32,6 +39,8 @@ export function ManifestPanel({ manifest, exportLinks, before = null }) {
       h(Metric, { label: "Slice", value: ontology_slice || "None" }),
       h(Metric, { label: "Constructor", value: constructor_id || constructor_family || "None" }),
       h(Metric, { label: "Shape stage", value: optimization_stage }),
+      h(Metric, { label: "Geom validation", value: geometryValidationStatus }),
+      h(Metric, { label: "Claim", value: capabilityClaimLevel }),
       h(Metric, { label: "Export mode", value: exportStrategy.mode || "unset" }),
       h(Metric, { label: "STL exactness", value: stlExport.export_exactness || "legacy" }),
       h(Metric, {
@@ -85,6 +94,29 @@ export function ManifestPanel({ manifest, exportLinks, before = null }) {
                   step_face_count: stepExport.face_count || 0,
                   surface_graph_faithful: exportStrategy.mode === "surface_graph_faithful",
                   export_manifests: Boolean(manifest.export_manifests),
+                },
+                null,
+                2,
+              ),
+            ),
+          }),
+          h(Section, {
+            title: "Geometry validation report",
+            body: h(
+              "pre",
+              null,
+              JSON.stringify(
+                {
+                  status: geometryValidationStatus,
+                  kernel_capability_matrix_id:
+                    manifest.kernel_capability_matrix_id ||
+                    geometryValidationReport.kernel_capability_matrix_id ||
+                    "unset",
+                  capability_claim_level: capabilityClaimLevel,
+                  unsupported_claims: manifest.unsupported_claims || geometryValidationReport.unsupported_claims || [],
+                  blocking_failure_count: blockingValidationFailures.length,
+                  blocking_failures: blockingValidationFailures,
+                  transition_validation_summary: transitionValidationSummary,
                 },
                 null,
                 2,

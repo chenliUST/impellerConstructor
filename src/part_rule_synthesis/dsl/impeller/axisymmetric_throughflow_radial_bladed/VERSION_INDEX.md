@@ -19,6 +19,7 @@ The versions are not replacements for one another. They are research checkpoints
 | `v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | NURBS/analytic B-Rep support-face STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
 | `v0_7` | `radial_open_reference_v0_7`, `radial_closed_reference_v0_7` | Bounded B-Rep export contract, edge-family transition defaults, and runtime transition policy metadata. |
 | `v0_8` | `radial_open_reference_v0_8`, `radial_closed_reference_v0_8` | Transition-resolved fillet/chamfer surface patches, trimming metadata, transition-aware mesh, routed STL/OBJ/STEP manifests, and frontend inspection controls. |
+| `v0_9` | `radial_open_reference_v0_9`, `radial_closed_reference_v0_9` | Kernel validity and reviewability line with capability matrix, golden cases, validation reports, double-sided root transitions, trim-aware mesh/STEP gates, and batch regression summaries. |
 
 ## Folder Contract
 
@@ -65,7 +66,7 @@ Legacy v0.4 studies remain loadable:
 engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
 ```
 
-v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests. v0.7 is implemented by the `v0_7/` folder, runtime compiler support, bounded B-Rep export contract resources, edge-family transition defaults, and lineage tests. v0.8 is implemented by the `v0_8/` folder, runtime compiler support, transition-resolved B-Rep contract resources, transition resolver routing, transition-aware mesh/export paths, frontend inspection controls, and lineage/workflow tests.
+v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests. v0.7 is implemented by the `v0_7/` folder, runtime compiler support, bounded B-Rep export contract resources, edge-family transition defaults, and lineage tests. v0.8 is implemented by the `v0_8/` folder, runtime compiler support, transition-resolved B-Rep contract resources, transition resolver routing, transition-aware mesh/export paths, frontend inspection controls, and lineage/workflow tests. v0.9 is implemented by the `v0_9/` folder, runtime compiler support, geometry validation reports, double-sided root transition resolver semantics, trim-aware mesh/STEP export gates, and batch regression tooling.
 
 ## Historical Git Tags
 
@@ -144,4 +145,18 @@ transition geometry, and no solver-ready volume mesh.
 docs/evidence/2026-07-03-impeller-v0-8-transition-resolved-geometry/README.md
 docs/superpowers/specs/2026-07-03-impeller-v0-8-transition-resolved-geometry-design.md
 src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_8/CHANGELOG.md
+```
+
+## v0.9 Evidence
+
+The v0.9 line is a kernel validity and reviewability milestone. It adds a capability
+matrix, golden case registry, validation reports, double-sided blade-root transition
+surfaces, trim-aware mesh/STEP review exports, and batch regression summaries. It
+does not claim watertight sewn B-Rep solids or solver-ready CFD.
+
+```text
+docs/evidence/2026-07-04-impeller-v0-9-kernel-validity-reviewability/README.md
+docs/superpowers/specs/2026-07-04-impeller-v0-9-kernel-validity-reviewability-design.md
+docs/superpowers/plans/2026-07-04-impeller-v0-9-kernel-validity-reviewability.md
+src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_9/CHANGELOG.md
 ```

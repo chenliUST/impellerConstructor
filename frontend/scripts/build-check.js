@@ -6,7 +6,7 @@ const root = resolve(import.meta.dirname, "..");
 const html = readFileSync(resolve(root, "index.html"), "utf-8");
 
 assert.match(html, /type="importmap"/);
-assert.match(html, /src="\/src\/main\.js"/);
+assert.match(html, /src="\/src\/main\.js(?:\?v=[^"]+)?"/);
 
 for (const file of [
   "src/main.js",

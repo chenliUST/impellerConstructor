@@ -1,0 +1,26 @@
+{
+  "schema_id": "impeller_v0_9_expert_issue_linkage",
+  "version": "0.9",
+  "required_fields": [
+    "issue_id",
+    "case_id",
+    "run_id",
+    "surface_graph_id",
+    "feature_id",
+    "edge_family",
+    "transition_policy_id",
+    "observed_problem",
+    "expert_severity",
+    "recommended_next_action"
+  ],
+  "allowed_severities": ["blocking", "major", "minor", "observation"],
+  "allowed_next_actions": [
+    "add_golden_case",
+    "add_negative_case",
+    "revise_constructor_rule",
+    "revise_validation_gate",
+    "defer_to_brep_sewing",
+    "defer_to_cae_mesh_adapter"
+  ],
+  "traceability_note": "Expert findings should link visible STL/STEP/mesh defects back to surface_graph_id, feature_id, edge_family, transition_policy_id, constructor rule, and DSL variable where available."
+}
