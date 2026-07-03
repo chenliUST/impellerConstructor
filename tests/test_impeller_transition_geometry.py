@@ -136,6 +136,7 @@ def test_v08_blade_root_infeasible_radius_records_transition_failure():
         check["name"]: check
         for check in geometry["validity"]["checks"]
     }
+    root_surface = _surface_by_id(geometry, "blade_0_root_transition_surface")
 
     assert root_failure["edge_treatment_site_id"] == "blade_0.root_to_hub"
     assert root_failure["edge_family"] == "blade_root_to_hub"
@@ -148,6 +149,16 @@ def test_v08_blade_root_infeasible_radius_records_transition_failure():
         site["edge_family"] == "blade_root_to_hub"
         for site in graph["edge_treatment_sites"]
     )
+    for metadata_key in [
+        "radius_mm",
+        "transition_geometry",
+        "transition_quality",
+        "transition_policy_id",
+        "treatment",
+        "edge_treatment_site_id",
+    ]:
+        assert metadata_key not in root_surface
+    assert all(len(row) == 3 for row in root_surface["uv_grid"])
     assert validity_checks["required_transition_geometry_resolved"]["status"] == "FAIL"
     assert validity_checks["required_transition_geometry_resolved"]["failure_count"] > 0
 
@@ -507,8 +518,15 @@ def test_v08_axisymmetric_infeasible_radius_records_transition_failure_without_m
         "suggested_max_radius_mm": 120.0,
         "status": "FAIL",
     }
-    assert failed_surface["transition_geometry"] != "resolved_fillet_patch"
-    assert "edge_treatment_site_id" not in failed_surface
+    for metadata_key in [
+        "radius_mm",
+        "transition_geometry",
+        "transition_quality",
+        "transition_policy_id",
+        "treatment",
+        "edge_treatment_site_id",
+    ]:
+        assert metadata_key not in failed_surface
     assert not any(
         site["edge_family"] == "hub_top_outer"
         for site in graph["edge_treatment_sites"]

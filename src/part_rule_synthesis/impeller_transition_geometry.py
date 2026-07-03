@@ -293,6 +293,9 @@ def _resolve_v08_transition_geometry(
                 site_id=f"blade_{blade_index}.root_to_hub",
             )
             if failure:
+                root_id = f"blade_{blade_index}_root_transition_surface"
+                if root_id in surface_by_id:
+                    _clear_transition_success_metadata(surface_by_id[root_id])
                 transition_failures.append(failure)
                 continue
             try:
@@ -326,6 +329,9 @@ def _resolve_v08_transition_geometry(
                 site_id=f"blade_{blade_index}.{spec.site_suffix}",
             )
             if failure:
+                transition_id = f"blade_{blade_index}_{spec.surface_suffix}"
+                if transition_id in surface_by_id:
+                    _clear_transition_success_metadata(surface_by_id[transition_id])
                 transition_failures.append(failure)
                 continue
             try:
@@ -356,6 +362,7 @@ def _resolve_v08_transition_geometry(
             _suggested_max_radius_mm(spec.edge_family),
         )
         if failure:
+            _clear_transition_success_metadata(surface_by_id[spec.surface_id])
             transition_failures.append(failure)
             continue
         try:
