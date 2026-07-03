@@ -82,6 +82,15 @@ _BLADE_EDGE_SPECS = (
     ),
 )
 
+_BLADE_TIP_TO_SHROUD_SPEC = BladeEdgeSpec(
+    edge_family="blade_tip_to_shroud",
+    surface_suffix="tip_transition_surface",
+    site_suffix="tip_to_shroud",
+    fillet_role="blade_tip_edge_fillet",
+    chamfer_role="blade_tip_edge_chamfer",
+    axis="v1",
+)
+
 
 def build_fillet_section(
     *,
@@ -243,7 +252,7 @@ def _resolve_v08_transition_geometry(
 
     surface_by_id = {surface["id"]: surface for surface in surfaces}
     blade_indices = _blade_indices_from_pressure_surfaces(surfaces)
-    for spec in _BLADE_EDGE_SPECS:
+    for spec in _active_blade_edge_specs(transition_policies):
         policy = transition_policies.get(f"{spec.edge_family}.default")
         if not _policy_enabled(policy):
             _remove_surfaces_by_edge_family(surfaces, spec.edge_family)
@@ -291,6 +300,19 @@ def _resolve_v08_transition_geometry(
         transition_failures=transition_failures,
         quality_checks=quality_checks,
     )
+
+
+def _active_blade_edge_specs(transition_policies: dict[str, Any]) -> tuple[BladeEdgeSpec, ...]:
+    if _policy_enabled(transition_policies.get("blade_tip_to_shroud.default")):
+        return (
+            *[
+                spec
+                for spec in _BLADE_EDGE_SPECS
+                if spec.edge_family != "blade_tip_or_shroud"
+            ],
+            _BLADE_TIP_TO_SHROUD_SPEC,
+        )
+    return _BLADE_EDGE_SPECS
 
 
 def _resolve_blade_root_site(

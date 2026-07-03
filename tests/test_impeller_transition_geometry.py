@@ -20,8 +20,12 @@ from part_rule_synthesis.service import (
 )
 
 
-def _geometry_for_v08(transition_overrides: dict | None = None) -> dict:
-    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_8")
+def _geometry_for_v08(
+    transition_overrides: dict | None = None,
+    *,
+    preset_name: str = "radial_open_reference_v0_8",
+) -> dict:
+    runtime = compile_impeller_runtime_preset(preset_name)
     parameters = _bind_parameters(runtime, {})
     edge_families = runtime.get("edge_families", {})
     normalized_overrides = _normalize_transition_overrides(transition_overrides)
@@ -49,6 +53,14 @@ def _surface_by_id(geometry: dict, surface_id: str) -> dict:
 
 def _grid_digest(surface: dict) -> str:
     return json.dumps(surface["uv_grid"], sort_keys=True)
+
+
+def _blade_surface_ids(geometry: dict, suffix: str) -> list[str]:
+    return sorted(
+        surface["id"]
+        for surface in geometry["surface_graph"]["surfaces"]
+        if surface["id"].startswith("blade_") and surface["id"].endswith(suffix)
+    )
 
 
 def _assert_point_close(actual, expected, tolerance=1.0e-9):
@@ -255,6 +267,140 @@ def test_v08_blade_edge_transition_records_site_and_trimmed_adjacency():
     } in graph["edge_treatment_sites"]
     assert pressure["trimmed_boundaries"]["leading_edge"]["edge_treatment_site_id"] == "blade_0.leading_edge"
     assert suction["trimmed_boundaries"]["leading_edge"]["edge_treatment_site_id"] == "blade_0.leading_edge"
+
+
+@pytest.mark.parametrize(
+    (
+        "surface_id",
+        "site_id",
+        "edge_family",
+        "transition_policy_id",
+        "trimmed_boundary",
+    ),
+    [
+        (
+            "blade_0_trailing_transition_surface",
+            "blade_0.trailing_edge",
+            "blade_trailing_edge",
+            "blade_trailing_edge.default",
+            "trailing_edge",
+        ),
+        (
+            "blade_0_tip_transition_surface",
+            "blade_0.tip_or_shroud",
+            "blade_tip_or_shroud",
+            "blade_tip_or_shroud.default",
+            "tip_or_shroud",
+        ),
+    ],
+)
+def test_v08_trailing_and_tip_transitions_serialize_sites_and_trimmed_adjacency(
+    surface_id,
+    site_id,
+    edge_family,
+    transition_policy_id,
+    trimmed_boundary,
+):
+    geometry = _geometry_for_v08()
+
+    graph = geometry["surface_graph"]
+    surfaces = {surface["id"]: surface for surface in graph["surfaces"]}
+    transition = surfaces[surface_id]
+    pressure = surfaces["blade_0_pressure_surface"]
+    suction = surfaces["blade_0_suction_surface"]
+
+    assert transition["edge_treatment_site_id"] == site_id
+    assert transition["edge_family"] == edge_family
+    assert transition["transition_policy_id"] == transition_policy_id
+    assert transition["transition_geometry"] == "resolved_fillet_patch"
+    assert {
+        "edge_treatment_site_id": site_id,
+        "edge_family": edge_family,
+        "transition_policy_id": transition_policy_id,
+        "treatment": "fillet",
+        "radius_mm": transition["radius_mm"],
+        "adjacent_surface_ids": ["blade_0_pressure_surface", "blade_0_suction_surface"],
+        "transition_surface_ids": [surface_id],
+        "feature_id": surface_id,
+    } in graph["edge_treatment_sites"]
+    assert pressure["trimmed_boundaries"][trimmed_boundary]["edge_treatment_site_id"] == site_id
+    assert suction["trimmed_boundaries"][trimmed_boundary]["edge_treatment_site_id"] == site_id
+
+
+def test_v08_disabled_blade_edge_transitions_remove_surfaces_across_all_blades():
+    geometry = _geometry_for_v08(
+        transition_overrides={
+            "blade_leading_edge.default": {
+                "enabled": False,
+                "treatment": "none",
+                "radius_mm": 0.0,
+            },
+            "blade_trailing_edge.default": {
+                "enabled": False,
+                "treatment": "none",
+                "radius_mm": 0.0,
+            },
+            "blade_tip_or_shroud.default": {
+                "enabled": False,
+                "treatment": "none",
+                "radius_mm": 0.0,
+            },
+        }
+    )
+
+    assert _blade_surface_ids(geometry, "_leading_transition_surface") == []
+    assert _blade_surface_ids(geometry, "_trailing_transition_surface") == []
+    assert _blade_surface_ids(geometry, "_tip_transition_surface") == []
+
+
+def test_v08_closed_tip_to_shroud_policy_owns_tip_transition_surface():
+    geometry = _geometry_for_v08(
+        {
+            "blade_tip_to_shroud.default": {
+                "enabled": True,
+                "treatment": "chamfer",
+                "radius_mm": 9.0,
+            }
+        },
+        preset_name="radial_closed_reference_v0_8",
+    )
+
+    graph = geometry["surface_graph"]
+    tip = _surface_by_id(geometry, "blade_0_tip_transition_surface")
+
+    assert tip["edge_treatment_site_id"] == "blade_0.tip_to_shroud"
+    assert tip["edge_family"] == "blade_tip_to_shroud"
+    assert tip["transition_policy_id"] == "blade_tip_to_shroud.default"
+    assert tip["treatment"] == "chamfer"
+    assert tip["radius_mm"] == 9.0
+    assert tip["role"] == "blade_tip_edge_chamfer"
+    assert tip["transition_geometry"] == "resolved_chamfer_patch"
+    assert {
+        "edge_treatment_site_id": "blade_0.tip_to_shroud",
+        "edge_family": "blade_tip_to_shroud",
+        "transition_policy_id": "blade_tip_to_shroud.default",
+        "treatment": "chamfer",
+        "radius_mm": 9.0,
+        "adjacent_surface_ids": ["blade_0_pressure_surface", "blade_0_suction_surface"],
+        "transition_surface_ids": ["blade_0_tip_transition_surface"],
+        "feature_id": "blade_0_tip_transition_surface",
+    } in graph["edge_treatment_sites"]
+    assert all(
+        site["edge_treatment_site_id"] != "blade_0.tip_or_shroud"
+        for site in graph["edge_treatment_sites"]
+    )
+
+
+def test_v08_closed_tip_or_shroud_policy_resolves_tip_when_tip_to_shroud_disabled():
+    geometry = _geometry_for_v08(preset_name="radial_closed_reference_v0_8")
+
+    tip = _surface_by_id(geometry, "blade_0_tip_transition_surface")
+
+    assert tip["edge_treatment_site_id"] == "blade_0.tip_or_shroud"
+    assert tip["edge_family"] == "blade_tip_or_shroud"
+    assert tip["transition_policy_id"] == "blade_tip_or_shroud.default"
+    assert tip["treatment"] == "fillet"
+    assert tip["radius_mm"] == 2.0
 
 
 def test_v08_disabled_blade_root_transition_restores_sharp_boundary():
