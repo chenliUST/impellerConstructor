@@ -257,7 +257,11 @@ def _resolve_v08_transition_geometry(
 ) -> TransitionResolution:
     surfaces = [_copy_surface(surface) for surface in surface_graph.get("surfaces", [])]
     resolved_graph = {
-        **surface_graph,
+        **{
+            key: value
+            for key, value in surface_graph.items()
+            if key not in {"edge_treatment_sites", "transition_failures"}
+        },
         "surfaces": surfaces,
         "transition_geometry_status": "resolved_trimmed_surface_graph",
     }
