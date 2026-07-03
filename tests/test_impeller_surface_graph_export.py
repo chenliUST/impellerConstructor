@@ -88,6 +88,36 @@ def test_write_surface_graph_exports_writes_binary_stl_step_and_manifests(tmp_pa
     assert manifests["step"]["face_regions"] == manifests["stl"]["triangle_regions"]
 
 
+def test_write_surface_graph_exports_routes_resolved_graph_through_transition_mesh(tmp_path: Path):
+    step_path = tmp_path / "impeller.step"
+    stl_path = tmp_path / "impeller.stl"
+    graph = _single_quad_surface_graph()
+    graph["transition_geometry_status"] = "resolved_trimmed_surface_graph"
+    graph["surfaces"][0].update(
+        {
+            "edge_treatment_site_id": "blade_0.root_to_hub",
+            "edge_family": "blade_root_to_hub",
+            "transition_policy_id": "blade_root_to_hub.default",
+            "treatment": "fillet",
+            "radius_mm": 8.0,
+        }
+    )
+
+    manifests = write_surface_graph_exports(
+        step_path,
+        stl_path,
+        "impeller",
+        graph,
+    )
+
+    assert manifests["stl"]["mesh_type"] == "transition_aware_surface_mesh"
+    assert manifests["stl"]["source"] == "transition_resolved_surface_graph"
+    assert manifests["stl"]["transition_regions"][0]["edge_treatment_site_id"] == "blade_0.root_to_hub"
+    assert manifests["stl"]["transition_regions"][0]["quality"]["boundary_mismatch_max_mm"] == 0.0
+    assert manifests["step"]["mesh_type"] == "transition_aware_surface_mesh"
+    assert manifests["step"]["transition_regions"] == manifests["stl"]["transition_regions"]
+
+
 def test_write_surface_graph_obj_uses_final_module_path_and_deterministic_faces(tmp_path: Path):
     obj_path = tmp_path / "impeller.obj"
 

@@ -24,7 +24,7 @@ def write_surface_graph_exports(
     surface_graph: dict[str, Any],
     view_id: str = "cad_review_360",
 ) -> dict[str, dict[str, Any]]:
-    triangulation = triangulate_surface_graph(surface_graph, view_id=view_id)
+    triangulation = _mesh_for_surface_graph(surface_graph, view_id)
     if triangulation["triangle_count"] == 0:
         raise ValueError("surface graph export produced no non-degenerate triangles")
 
@@ -33,14 +33,17 @@ def write_surface_graph_exports(
     step_metadata = _write_step_faces(step_path, triangles)
 
     common = {
-        "source": "surface_graph",
+        "source": triangulation.get("source", "surface_graph"),
         "view": view_id,
+        **({"mesh_type": triangulation["mesh_type"]} if "mesh_type" in triangulation else {}),
         "surface_count": len(triangulation["included_surface_ids"]),
         "included_surface_ids": triangulation["included_surface_ids"],
         "excluded_surface_ids": triangulation["excluded_surface_ids"],
         "skipped_triangle_count": triangulation["skipped_triangle_count"],
         "skipped_triangle_reasons": triangulation["skipped_triangle_reasons"],
     }
+    if "transition_regions" in triangulation:
+        common["transition_regions"] = triangulation["transition_regions"]
     return {
         "stl": {
             **common,
@@ -56,6 +59,14 @@ def write_surface_graph_exports(
             "face_regions": triangulation["triangle_regions"],
         },
     }
+
+
+def _mesh_for_surface_graph(surface_graph: dict[str, Any], view_id: str) -> dict[str, Any]:
+    if surface_graph.get("transition_geometry_status") == "resolved_trimmed_surface_graph":
+        from part_rule_synthesis.impeller_transition_mesh import build_transition_aware_mesh
+
+        return build_transition_aware_mesh(surface_graph, view_id=view_id)
+    return triangulate_surface_graph(surface_graph, view_id=view_id)
 
 
 def triangulate_surface_graph(surface_graph: dict[str, Any], view_id: str = "cad_review_360") -> dict[str, Any]:

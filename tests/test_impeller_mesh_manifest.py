@@ -59,6 +59,35 @@ def test_mesh_manifest_reports_transition_regions():
     ]
 
 
+def test_mesh_manifest_uses_transition_aware_mesh_for_resolved_graph():
+    surface_graph = {
+        "transition_geometry_status": "resolved_trimmed_surface_graph",
+        "surfaces": [
+            {
+                "id": "blade_0_root_transition_surface",
+                "feature_id": "blade_00.root_transition",
+                "role": "blade_root_fillet",
+                "edge_treatment_site_id": "blade_0.root_to_hub",
+                "edge_family": "blade_root_to_hub",
+                "transition_policy_id": "blade_root_to_hub.default",
+                "treatment": "fillet",
+                "radius_mm": 8.0,
+                "uv_grid": [
+                    [[0, 0, 0], [0, 1, 0]],
+                    [[1, 0, 0], [1, 1, 0]],
+                ],
+            }
+        ],
+    }
+
+    manifest = build_surface_mesh_manifest(surface_graph)
+
+    assert manifest["source"] == "transition_resolved_surface_graph"
+    assert manifest["mesh_type"] == "transition_aware_surface_mesh"
+    assert manifest["transition_regions"][0]["edge_treatment_site_id"] == "blade_0.root_to_hub"
+    assert manifest["transition_regions"][0]["quality"]["max_aspect_ratio"] > 0
+
+
 def test_mesh_manifest_reports_surface_with_only_edge_family_as_transition_region():
     surface_graph = {
         "surfaces": [

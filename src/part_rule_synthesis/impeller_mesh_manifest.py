@@ -10,15 +10,18 @@ def build_surface_mesh_manifest(
     surface_graph: dict[str, Any],
     view_id: str = "cfd_full_360",
 ) -> dict[str, Any]:
-    triangulation = triangulate_surface_graph(surface_graph, view_id=view_id)
+    triangulation = _mesh_for_surface_graph(surface_graph, view_id)
     triangles = triangulation["triangles"]
     areas = [_triangle_area(triangle["points"]) for triangle in triangles]
     aspect_ratios = [_triangle_aspect_ratio(triangle["points"]) for triangle in triangles]
+    transition_regions = triangulation.get("transition_regions")
+    if transition_regions is None:
+        transition_regions = build_transition_regions(surface_graph, triangulation["triangle_regions"])
 
     return {
-        "source": "surface_graph",
+        "source": triangulation.get("source", "surface_graph"),
         "view": view_id,
-        "mesh_type": "surface_triangles",
+        "mesh_type": triangulation.get("mesh_type", "surface_triangles"),
         "triangle_count": triangulation["triangle_count"],
         "degenerate_triangle_count": triangulation["skipped_triangle_count"],
         "quality_metrics": {
@@ -36,8 +39,16 @@ def build_surface_mesh_manifest(
             }
             for region in triangulation["triangle_regions"]
         ],
-        "transition_regions": build_transition_regions(surface_graph, triangulation["triangle_regions"]),
+        "transition_regions": transition_regions,
     }
+
+
+def _mesh_for_surface_graph(surface_graph: dict[str, Any], view_id: str) -> dict[str, Any]:
+    if surface_graph.get("transition_geometry_status") == "resolved_trimmed_surface_graph":
+        from part_rule_synthesis.impeller_transition_mesh import build_transition_aware_mesh
+
+        return build_transition_aware_mesh(surface_graph, view_id=view_id)
+    return triangulate_surface_graph(surface_graph, view_id=view_id)
 
 
 def build_transition_regions(
