@@ -126,6 +126,43 @@ def test_v08_blade_root_chamfer_override_changes_transition_geometry_and_role():
     assert _grid_digest(chamfered_root) != _grid_digest(baseline_root)
 
 
+def test_v08_blade_root_transition_records_site_and_trimmed_adjacency():
+    geometry = _geometry_for_v08()
+
+    graph = geometry["surface_graph"]
+    surfaces = {surface["id"]: surface for surface in graph["surfaces"]}
+    root = surfaces["blade_0_root_transition_surface"]
+    pressure = surfaces["blade_0_pressure_surface"]
+    suction = surfaces["blade_0_suction_surface"]
+    hub = surfaces["hub_revolve_surface"]
+
+    assert root["edge_treatment_site_id"] == "blade_0.root_to_hub"
+    assert root["edge_family"] == "blade_root_to_hub"
+    assert root["transition_policy_id"] == "blade_root_to_hub.default"
+    assert root["transition_geometry"] == "resolved_fillet_patch"
+    assert pressure["trimmed_boundaries"]["hub_root"]["edge_treatment_site_id"] == "blade_0.root_to_hub"
+    assert suction["trimmed_boundaries"]["hub_root"]["edge_treatment_site_id"] == "blade_0.root_to_hub"
+    assert hub["trimmed_boundaries"]["blade_0_root"]["edge_treatment_site_id"] == "blade_0.root_to_hub"
+
+
+def test_v08_disabled_blade_root_transition_restores_sharp_boundary():
+    geometry = _geometry_for_v08(
+        transition_overrides={
+            "blade_root_to_hub.default": {
+                "enabled": False,
+                "treatment": "none",
+                "radius_mm": 0.0,
+            }
+        }
+    )
+
+    graph = geometry["surface_graph"]
+    surfaces = {surface["id"]: surface for surface in graph["surfaces"]}
+    assert "blade_0_root_transition_surface" not in surfaces
+    assert "trimmed_boundaries" not in surfaces["blade_0_pressure_surface"]
+    assert "trimmed_boundaries" not in surfaces["blade_0_suction_surface"]
+
+
 def test_build_fillet_section_samples_requested_radius_arc():
     first_trim_point = (8.0, 0.0, 0.0)
     second_trim_point = (0.0, 8.0, 0.0)
