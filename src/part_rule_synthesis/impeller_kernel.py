@@ -25,6 +25,7 @@ def build_impeller_geometry(
     profile_defaults: dict[str, Any] | None = None,
     edge_families: dict[str, Any] | None = None,
     transition_policies: dict[str, Any] | None = None,
+    geometry_version: str | None = None,
 ) -> dict[str, Any]:
     """Build deterministic impeller geometry metadata from one sampled meridional kernel."""
     if "blade_wrap_deg" in parameters:
@@ -40,6 +41,7 @@ def build_impeller_geometry(
             profile_defaults=profile_defaults,
             edge_families=edge_families,
             transition_policies=transition_policies,
+            geometry_version=geometry_version,
         )
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)

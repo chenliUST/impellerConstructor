@@ -56,6 +56,34 @@ def _assert_point_close(actual, expected, tolerance=1.0e-9):
         assert abs(actual_value - expected_value) <= tolerance
 
 
+def test_v08_manifest_marks_resolver_invocation():
+    geometry = _geometry_for_v08()
+
+    assert geometry["surface_graph"]["transition_geometry_status"] == "resolved_trimmed_surface_graph"
+    check_names = {
+        check["name"]
+        for check in geometry["validity"]["checks"]
+    }
+    assert "transition_geometry_resolver_invoked" in check_names
+
+
+def test_v07_manifest_does_not_claim_transition_resolved_geometry():
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_7")
+    parameters = _bind_parameters(runtime, {})
+    edge_families = runtime.get("edge_families", {})
+    transition_policies = resolve_transition_policies(edge_families, parameters)
+    geometry = _geometry_metadata(
+        "impeller",
+        parameters,
+        runtime["facets"],
+        dsl_context=runtime,
+        edge_families=edge_families,
+        transition_policies=transition_policies,
+    )
+
+    assert geometry["surface_graph"].get("transition_geometry_status") != "resolved_trimmed_surface_graph"
+
+
 def test_v08_blade_root_radius_override_changes_transition_geometry():
     baseline = _geometry_for_v08()
     enlarged = _geometry_for_v08(

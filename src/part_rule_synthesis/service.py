@@ -798,6 +798,7 @@ def _impeller_geometry_options(dsl_context: dict[str, Any] | None) -> dict[str, 
         "material_domain": dsl_context.get("material_domain"),
         "solid_features": dsl_context.get("solid_features"),
         "profile_defaults": dsl_context.get("profile_defaults"),
+        "geometry_version": _dsl_version(dsl_context),
     }
 
 
