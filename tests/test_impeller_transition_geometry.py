@@ -1,16 +1,40 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from tempfile import TemporaryDirectory
 
-from part_rule_synthesis.service import RuleSynthesisService
+from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
+from part_rule_synthesis.service import (
+    _bind_parameters,
+    _geometry_metadata,
+    _normalize_transition_overrides,
+)
 
 
-def _surface_by_id(run, surface_id: str) -> dict:
+def _geometry_for_v08(transition_overrides: dict | None = None) -> dict:
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_8")
+    parameters = _bind_parameters(runtime, {})
+    edge_families = runtime.get("edge_families", {})
+    normalized_overrides = _normalize_transition_overrides(transition_overrides)
+    transition_policies = resolve_transition_policies(
+        edge_families,
+        parameters,
+        normalized_overrides,
+    )
+    return _geometry_metadata(
+        "impeller",
+        parameters,
+        runtime["facets"],
+        dsl_context=runtime,
+        edge_families=edge_families,
+        transition_policies=transition_policies,
+    )
+
+
+def _surface_by_id(geometry: dict, surface_id: str) -> dict:
     return {
         surface["id"]: surface
-        for surface in run.manifest["geometry"]["surface_graph"]["surfaces"]
+        for surface in geometry["surface_graph"]["surfaces"]
     }[surface_id]
 
 
@@ -19,21 +43,16 @@ def _grid_digest(surface: dict) -> str:
 
 
 def test_v08_blade_root_radius_override_changes_transition_geometry():
-    with TemporaryDirectory() as directory:
-        service = RuleSynthesisService(Path(directory))
-        engine = service.synthesize("impeller", "radial_open_reference_v0_8")
-        baseline = service.instantiate(engine.engine_id, {})
-        enlarged = service.instantiate(
-            engine.engine_id,
-            {},
-            transition_overrides={
-                "blade_root_to_hub.default": {
-                    "enabled": True,
-                    "treatment": "fillet",
-                    "radius_mm": 20.0,
-                }
-            },
-        )
+    baseline = _geometry_for_v08()
+    enlarged = _geometry_for_v08(
+        transition_overrides={
+            "blade_root_to_hub.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": 20.0,
+            }
+        },
+    )
 
     baseline_root = _surface_by_id(baseline, "blade_0_root_transition_surface")
     enlarged_root = _surface_by_id(enlarged, "blade_0_root_transition_surface")
@@ -44,21 +63,16 @@ def test_v08_blade_root_radius_override_changes_transition_geometry():
 
 
 def test_v08_blade_root_chamfer_override_changes_transition_geometry_and_role():
-    with TemporaryDirectory() as directory:
-        service = RuleSynthesisService(Path(directory))
-        engine = service.synthesize("impeller", "radial_open_reference_v0_8")
-        baseline = service.instantiate(engine.engine_id, {})
-        chamfered = service.instantiate(
-            engine.engine_id,
-            {},
-            transition_overrides={
-                "blade_root_to_hub.default": {
-                    "enabled": True,
-                    "treatment": "chamfer",
-                    "radius_mm": 8.0,
-                }
-            },
-        )
+    baseline = _geometry_for_v08()
+    chamfered = _geometry_for_v08(
+        transition_overrides={
+            "blade_root_to_hub.default": {
+                "enabled": True,
+                "treatment": "chamfer",
+                "radius_mm": 8.0,
+            }
+        },
+    )
 
     baseline_root = _surface_by_id(baseline, "blade_0_root_transition_surface")
     chamfered_root = _surface_by_id(chamfered, "blade_0_root_transition_surface")
