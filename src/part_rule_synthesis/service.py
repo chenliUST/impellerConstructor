@@ -926,6 +926,8 @@ def _write_exports(
         surface_graph = (geometry_metadata or {}).get("surface_graph")
         if not surface_graph:
             raise RuntimeError(f"{export_contract.get('mode')} export requires geometry.surface_graph")
+        if export_contract.get("mode") == "transition_resolved_bounded_brep":
+            _raise_on_transition_failures(surface_graph, geometry_metadata or {})
         bounded_surface_graph = None
         export_surface_graph = surface_graph
         if _uses_legacy_supported_surface_accounting(export_contract):
@@ -1157,6 +1159,53 @@ def _uses_legacy_supported_surface_accounting(export_contract: dict[str, Any]) -
             or export_contract.get("cad_export_scope") == "supported_bounded_brep_surfaces"
         )
     )
+
+
+def _raise_on_transition_failures(surface_graph: dict[str, Any], geometry_metadata: dict[str, Any]) -> None:
+    failure_records: list[tuple[str, Any]] = []
+    declared_failure_counts: list[tuple[str, int]] = []
+
+    for source_name, payload in (("surface_graph", surface_graph), ("geometry_metadata", geometry_metadata)):
+        if not isinstance(payload, Mapping):
+            continue
+        transition_failures = payload.get("transition_failures")
+        if isinstance(transition_failures, list):
+            failure_records.extend((source_name, failure) for failure in transition_failures)
+        elif transition_failures:
+            failure_records.append((source_name, transition_failures))
+        transition_failure_count = payload.get("transition_failure_count")
+        if isinstance(transition_failure_count, int) and transition_failure_count > 0:
+            declared_failure_counts.append((source_name, transition_failure_count))
+
+    if not failure_records and not declared_failure_counts:
+        return
+
+    observed_count = len(failure_records)
+    declared_count = max((count for _, count in declared_failure_counts), default=0)
+    failure_count = max(observed_count, declared_count)
+    details = [_format_transition_failure(source_name, failure) for source_name, failure in failure_records[:8]]
+    if observed_count > len(details):
+        details.append(f"{observed_count - len(details)} additional transition failures")
+    for source_name, count in declared_failure_counts:
+        details.append(f"{source_name}.transition_failure_count={count}")
+    detail_text = "; ".join(details) if details else "transition_failure_count > 0"
+    raise RuntimeError(
+        "transition-resolved bounded B-Rep export blocked by transition failures "
+        f"({failure_count}): {detail_text}"
+    )
+
+
+def _format_transition_failure(source_name: str, failure: Any) -> str:
+    if not isinstance(failure, Mapping):
+        return f"{source_name}: {failure}"
+    identifiers = [
+        str(failure[key])
+        for key in ("edge_treatment_site_id", "edge_family", "transition_policy_id", "reason")
+        if failure.get(key) is not None
+    ]
+    if not identifiers:
+        identifiers = [json.dumps(dict(failure), sort_keys=True)]
+    return f"{source_name}: " + " | ".join(identifiers)
 
 
 def _bounded_brep_supported_surface_graph(surface_graph: dict[str, Any]) -> dict[str, Any]:

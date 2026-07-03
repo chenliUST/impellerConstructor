@@ -2,6 +2,7 @@ from pathlib import Path
 import struct
 
 from fastapi.testclient import TestClient
+import pytest
 
 from part_rule_synthesis.api import app, create_app
 from part_rule_synthesis.service import RuleSynthesisService
@@ -426,6 +427,28 @@ def test_impeller_v08_open_workflow_exports_transition_resolved_artifacts(tmp_pa
     assert set(manifest["exports"]) == {"step", "stl", "obj", "manifest"}
     for export_path in manifest["exports"].values():
         assert Path(export_path).exists()
+
+
+def test_impeller_v08_infeasible_transition_override_fails_before_export(tmp_path: Path):
+    model_output_root = tmp_path / "Model Output"
+    service = RuleSynthesisService(tmp_path / "runs", model_output_root=model_output_root)
+
+    engine = service.synthesize("impeller", "radial_open_reference_v0_8")
+    with pytest.raises(RuntimeError, match="transition failures.*blade_root_to_hub.*radius_exceeds_local_feasible_limit"):
+        service.instantiate(
+            engine.engine_id,
+            {},
+            transition_overrides={
+                "blade_root_to_hub.default": {
+                    "enabled": True,
+                    "treatment": "fillet",
+                    "radius_mm": 1000.0,
+                },
+            },
+        )
+
+    assert not list(model_output_root.glob("*.manifest.json"))
+    assert not list(model_output_root.glob("*.step"))
 
 
 def test_api_default_v06_exports_copy_to_cwd_model_output(tmp_path: Path, monkeypatch):
