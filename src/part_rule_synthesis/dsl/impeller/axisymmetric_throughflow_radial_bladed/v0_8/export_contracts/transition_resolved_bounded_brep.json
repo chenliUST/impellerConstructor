@@ -1,0 +1,23 @@
+{
+  "contract_id": "transition_resolved_bounded_brep",
+  "contract_version": "0.8",
+  "mode": "transition_resolved_bounded_brep",
+  "default_view": "cad_review_360",
+  "step_exactness": "transition_resolved_bounded_unsewn_brep_step",
+  "target_step_exactness": "transition_resolved_trimmed_brep_step",
+  "bounded_brep_status": "bounded_faces_unsewn",
+  "coverage_status": "complete_transition_resolved_surface_graph",
+  "cad_export_scope": "all_transition_resolved_surface_graph_cad_surfaces",
+  "unsupported_surface_policy": "fail_export",
+  "mesh_strategy": "transition_aware_surface_mesh",
+  "requires": [
+    "transition_resolved_surface_graph",
+    "trimmed_main_surfaces",
+    "transition_patches",
+    "transition_aware_surface_mesh",
+    "bounded_faces",
+    "complete_surface_graph_coverage",
+    "finite_bounding_box",
+    "occt_reimport_check"
+  ]
+}

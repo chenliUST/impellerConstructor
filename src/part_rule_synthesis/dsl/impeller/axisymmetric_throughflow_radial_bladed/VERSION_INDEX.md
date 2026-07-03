@@ -18,6 +18,7 @@ The versions are not replacements for one another. They are research checkpoints
 | `v0_5` | `radial_open_reference_v0_5`, `radial_closed_reference_v0_5` | Surface-graph-faithful export contract, STL/STEP region provenance, AP242 tessellated STEP, 12-blade default baseline, and honest STEP fidelity labels. |
 | `v0_6` | `radial_open_reference_v0_6`, `radial_closed_reference_v0_6` | NURBS/analytic B-Rep support-face STEP export, mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
 | `v0_7` | `radial_open_reference_v0_7`, `radial_closed_reference_v0_7` | Bounded B-Rep export contract, edge-family transition defaults, and runtime transition policy metadata. |
+| `v0_8` | `radial_open_reference_v0_8`, `radial_closed_reference_v0_8` | Additive transition-resolved B-Rep resource contract metadata and runtime transition-geometry status. |
 
 ## Folder Contract
 
@@ -64,7 +65,7 @@ Legacy v0.4 studies remain loadable:
 engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
 ```
 
-v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests. v0.7 is implemented by the `v0_7/` folder, runtime compiler support, bounded B-Rep export contract resources, edge-family transition defaults, and lineage tests.
+v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests. v0.7 is implemented by the `v0_7/` folder, runtime compiler support, bounded B-Rep export contract resources, edge-family transition defaults, and lineage tests. v0.8 is implemented by the `v0_8/` folder, runtime compiler support, transition-resolved B-Rep contract resources, and lineage tests.
 
 ## Historical Git Tags
 
@@ -128,4 +129,13 @@ families while preserving the v0.6 baseline geometry parameters:
 docs/evidence/2026-07-02-impeller-v0-7-bounded-transitions-and-mesh/README.md
 docs/superpowers/specs/2026-07-02-impeller-v0-7-bounded-transitions-and-mesh-design.md
 src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_7/CHANGELOG.md
+```
+
+## v0.8 Evidence
+
+The v0.8 resource line introduces additive transition-resolved contract metadata while
+preserving the v0.7 baseline geometry implementation:
+
+```text
+src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_8/CHANGELOG.md
 ```

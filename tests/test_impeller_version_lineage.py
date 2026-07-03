@@ -36,6 +36,11 @@ VERSION_CASES = [
         "0.7",
         ["radial_open_reference_v0_7", "radial_closed_reference_v0_7"],
     ),
+    (
+        "v0_8",
+        "0.8",
+        ["radial_open_reference_v0_8", "radial_closed_reference_v0_8"],
+    ),
 ]
 
 INSTANTIATE_LINEAGE_CASES = [

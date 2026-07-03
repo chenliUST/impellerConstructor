@@ -168,7 +168,7 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
         raise ValueError("impeller DSL schema constructor family mismatch")
     if bundle.schema["dsl_version"] in {"0.2", "0.3"} and bundle.shape_control_schema["default_stage"] != 1:
         raise ValueError("impeller v0.2/v0.3 shape control must default to stage 1")
-    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7"} and "design_space" not in bundle.shape_controls:
+    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7", "0.8"} and "design_space" not in bundle.shape_controls:
         raise ValueError("impeller v0.4+ shape controls must include design_space")
     if "hub_meridional_profile" not in bundle.shape_controls["target_entities"]:
         raise ValueError("default shape controls must include hub_meridional_profile")
@@ -189,7 +189,7 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
             raise ValueError(f"preset id mismatch: {preset_id}")
         if preset["constructor_id"] not in bundle.constructors:
             raise ValueError(f"preset {preset_id} references unknown constructor")
-    if bundle.schema["dsl_version"] == "0.7":
+    if bundle.schema["dsl_version"] in {"0.7", "0.8"}:
         _validate_v07_edge_family_contracts(bundle)
 
 
