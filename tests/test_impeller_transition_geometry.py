@@ -852,6 +852,133 @@ def test_v08_disabled_blade_root_transition_restores_sharp_boundary():
     assert "hub_root" not in surfaces["blade_0_suction_surface"].get("trimmed_boundaries", {})
 
 
+def test_v08_root_infeasible_radius_clears_stale_adjacent_trim_metadata():
+    surface_graph = {
+        "surfaces": [
+            {
+                "id": "blade_0_pressure_surface",
+                "uv_grid": [
+                    [[10.0, 0.0, 0.0], [9.0, 0.0, 0.0]],
+                    [[10.0, 1.0, 0.0], [9.0, 1.0, 0.0]],
+                ],
+                "trimmed_boundaries": {
+                    "hub_root": {"edge_treatment_site_id": "blade_0.root_to_hub"},
+                    "leading_edge": {"edge_treatment_site_id": "blade_0.leading_edge"},
+                },
+            },
+            {
+                "id": "blade_0_suction_surface",
+                "uv_grid": [
+                    [[8.0, 0.0, 0.0], [7.0, 0.0, 0.0]],
+                    [[8.0, 1.0, 0.0], [7.0, 1.0, 0.0]],
+                ],
+                "trimmed_boundaries": {
+                    "hub_root": {"edge_treatment_site_id": "blade_0.root_to_hub"},
+                },
+            },
+            {
+                "id": "blade_0_root_transition_surface",
+                "edge_family": "blade_root_to_hub",
+                "uv_grid": [],
+                "radius_mm": 8.0,
+                "transition_policy_id": "blade_root_to_hub.default",
+                "treatment": "fillet",
+                "transition_geometry": "resolved_fillet_patch",
+                "transition_quality": {"has_resolved_patch": True},
+            },
+            {
+                "id": "hub_revolve_surface",
+                "uv_grid": [],
+                "trimmed_boundaries": {
+                    "blade_0_root": {"edge_treatment_site_id": "blade_0.root_to_hub"},
+                },
+            },
+        ],
+    }
+
+    resolution = resolve_transition_geometry(
+        surface_graph,
+        transition_policies={
+            "blade_root_to_hub.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": 1000.0,
+            }
+        },
+        geometry_version="0.8",
+    )
+
+    surfaces = {
+        surface["id"]: surface
+        for surface in resolution.surface_graph["surfaces"]
+    }
+
+    assert resolution.transition_failures[0]["reason"] == "radius_exceeds_local_feasible_limit"
+    assert "hub_root" not in surfaces["blade_0_pressure_surface"]["trimmed_boundaries"]
+    assert "leading_edge" in surfaces["blade_0_pressure_surface"]["trimmed_boundaries"]
+    assert "hub_root" not in surfaces["blade_0_suction_surface"].get("trimmed_boundaries", {})
+    assert "blade_0_root" not in surfaces["hub_revolve_surface"].get("trimmed_boundaries", {})
+
+
+@pytest.mark.parametrize("radius_mm", [None, "abc", float("nan"), float("inf")])
+def test_v08_enabled_policy_with_malformed_radius_records_failure(radius_mm):
+    surface_graph = {
+        "surfaces": [
+            {
+                "id": "blade_0_pressure_surface",
+                "uv_grid": [
+                    [[10.0, 0.0, 0.0], [9.0, 0.0, 0.0]],
+                    [[10.0, 1.0, 0.0], [9.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "blade_0_suction_surface",
+                "uv_grid": [
+                    [[8.0, 0.0, 0.0], [7.0, 0.0, 0.0]],
+                    [[8.0, 1.0, 0.0], [7.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "blade_0_root_transition_surface",
+                "edge_family": "blade_root_to_hub",
+                "uv_grid": [],
+            },
+            {
+                "id": "hub_revolve_surface",
+                "uv_grid": [],
+            },
+        ],
+    }
+
+    resolution = resolve_transition_geometry(
+        surface_graph,
+        transition_policies={
+            "blade_root_to_hub.default": {
+                "enabled": True,
+                "treatment": "fillet",
+                "radius_mm": radius_mm,
+            }
+        },
+        geometry_version="0.8",
+    )
+    quality_checks = {
+        check["check_id"]: check
+        for check in resolution.quality_checks
+    }
+
+    assert resolution.transition_failures == [
+        {
+            "edge_treatment_site_id": "blade_0.root_to_hub",
+            "edge_family": "blade_root_to_hub",
+            "transition_policy_id": "blade_root_to_hub.default",
+            "status": "FAIL",
+            "reason": "invalid_transition_radius",
+        }
+    ]
+    assert quality_checks["required_transition_geometry_resolved"]["status"] == "FAIL"
+    assert quality_checks["required_transition_geometry_resolved"]["failure_count"] == 1
+
+
 def test_v08_malformed_blade_root_grid_records_failure_without_partial_trim():
     surface_graph = {
         "surfaces": [

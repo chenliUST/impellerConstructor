@@ -283,8 +283,21 @@ def _resolve_v08_transition_geometry(
     site_dicts: list[dict[str, Any]] = []
     transition_failures: list[dict[str, Any]] = []
 
-    if _policy_enabled(policy):
-        surface_by_id = {surface["id"]: surface for surface in surfaces}
+    surface_by_id = {surface["id"]: surface for surface in surfaces}
+    if _policy_invalid_radius(policy):
+        for blade_index in _blade_indices_from_pressure_surfaces(surfaces):
+            root_id = f"blade_{blade_index}_root_transition_surface"
+            if root_id in surface_by_id:
+                _clear_transition_success_metadata(surface_by_id[root_id])
+            _clear_blade_root_adjacent_trim_metadata(surface_by_id, blade_index)
+            transition_failures.append(
+                _invalid_radius_failure(
+                    "blade_root_to_hub",
+                    policy,
+                    site_id=f"blade_{blade_index}.root_to_hub",
+                )
+            )
+    elif _policy_enabled(policy):
         for blade_index in _blade_indices_from_pressure_surfaces(surfaces):
             failure = _radius_feasibility_failure(
                 "blade_root_to_hub",
@@ -296,6 +309,7 @@ def _resolve_v08_transition_geometry(
                 root_id = f"blade_{blade_index}_root_transition_surface"
                 if root_id in surface_by_id:
                     _clear_transition_success_metadata(surface_by_id[root_id])
+                _clear_blade_root_adjacent_trim_metadata(surface_by_id, blade_index)
                 transition_failures.append(failure)
                 continue
             try:
@@ -317,6 +331,20 @@ def _resolve_v08_transition_geometry(
     blade_indices = _blade_indices_from_pressure_surfaces(surfaces)
     for spec in _active_blade_edge_specs(transition_policies):
         policy = transition_policies.get(f"{spec.edge_family}.default")
+        if _policy_invalid_radius(policy):
+            for blade_index in blade_indices:
+                transition_id = f"blade_{blade_index}_{spec.surface_suffix}"
+                if transition_id in surface_by_id:
+                    _clear_transition_success_metadata(surface_by_id[transition_id])
+                _clear_blade_edge_adjacent_trim_metadata(surface_by_id, blade_index, spec.site_suffix)
+                transition_failures.append(
+                    _invalid_radius_failure(
+                        spec.edge_family,
+                        policy,
+                        site_id=f"blade_{blade_index}.{spec.site_suffix}",
+                    )
+                )
+            continue
         if not _policy_enabled(policy):
             _remove_surfaces_by_edge_family(surfaces, spec.edge_family)
             surface_by_id = {surface["id"]: surface for surface in surfaces}
@@ -332,6 +360,7 @@ def _resolve_v08_transition_geometry(
                 transition_id = f"blade_{blade_index}_{spec.surface_suffix}"
                 if transition_id in surface_by_id:
                     _clear_transition_success_metadata(surface_by_id[transition_id])
+                _clear_blade_edge_adjacent_trim_metadata(surface_by_id, blade_index, spec.site_suffix)
                 transition_failures.append(failure)
                 continue
             try:
@@ -351,6 +380,10 @@ def _resolve_v08_transition_geometry(
     for spec in _AXISYMMETRIC_TRANSITION_SPECS:
         policy = transition_policies.get(f"{spec.edge_family}.default")
         if spec.surface_id not in surface_by_id:
+            continue
+        if _policy_invalid_radius(policy):
+            _clear_transition_success_metadata(surface_by_id[spec.surface_id])
+            transition_failures.append(_invalid_radius_failure(spec.edge_family, policy))
             continue
         if not _policy_enabled(policy):
             _remove_surfaces_by_edge_family_or_id(surfaces, spec.edge_family, spec.surface_id)
@@ -417,7 +450,8 @@ def _resolve_v08_transition_geometry(
 
 
 def _active_blade_edge_specs(transition_policies: dict[str, Any]) -> tuple[BladeEdgeSpec, ...]:
-    if _policy_enabled(transition_policies.get("blade_tip_to_shroud.default")):
+    tip_to_shroud_policy = transition_policies.get("blade_tip_to_shroud.default")
+    if _policy_enabled(tip_to_shroud_policy) or _policy_invalid_radius(tip_to_shroud_policy):
         return (
             *[
                 spec
@@ -429,13 +463,30 @@ def _active_blade_edge_specs(transition_policies: dict[str, Any]) -> tuple[Blade
     return _BLADE_EDGE_SPECS
 
 
+def _invalid_radius_failure(
+    edge_family: str,
+    policy: dict[str, Any] | None,
+    site_id: str | None = None,
+) -> dict[str, Any]:
+    policy = policy or {}
+    return {
+        "edge_treatment_site_id": site_id or edge_family,
+        "edge_family": edge_family,
+        "transition_policy_id": str(policy.get("policy_id", f"{edge_family}.default")),
+        "status": "FAIL",
+        "reason": "invalid_transition_radius",
+    }
+
+
 def _radius_feasibility_failure(
     edge_family: str,
     policy: dict[str, Any],
     suggested_max_radius_mm: float,
     site_id: str | None = None,
 ) -> dict[str, Any] | None:
-    requested_radius_mm = float(policy.get("radius_mm", 0.0))
+    requested_radius_mm = _transition_policy_radius(policy)
+    if requested_radius_mm is None:
+        return None
     if requested_radius_mm <= suggested_max_radius_mm:
         return None
     return {
@@ -677,12 +728,46 @@ def _clear_transition_success_metadata(surface: dict[str, Any]) -> None:
         surface.pop(metadata_key, None)
 
 
+def _clear_blade_root_adjacent_trim_metadata(
+    surface_by_id: dict[str, dict[str, Any]],
+    blade_index: int,
+) -> None:
+    _clear_trimmed_boundary(surface_by_id.get(f"blade_{blade_index}_pressure_surface"), "hub_root")
+    _clear_trimmed_boundary(surface_by_id.get(f"blade_{blade_index}_suction_surface"), "hub_root")
+    _clear_trimmed_boundary(surface_by_id.get("hub_revolve_surface"), f"blade_{blade_index}_root")
+
+
+def _clear_blade_edge_adjacent_trim_metadata(
+    surface_by_id: dict[str, dict[str, Any]],
+    blade_index: int,
+    boundary_key: str,
+) -> None:
+    _clear_trimmed_boundary(surface_by_id.get(f"blade_{blade_index}_pressure_surface"), boundary_key)
+    _clear_trimmed_boundary(surface_by_id.get(f"blade_{blade_index}_suction_surface"), boundary_key)
+
+
+def _clear_trimmed_boundary(surface: dict[str, Any] | None, boundary_key: str) -> None:
+    if not surface or not isinstance(surface.get("trimmed_boundaries"), dict):
+        return
+    trimmed_boundaries = dict(surface["trimmed_boundaries"])
+    trimmed_boundaries.pop(boundary_key, None)
+    if trimmed_boundaries:
+        surface["trimmed_boundaries"] = trimmed_boundaries
+    else:
+        surface.pop("trimmed_boundaries", None)
+
+
 def _copy_surface(surface: dict[str, Any]) -> dict[str, Any]:
     copied = {**surface}
     if "uv_grid" in copied:
         copied["uv_grid"] = _copy_uv_grid(copied["uv_grid"])
     if "display" in copied:
         copied["display"] = dict(copied["display"])
+    if "trimmed_boundaries" in copied and isinstance(copied["trimmed_boundaries"], dict):
+        copied["trimmed_boundaries"] = {
+            key: dict(value) if isinstance(value, dict) else value
+            for key, value in copied["trimmed_boundaries"].items()
+        }
     return copied
 
 
@@ -703,12 +788,28 @@ def _copy_uv_grid(uv_grid: Any) -> Any:
 
 
 def _policy_enabled(policy: dict[str, Any] | None) -> bool:
-    return bool(
-        policy
-        and policy.get("enabled")
-        and policy.get("treatment") != "none"
-        and float(policy.get("radius_mm", 0.0)) > 0.0
-    )
+    radius = _transition_policy_radius(policy)
+    return _policy_active(policy) and radius is not None and radius > 0.0
+
+
+def _policy_active(policy: dict[str, Any] | None) -> bool:
+    return bool(policy and policy.get("enabled") and policy.get("treatment") != "none")
+
+
+def _policy_invalid_radius(policy: dict[str, Any] | None) -> bool:
+    return _policy_active(policy) and _transition_policy_radius(policy) is None
+
+
+def _transition_policy_radius(policy: dict[str, Any] | None) -> float | None:
+    if not policy:
+        return None
+    try:
+        radius = float(policy.get("radius_mm", 0.0))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(radius):
+        return None
+    return radius
 
 
 def _trim_fraction_for_radius(radius_mm: float) -> float:
