@@ -13,7 +13,7 @@ class SharedNode:
     point: Point3
 
 
-@dataclass
+@dataclass(eq=False)
 class SharedEdge:
     edge_id: str
     node_ids: list[str]
@@ -22,7 +22,7 @@ class SharedEdge:
     physical_boundary: bool = False
 
 
-@dataclass
+@dataclass(eq=False)
 class Patch:
     patch_id: str
     surface_graph_id: str
@@ -34,7 +34,7 @@ class Patch:
     treatment: str = ""
 
 
-@dataclass
+@dataclass(eq=False)
 class PatchComplex:
     nodes: dict[str, SharedNode] = field(default_factory=dict)
     edges: dict[str, SharedEdge] = field(default_factory=dict)
@@ -42,13 +42,14 @@ class PatchComplex:
     boundary_node_identity_failures: list[dict] = field(default_factory=list)
 
     def add_node(self, node_id: str, point: Point3) -> str:
+        normalized_point = tuple(float(value) for value in point)
         existing = self.nodes.get(node_id)
-        if existing is not None and existing.point != point:
+        if existing is None:
+            self.nodes[node_id] = SharedNode(node_id=node_id, point=normalized_point)
+        elif point_key(existing.point) != point_key(normalized_point):
             self.boundary_node_identity_failures.append(
-                {"node_id": node_id, "first_point": existing.point, "second_point": point}
+                {"node_id": node_id, "first_point": existing.point, "second_point": normalized_point}
             )
-        else:
-            self.nodes[node_id] = SharedNode(node_id=node_id, point=point)
         return node_id
 
     def add_edge(
@@ -67,17 +68,55 @@ class PatchComplex:
                 role=role,
                 physical_boundary=physical_boundary,
             )
-        elif edge.node_ids != ids and edge.node_ids != list(reversed(ids)):
-            self.boundary_node_identity_failures.append(
-                {"edge_id": edge_id, "first_nodes": edge.node_ids, "second_nodes": ids}
-            )
+        else:
+            if edge.node_ids != ids and edge.node_ids != list(reversed(ids)):
+                self.boundary_node_identity_failures.append(
+                    {
+                        "edge_id": edge_id,
+                        "first_nodes": list(edge.node_ids),
+                        "second_nodes": list(ids),
+                    }
+                )
+            if edge.role != role or edge.physical_boundary != physical_boundary:
+                self.boundary_node_identity_failures.append(
+                    {
+                        "edge_id": edge_id,
+                        "first_role": edge.role,
+                        "second_role": role,
+                        "first_physical_boundary": edge.physical_boundary,
+                        "second_physical_boundary": physical_boundary,
+                    }
+                )
+        self._backfill_edge_adjacency(edge_id)
         return edge_id
 
     def add_patch(self, patch: Patch) -> None:
+        existing = self.patches.get(patch.patch_id)
+        if existing is not None:
+            self._remove_patch_adjacency(existing)
         self.patches[patch.patch_id] = patch
         for edge_id in patch.edge_ids:
-            if edge_id in self.edges and patch.patch_id not in self.edges[edge_id].adjacent_patch_ids:
-                self.edges[edge_id].adjacent_patch_ids.append(patch.patch_id)
+            self._add_edge_adjacency(edge_id, patch.patch_id)
+
+    def _backfill_edge_adjacency(self, edge_id: str) -> None:
+        for patch in self.patches.values():
+            if edge_id in patch.edge_ids:
+                self._add_edge_adjacency(edge_id, patch.patch_id)
+
+    def _add_edge_adjacency(self, edge_id: str, patch_id: str) -> None:
+        edge = self.edges.get(edge_id)
+        if edge is not None and patch_id not in edge.adjacent_patch_ids:
+            edge.adjacent_patch_ids.append(patch_id)
+
+    def _remove_patch_adjacency(self, patch: Patch) -> None:
+        for edge_id in patch.edge_ids:
+            edge = self.edges.get(edge_id)
+            if edge is not None:
+                edge.adjacent_patch_ids = [
+                    patch_id
+                    for patch_id in edge.adjacent_patch_ids
+                    if patch_id != patch.patch_id
+                ]
 
 
 def point_key(point: Iterable[float], tolerance: float = 1.0e-6) -> str:
