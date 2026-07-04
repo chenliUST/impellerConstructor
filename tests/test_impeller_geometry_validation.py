@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from part_rule_synthesis.impeller_geometry_validation import (
     build_geometry_validation_report,
     geometry_validation_blocks_export,
 )
+from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
+from part_rule_synthesis.service import _bind_parameters, _geometry_metadata, _impeller_geometry_validation_report
 
 
 def _minimal_validated_graph(*surfaces: dict) -> dict:
@@ -231,3 +242,152 @@ def test_v09_validation_rejects_legacy_single_root_success_surface(legacy_surfac
 
     assert report["geometry_validation_status"] == "FAIL"
     assert any(failure["reason"] == "legacy_single_root_transition_surface" for failure in report["blocking_failures"])
+
+
+def _minimal_v091_graph(
+    *,
+    topology_report: dict | None = None,
+    mesh_report: dict | None = None,
+) -> dict:
+    graph = {
+        "transition_geometry_status": "topology_first_validated_transition_graph",
+        "surfaces": [],
+        "transition_topology_report": {
+            "corner_patch_count": 6,
+            "required_corner_patch_count": 6,
+            "boundary_node_identity_failures": [],
+        },
+    }
+    if topology_report is not None:
+        graph["transition_topology_report"] = topology_report
+    if mesh_report is not None:
+        graph["mesh_manifoldness_report"] = mesh_report
+    return graph
+
+
+def _clean_v091_mesh_report(**overrides: int) -> dict:
+    report = {
+        "vertex_count": 8,
+        "face_count": 12,
+        "free_edge_count": 0,
+        "nonmanifold_edge_count": 0,
+        "duplicate_face_count": 0,
+        "zero_area_face_count": 0,
+        "source_patch_free_edge_count": 4,
+        "synthetic_closure_triangle_count": 4,
+        "closure_policy": "synthetic_review_fan_caps_for_undeclared_free_edge_loops",
+    }
+    report.update(overrides)
+    return report
+
+
+def test_v091_validation_fails_when_mesh_report_is_missing():
+    report = build_geometry_validation_report(
+        parameters={},
+        facets={},
+        transition_policies={},
+        surface_graph=_minimal_v091_graph(),
+        capability_matrix_id="impeller_v0_91_kernel_capabilities",
+    )
+
+    assert report["geometry_validation_status"] == "FAIL"
+    assert geometry_validation_blocks_export(report) is True
+    assert any(failure["reason"] == "missing_mesh_manifoldness_report" for failure in report["blocking_failures"])
+
+
+@pytest.mark.parametrize(
+    ("mesh_counts", "reason"),
+    [
+        ({"free_edge_count": 1}, "mesh_has_free_edges"),
+        ({"nonmanifold_edge_count": 1}, "mesh_has_nonmanifold_edges"),
+        ({"zero_area_face_count": 1}, "mesh_has_zero_area_faces"),
+    ],
+)
+def test_v091_validation_fails_on_dirty_final_mesh_counts(mesh_counts: dict, reason: str):
+    report = build_geometry_validation_report(
+        parameters={},
+        facets={},
+        transition_policies={},
+        surface_graph=_minimal_v091_graph(mesh_report=_clean_v091_mesh_report(**mesh_counts)),
+        capability_matrix_id="impeller_v0_91_kernel_capabilities",
+    )
+
+    assert report["geometry_validation_status"] == "FAIL"
+    assert any(failure["reason"] == reason for failure in report["blocking_failures"])
+
+
+def test_v091_validation_fails_on_missing_required_corner_patches():
+    report = build_geometry_validation_report(
+        parameters={},
+        facets={},
+        transition_policies={},
+        surface_graph=_minimal_v091_graph(
+            topology_report={
+                "corner_patch_count": 5,
+                "required_corner_patch_count": 6,
+                "boundary_node_identity_failures": [],
+            },
+            mesh_report=_clean_v091_mesh_report(),
+        ),
+        capability_matrix_id="impeller_v0_91_kernel_capabilities",
+    )
+
+    assert report["geometry_validation_status"] == "FAIL"
+    assert any(failure["reason"] == "missing_required_corner_patches" for failure in report["blocking_failures"])
+
+
+def test_v091_validation_fails_on_boundary_node_identity_failures():
+    report = build_geometry_validation_report(
+        parameters={},
+        facets={},
+        transition_policies={},
+        surface_graph=_minimal_v091_graph(
+            topology_report={
+                "corner_patch_count": 6,
+                "required_corner_patch_count": 6,
+                "boundary_node_identity_failures": [{"edge_id": "edge-a"}],
+            },
+            mesh_report=_clean_v091_mesh_report(),
+        ),
+        capability_matrix_id="impeller_v0_91_kernel_capabilities",
+    )
+
+    assert report["geometry_validation_status"] == "FAIL"
+    assert any(failure["reason"] == "boundary_node_identity_failed" for failure in report["blocking_failures"])
+
+
+def test_v091_default_service_validation_passes_with_explicit_synthetic_closure_caveat():
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_91")
+    parameters = _bind_parameters(runtime, {})
+    edge_families = runtime.get("edge_families", {})
+    transition_policies = resolve_transition_policies(edge_families, parameters, None)
+
+    geometry = _geometry_metadata(
+        "impeller",
+        parameters,
+        runtime["facets"],
+        dsl_context=runtime,
+        edge_families=edge_families,
+        transition_policies=transition_policies,
+    )
+    validation_report = _impeller_geometry_validation_report(
+        runtime,
+        parameters,
+        geometry,
+        transition_policies,
+    )
+
+    graph = geometry["surface_graph"]
+    mesh_report = graph["mesh_manifoldness_report"]
+    assert validation_report["geometry_validation_status"] == "PASS"
+    assert mesh_report["free_edge_count"] == 0
+    assert mesh_report["nonmanifold_edge_count"] == 0
+    assert mesh_report["zero_area_face_count"] == 0
+    assert mesh_report["source_patch_free_edge_count"] > 0
+    assert validation_report["transition_validation_summary"]["source_patch_free_edge_count"] == mesh_report[
+        "source_patch_free_edge_count"
+    ]
+    assert any(
+        claim["reason"] == "synthetic_mesh_closure_review_caveat"
+        for claim in validation_report["unsupported_claims"]
+    )

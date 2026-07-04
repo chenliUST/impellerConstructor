@@ -8,6 +8,7 @@ from typing import Any
 
 PASS = "PASS"
 FAIL = "FAIL"
+V091_TRANSITION_GEOMETRY_STATUS = "topology_first_validated_transition_graph"
 ROOT_LEGACY_RE = re.compile(r"^blade_\d+_root_transition_surface$")
 PRESSURE_ROOT_RE = re.compile(r"^blade_\d+_pressure_root_transition_surface$")
 SUCTION_ROOT_RE = re.compile(r"^blade_\d+_suction_root_transition_surface$")
@@ -66,12 +67,20 @@ def build_geometry_validation_report(
             blocking_failures,
         )
 
+    _validate_v091_topology_and_mesh(graph, blocking_failures)
+
     for check_id, reason in [
         ("transition_convexity", "fillet_convexity_failed"),
         ("adjacent_trim_coverage", "adjacent_surface_not_trimmed"),
         ("transition_radius_sync", "transition_radius_not_synchronized"),
         ("disabled_transition_surfaces", "disabled_policy_has_transition_surface"),
         ("double_sided_root_topology", "legacy_single_root_transition_surface"),
+        ("v091_required_corner_patches", "missing_required_corner_patches"),
+        ("v091_boundary_node_identity", "boundary_node_identity_failed"),
+        ("v091_mesh_manifoldness_report", "missing_mesh_manifoldness_report"),
+        ("v091_final_mesh_free_edges", "mesh_has_free_edges"),
+        ("v091_final_mesh_nonmanifold_edges", "mesh_has_nonmanifold_edges"),
+        ("v091_final_mesh_zero_area_faces", "mesh_has_zero_area_faces"),
     ]:
         checks.append(
             {
@@ -81,12 +90,13 @@ def build_geometry_validation_report(
         )
 
     status = FAIL if blocking_failures else PASS
-    summary = _transition_validation_summary(transition_surfaces, blocking_failures)
+    unsupported_claims = _unsupported_claims(graph)
+    summary = _transition_validation_summary(transition_surfaces, blocking_failures, graph)
     return {
         "geometry_validation_status": status,
         "kernel_capability_matrix_id": capability_matrix_id,
         "capability_claim_level": "review_grade_validated" if status == PASS else "blocked_review_grade",
-        "unsupported_claims": [],
+        "unsupported_claims": unsupported_claims,
         "parameters_observed": parameters or {},
         "facets_observed": facets or {},
         "checks": checks,
@@ -282,18 +292,150 @@ def _surface_has_trim_for_site(surface: Mapping[str, Any], site_id: str) -> bool
     return False
 
 
+def _validate_v091_topology_and_mesh(
+    graph: Mapping[str, Any],
+    blocking_failures: list[dict[str, Any]],
+) -> None:
+    if graph.get("transition_geometry_status") != V091_TRANSITION_GEOMETRY_STATUS:
+        return
+
+    topology_report = graph.get("transition_topology_report")
+    if not isinstance(topology_report, Mapping):
+        blocking_failures.append(_failure("missing_transition_topology_report"))
+        topology_report = {}
+
+    corner_patch_count = _int_or_zero(topology_report.get("corner_patch_count"))
+    required_corner_patch_count = _int_or_zero(topology_report.get("required_corner_patch_count"))
+    if corner_patch_count < required_corner_patch_count:
+        blocking_failures.append(
+            _failure(
+                "missing_required_corner_patches",
+                corner_patch_count=corner_patch_count,
+                required_corner_patch_count=required_corner_patch_count,
+            )
+        )
+
+    boundary_failures = topology_report.get("boundary_node_identity_failures")
+    if boundary_failures:
+        blocking_failures.append(
+            _failure(
+                "boundary_node_identity_failed",
+                boundary_node_identity_failure_count=len(boundary_failures)
+                if isinstance(boundary_failures, list)
+                else 1,
+            )
+        )
+
+    mesh_report = graph.get("mesh_manifoldness_report")
+    if not isinstance(mesh_report, Mapping):
+        blocking_failures.append(_failure("missing_mesh_manifoldness_report"))
+        return
+
+    _append_positive_count_failure(
+        mesh_report,
+        blocking_failures,
+        "free_edge_count",
+        "mesh_has_free_edges",
+    )
+    _append_positive_count_failure(
+        mesh_report,
+        blocking_failures,
+        "nonmanifold_edge_count",
+        "mesh_has_nonmanifold_edges",
+    )
+    _append_positive_count_failure(
+        mesh_report,
+        blocking_failures,
+        "zero_area_face_count",
+        "mesh_has_zero_area_faces",
+    )
+    _append_positive_count_failure(
+        mesh_report,
+        blocking_failures,
+        "duplicate_face_count",
+        "mesh_has_duplicate_faces",
+    )
+
+
+def _append_positive_count_failure(
+    report: Mapping[str, Any],
+    blocking_failures: list[dict[str, Any]],
+    count_key: str,
+    reason: str,
+) -> None:
+    count = _int_or_zero(report.get(count_key))
+    if count > 0:
+        blocking_failures.append(_failure(reason, **{count_key: count}))
+
+
+def _unsupported_claims(graph: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if graph.get("transition_geometry_status") != V091_TRANSITION_GEOMETRY_STATUS:
+        return []
+    mesh_report = graph.get("mesh_manifoldness_report")
+    if not isinstance(mesh_report, Mapping):
+        return []
+    source_patch_free_edge_count = _int_or_zero(mesh_report.get("source_patch_free_edge_count"))
+    synthetic_closure_triangle_count = _int_or_zero(mesh_report.get("synthetic_closure_triangle_count"))
+    if source_patch_free_edge_count <= 0 and synthetic_closure_triangle_count <= 0:
+        return []
+    return [
+        {
+            "reason": "synthetic_mesh_closure_review_caveat",
+            "blocking": False,
+            "source_patch_free_edge_count": source_patch_free_edge_count,
+            "synthetic_closure_triangle_count": synthetic_closure_triangle_count,
+            "closure_policy": mesh_report.get("closure_policy"),
+            "detail": (
+                "source transition patches had free edges before synthetic review closure; "
+                "final mesh manifoldness gates are evaluated after closure"
+            ),
+        }
+    ]
+
+
 def _transition_validation_summary(
     transition_surfaces: list[Mapping[str, Any]],
     blocking_failures: list[dict[str, Any]],
+    graph: Mapping[str, Any],
 ) -> dict[str, Any]:
     by_family = Counter(str(surface.get("edge_family") or "unspecified") for surface in transition_surfaces)
     failures_by_reason = Counter(failure["reason"] for failure in blocking_failures)
-    return {
+    summary = {
         "transition_surface_count": len(transition_surfaces),
         "transition_surface_count_by_family": dict(sorted(by_family.items())),
         "blocking_failure_count": len(blocking_failures),
         "blocking_failure_count_by_reason": dict(sorted(failures_by_reason.items())),
     }
+    if graph.get("transition_geometry_status") == V091_TRANSITION_GEOMETRY_STATUS:
+        topology_report = graph.get("transition_topology_report")
+        if isinstance(topology_report, Mapping):
+            summary.update(
+                {
+                    "corner_patch_count": _int_or_zero(topology_report.get("corner_patch_count")),
+                    "required_corner_patch_count": _int_or_zero(
+                        topology_report.get("required_corner_patch_count")
+                    ),
+                    "boundary_node_identity_failure_count": len(
+                        topology_report.get("boundary_node_identity_failures") or []
+                    ),
+                }
+            )
+        mesh_report = graph.get("mesh_manifoldness_report")
+        if isinstance(mesh_report, Mapping):
+            summary.update(
+                {
+                    "mesh_free_edge_count": _int_or_zero(mesh_report.get("free_edge_count")),
+                    "mesh_nonmanifold_edge_count": _int_or_zero(mesh_report.get("nonmanifold_edge_count")),
+                    "mesh_zero_area_face_count": _int_or_zero(mesh_report.get("zero_area_face_count")),
+                    "source_patch_free_edge_count": _int_or_zero(
+                        mesh_report.get("source_patch_free_edge_count")
+                    ),
+                    "synthetic_closure_triangle_count": _int_or_zero(
+                        mesh_report.get("synthetic_closure_triangle_count")
+                    ),
+                }
+            )
+    return summary
 
 
 def _policy_enabled(policy: Mapping[str, Any]) -> bool:
@@ -307,6 +449,15 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _int_or_zero(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _failure(reason: str, **metadata: Any) -> dict[str, Any]:

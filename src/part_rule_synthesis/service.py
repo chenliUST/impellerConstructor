@@ -299,6 +299,9 @@ class RuleSynthesisService:
                 manifest["kernel_capability_matrix_id"] = geometry_validation_report.get("kernel_capability_matrix_id")
                 manifest["capability_claim_level"] = geometry_validation_report.get("capability_claim_level")
                 manifest["unsupported_claims"] = geometry_validation_report.get("unsupported_claims", [])
+            if manifest["dsl_version"] == "0.91":
+                manifest["transition_topology_report"] = surface_graph.get("transition_topology_report", {})
+                manifest["mesh_manifoldness_report"] = surface_graph.get("mesh_manifoldness_report", {})
             manifest["unsupported_transition_count"] = len(transition_failures)
             manifest["transition_failure_count"] = len(transition_failures)
         if transition_policies is not None:
@@ -764,11 +767,40 @@ def _geometry_metadata(
         ),
         "parameters": parameters,
     }
+    _attach_v091_patch_mesh_reports(metadata)
     if is_impeller and impeller_geometry.get("edge_families"):
         metadata["edge_families"] = impeller_geometry["edge_families"]
     if is_impeller and impeller_geometry.get("transition_policies"):
         metadata["transition_policies"] = impeller_geometry["transition_policies"]
     return metadata
+
+
+def _attach_v091_patch_mesh_reports(geometry_metadata: dict[str, Any]) -> None:
+    surface_graph = geometry_metadata.get("surface_graph")
+    if not isinstance(surface_graph, dict):
+        return
+    if surface_graph.get("transition_geometry_status") != "topology_first_validated_transition_graph":
+        return
+    if isinstance(surface_graph.get("mesh_manifoldness_report"), Mapping):
+        return
+
+    try:
+        from part_rule_synthesis.impeller_patch_mesh import build_patch_mesh
+
+        mesh = build_patch_mesh(surface_graph)
+    except (KeyError, TypeError, ValueError) as exc:
+        surface_graph["mesh_manifoldness_report_error"] = str(exc)
+        return
+
+    for key in (
+        "mesh_manifoldness_report",
+        "source_patch_incidence_report",
+        "final_mesh_incidence_report",
+        "mesh_closure_report",
+        "mesh_closure_regions",
+    ):
+        if key in mesh:
+            surface_graph[key] = mesh[key]
 
 
 def _geometry_kernel_metadata(
