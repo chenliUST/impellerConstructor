@@ -7,6 +7,8 @@ from typing import Any, Iterable
 Point3 = tuple[float, float, float]
 
 _EPSILON = 1.0e-9
+_MIN_INCLUDED_ANGLE_DEG = 1.0
+_MIN_INCLUDED_ANGLE_RAD = math.radians(_MIN_INCLUDED_ANGLE_DEG)
 _MIN_FILLET_SAMPLE_COUNT = 9
 
 
@@ -24,6 +26,7 @@ def build_fillet_section(
     radius = _positive_finite(radius_mm, "fillet radius_mm")
     edge = _point3(edge_point, "edge_point")
     tangent_unit = _unit_vector(tangent, "tangent")
+    requested_convexity_sign = _sign(convexity_sign, "convexity_sign")
     first_unit = _unit_vector(
         _project_perpendicular(first_retained_direction, tangent_unit),
         "first_retained_direction projected perpendicular to tangent",
@@ -33,10 +36,8 @@ def build_fillet_section(
         "second_retained_direction projected perpendicular to tangent",
     )
 
-    dot_directions = _clamp(_dot(first_unit, second_unit), -1.0, 1.0)
-    included_angle = math.acos(dot_directions)
-    if included_angle <= _EPSILON or math.pi - included_angle <= _EPSILON:
-        raise ValueError("fillet retained directions must form a nondegenerate angle")
+    included_angle = _included_angle(first_unit, second_unit)
+    _validate_included_angle(included_angle, "fillet retained directions")
 
     bisector = _unit_vector(
         _add(first_unit, second_unit),
@@ -50,12 +51,26 @@ def build_fillet_section(
 
     start_radius = _subtract(first_trim_point, center)
     end_radius = _subtract(second_trim_point, center)
-    signed_arc_angle = math.atan2(
-        _dot(_cross(start_radius, end_radius), tangent_unit),
-        _dot(start_radius, end_radius),
-    )
+    signed_arc_angle = _signed_angle_about_axis(start_radius, end_radius, tangent_unit)
     if abs(signed_arc_angle) <= _EPSILON:
         raise ValueError("fillet arc angle is degenerate")
+
+    actual_convexity_sign = _orientation_sign_relative_to_tangent(
+        start_radius,
+        end_radius,
+        tangent_unit,
+        "fillet arc orientation",
+    )
+    if actual_convexity_sign != requested_convexity_sign:
+        first_trim_point, second_trim_point = second_trim_point, first_trim_point
+        start_radius, end_radius = end_radius, start_radius
+        signed_arc_angle = _signed_angle_about_axis(start_radius, end_radius, tangent_unit)
+        actual_convexity_sign = _orientation_sign_relative_to_tangent(
+            start_radius,
+            end_radius,
+            tangent_unit,
+            "fillet arc orientation",
+        )
 
     points = [
         _add(center, _rotate_about_axis(start_radius, tangent_unit, signed_arc_angle * parameter))
@@ -70,7 +85,7 @@ def build_fillet_section(
             "section_sample_count": len(points),
             "included_angle_deg": math.degrees(included_angle),
             "radius_max_error_mm": _max_radius_error(points, center=center, radius_mm=radius),
-            "convexity_sign": _sign(convexity_sign, "convexity_sign"),
+            "convexity_sign": actual_convexity_sign,
             "trim_distance_mm": trim_distance,
         },
     }
@@ -79,6 +94,7 @@ def build_fillet_section(
 def build_chamfer_section(
     *,
     edge_point: Point3,
+    tangent: Point3,
     first_retained_direction: Point3,
     second_retained_direction: Point3,
     distance_mm: float,
@@ -86,10 +102,23 @@ def build_chamfer_section(
     """Build a straight chamfer segment between retained-side offset points."""
     distance = _positive_finite(distance_mm, "chamfer distance_mm")
     edge = _point3(edge_point, "edge_point")
-    first_unit = _unit_vector(first_retained_direction, "first_retained_direction")
-    second_unit = _unit_vector(second_retained_direction, "second_retained_direction")
-    if _norm(_cross(first_unit, second_unit)) <= _EPSILON:
-        raise ValueError("chamfer retained directions must not be parallel")
+    tangent_unit = _unit_vector(tangent, "tangent")
+    first_unit = _unit_vector(
+        _project_perpendicular(first_retained_direction, tangent_unit),
+        "first_retained_direction projected perpendicular to tangent",
+    )
+    second_unit = _unit_vector(
+        _project_perpendicular(second_retained_direction, tangent_unit),
+        "second_retained_direction projected perpendicular to tangent",
+    )
+    included_angle = _included_angle(first_unit, second_unit)
+    _validate_included_angle(included_angle, "chamfer retained directions")
+    direction_sign = _orientation_sign_relative_to_tangent(
+        first_unit,
+        second_unit,
+        tangent_unit,
+        "chamfer retained directions",
+    )
 
     first_point = _add(edge, _scale(first_unit, distance))
     second_point = _add(edge, _scale(second_unit, distance))
@@ -99,7 +128,7 @@ def build_chamfer_section(
         "points": points,
         "quality": {
             "section_sample_count": len(points),
-            "direction_sign": _orientation_sign(first_unit, second_unit),
+            "direction_sign": direction_sign,
             "section_linearity_max_error_mm": _max_distance_from_line(
                 points,
                 first=first_point,
@@ -146,10 +175,38 @@ def _sign(value: int, name: str) -> int:
     return 1 if number > 0.0 else -1
 
 
-def _orientation_sign(first: Point3, second: Point3) -> int:
-    cross = _cross(first, second)
-    dominant_axis_value = max(cross, key=abs)
-    return 1 if dominant_axis_value >= 0.0 else -1
+def _included_angle(first: Point3, second: Point3) -> float:
+    return math.acos(_clamp(_dot(first, second), -1.0, 1.0))
+
+
+def _validate_included_angle(included_angle: float, name: str) -> None:
+    if (
+        included_angle < _MIN_INCLUDED_ANGLE_RAD
+        or math.pi - included_angle < _MIN_INCLUDED_ANGLE_RAD
+    ):
+        raise ValueError(
+            f"{name} must form an included angle between "
+            f"{_MIN_INCLUDED_ANGLE_DEG:g} and {180.0 - _MIN_INCLUDED_ANGLE_DEG:g} degrees"
+        )
+
+
+def _signed_angle_about_axis(start: Point3, end: Point3, axis: Point3) -> float:
+    return math.atan2(
+        _dot(_cross(start, end), axis),
+        _dot(start, end),
+    )
+
+
+def _orientation_sign_relative_to_tangent(
+    first: Point3,
+    second: Point3,
+    tangent_unit: Point3,
+    name: str,
+) -> int:
+    signed_area = _dot(_cross(first, second), tangent_unit)
+    if abs(signed_area) <= _EPSILON:
+        raise ValueError(f"{name} is degenerate relative to tangent")
+    return 1 if signed_area > 0.0 else -1
 
 
 def _sample_parameters(sample_count: int) -> list[float]:
