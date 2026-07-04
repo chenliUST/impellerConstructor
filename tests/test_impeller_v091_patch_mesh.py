@@ -128,3 +128,36 @@ def test_build_patch_mesh_triangulates_closed_shared_node_cube():
     assert mesh["mesh_manifoldness_report"]["free_edge_count"] == 0
     assert mesh["mesh_manifoldness_report"]["nonmanifold_edge_count"] == 0
     assert mesh["mesh_manifoldness_report"]["zero_area_face_count"] == 0
+    assert mesh["source_patch_incidence_report"]["free_edge_count"] == 0
+    assert mesh["mesh_closure_report"]["synthetic_closure_region_count"] == 0
+
+
+def test_build_patch_mesh_reports_synthetic_closure_separately_from_source_surfaces():
+    surface_graph = {
+        "transition_patch_complex": {
+            "nodes": {
+                "a": {"point": [0.0, 0.0, 0.0]},
+                "b": {"point": [1.0, 0.0, 0.0]},
+                "c": {"point": [1.0, 1.0, 0.0]},
+                "d": {"point": [0.0, 1.0, 0.0]},
+            },
+            "patches": {
+                "open_patch": {
+                    "surface_graph_id": "open_surface",
+                    "role": "transition_patch",
+                    "node_grid": [["a", "b"], ["d", "c"]],
+                    "edge_ids": [],
+                }
+            },
+            "declared_open_boundary_ids": [],
+        }
+    }
+
+    mesh = build_patch_mesh(surface_graph)
+
+    assert mesh["included_surface_ids"] == ["open_surface"]
+    assert mesh["source_patch_incidence_report"]["free_edge_count"] == 4
+    assert mesh["mesh_manifoldness_report"]["free_edge_count"] == 0
+    assert mesh["mesh_closure_report"]["synthetic_closure_region_count"] == 1
+    assert mesh["mesh_closure_report"]["synthetic_closure_triangle_count"] == 4
+    assert mesh["mesh_closure_regions"][0]["surface_graph_id"].startswith("v091_boundary_stitch_")

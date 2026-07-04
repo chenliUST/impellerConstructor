@@ -48,6 +48,16 @@ def write_surface_graph_obj(
             if "mesh_manifoldness_report" in triangulation
             else {}
         ),
+        **(
+            {
+                "source_patch_incidence_report": triangulation["source_patch_incidence_report"],
+                "final_mesh_incidence_report": triangulation["final_mesh_incidence_report"],
+                "mesh_closure_report": triangulation["mesh_closure_report"],
+                "mesh_closure_regions": triangulation.get("mesh_closure_regions", []),
+            }
+            if "source_patch_incidence_report" in triangulation
+            else {}
+        ),
         "export_exactness": "surface_graph_obj_mesh",
         "surface_count": len(triangulation["included_surface_ids"]),
         "included_surface_ids": triangulation["included_surface_ids"],

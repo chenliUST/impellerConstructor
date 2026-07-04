@@ -41,6 +41,16 @@ def write_surface_graph_exports(
             if "mesh_manifoldness_report" in triangulation
             else {}
         ),
+        **(
+            {
+                "source_patch_incidence_report": triangulation["source_patch_incidence_report"],
+                "final_mesh_incidence_report": triangulation["final_mesh_incidence_report"],
+                "mesh_closure_report": triangulation["mesh_closure_report"],
+                "mesh_closure_regions": triangulation.get("mesh_closure_regions", []),
+            }
+            if "source_patch_incidence_report" in triangulation
+            else {}
+        ),
         "surface_count": len(triangulation["included_surface_ids"]),
         "included_surface_ids": triangulation["included_surface_ids"],
         "excluded_surface_ids": triangulation["excluded_surface_ids"],
@@ -281,15 +291,20 @@ def _deduplicated_indexed_faces(
     triangles: list[dict[str, Any]],
 ) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
     vertices: list[tuple[float, float, float]] = []
-    vertex_index: dict[tuple[float, float, float], int] = {}
+    vertex_index: dict[Any, int] = {}
     faces: list[tuple[int, int, int]] = []
     for triangle in triangles:
         face: list[int] = []
-        for point in triangle["points"]:
-            key = tuple(round(float(coordinate), 6) for coordinate in point)
+        vertex_ids = triangle.get("vertex_ids")
+        for index, point in enumerate(triangle["points"]):
+            key: Any
+            if isinstance(vertex_ids, list) and index < len(vertex_ids):
+                key = ("vertex_id", str(vertex_ids[index]))
+            else:
+                key = ("point", tuple(round(float(coordinate), 6) for coordinate in point))
             if key not in vertex_index:
                 vertex_index[key] = len(vertices) + 1
-                vertices.append(key)
+                vertices.append(tuple(round(float(coordinate), 6) for coordinate in point))
             face.append(vertex_index[key])
         faces.append((face[0], face[1], face[2]))
     return vertices, faces

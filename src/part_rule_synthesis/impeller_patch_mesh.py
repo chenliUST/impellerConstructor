@@ -84,6 +84,11 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
             }
         )
 
+    source_patch_incidence_report = edge_incidence_report(
+        triangles,
+        declared_open_boundary_ids=patch_complex.get("declared_open_boundary_ids", []),
+    )
+    source_triangle_count = len(triangles)
     stitch_regions = _add_closed_boundary_stitches(
         triangles,
         vertices,
@@ -92,16 +97,35 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
     )
     regions.extend(stitch_regions)
 
-    report = edge_incidence_report(
+    final_incidence_report = edge_incidence_report(
         triangles,
         declared_open_boundary_ids=patch_complex.get("declared_open_boundary_ids", []),
     )
     zero_area_count = sum(1 for triangle in triangles if _is_zero_area_triangle(triangle["points"]))
+    source_patch_incidence_report = {
+        **source_patch_incidence_report,
+        "report_scope": "source_transition_patch_complex_before_synthetic_closure",
+        "vertex_count": len(vertices),
+        "face_count": source_triangle_count,
+        "zero_area_face_count": sum(
+            1 for triangle in triangles[:source_triangle_count] if _is_zero_area_triangle(triangle["points"])
+        ),
+    }
+    mesh_closure_report = _mesh_closure_report(
+        source_patch_incidence_report=source_patch_incidence_report,
+        stitch_regions=stitch_regions,
+        final_triangle_count=len(triangles),
+        source_triangle_count=source_triangle_count,
+    )
     report = {
-        **report,
+        **final_incidence_report,
+        "report_scope": "final_mesh_after_synthetic_closure",
         "vertex_count": len(vertices),
         "face_count": len(triangles),
         "zero_area_face_count": zero_area_count,
+        "source_patch_free_edge_count": source_patch_incidence_report["free_edge_count"],
+        "synthetic_closure_triangle_count": mesh_closure_report["synthetic_closure_triangle_count"],
+        "closure_policy": mesh_closure_report["closure_policy"],
     }
     skipped_reasons = Counter(item["reason"] for item in skipped)
     return {
@@ -113,8 +137,12 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
         "triangle_count": len(triangles),
         "triangle_regions": regions,
         "transition_regions": _transition_regions(regions),
+        "mesh_closure_regions": stitch_regions,
+        "source_patch_incidence_report": source_patch_incidence_report,
+        "final_mesh_incidence_report": final_incidence_report,
+        "mesh_closure_report": mesh_closure_report,
         "mesh_manifoldness_report": report,
-        "included_surface_ids": included_surface_ids + [region["surface_graph_id"] for region in stitch_regions],
+        "included_surface_ids": included_surface_ids,
         "excluded_surface_ids": [],
         "skipped_triangle_count": len(skipped),
         "skipped_triangle_reasons": dict(sorted(skipped_reasons.items())),
@@ -343,6 +371,28 @@ def _transition_regions(regions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for region in regions
         if region.get("edge_family") or "transition" in str(region.get("role", "")) or "corner" in str(region.get("role", ""))
     ]
+
+
+def _mesh_closure_report(
+    *,
+    source_patch_incidence_report: dict[str, Any],
+    stitch_regions: list[dict[str, Any]],
+    final_triangle_count: int,
+    source_triangle_count: int,
+) -> dict[str, Any]:
+    synthetic_triangle_count = final_triangle_count - source_triangle_count
+    return {
+        "closure_policy": "synthetic_review_fan_caps_for_undeclared_free_edge_loops",
+        "review_grade_closure": True,
+        "source_patch_free_edge_count": source_patch_incidence_report["free_edge_count"],
+        "synthetic_closure_region_count": len(stitch_regions),
+        "synthetic_closure_triangle_count": synthetic_triangle_count,
+        "synthetic_closure_surface_ids": [region["surface_graph_id"] for region in stitch_regions],
+        "limitations": [
+            "synthetic closure triangles are mesh review caps, not original surface_graph patches",
+            "source_patch_incidence_report records pre-closure free edges for validation review",
+        ],
+    }
 
 
 def _edge_counts(triangles: list[dict[str, Any]]) -> Counter[EdgeKey]:

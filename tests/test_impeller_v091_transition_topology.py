@@ -135,11 +135,24 @@ def _is_zero_area_triangle(points: list[list[float]]) -> bool:
 
 def test_v091_default_mesh_has_no_free_or_nonmanifold_edges():
     manifest = _manifest("radial_open_reference_v0_91")
-    report = _mesh_manifoldness_report(manifest["geometry"]["surface_graph"])
+    surface_graph = manifest["geometry"]["surface_graph"]
+    report = _mesh_manifoldness_report(surface_graph)
 
     assert report["free_edge_count"] == 0
     assert report["nonmanifold_edge_count"] == 0
     assert report["zero_area_face_count"] == 0
+
+    from part_rule_synthesis.impeller_patch_mesh import build_patch_mesh
+
+    mesh = build_patch_mesh(surface_graph)
+    assert mesh["source_patch_incidence_report"]["free_edge_count"] > 0
+    assert mesh["mesh_closure_report"]["synthetic_closure_region_count"] > 0
+    assert mesh["mesh_closure_report"]["synthetic_closure_triangle_count"] > 0
+    assert mesh["final_mesh_incidence_report"]["free_edge_count"] == 0
+    assert not any(
+        surface_id.startswith("v091_boundary_stitch_")
+        for surface_id in mesh["included_surface_ids"]
+    )
 
 
 def test_v091_root_leading_corner_boundaries_are_closed():
