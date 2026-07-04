@@ -20,6 +20,7 @@ The versions are not replacements for one another. They are research checkpoints
 | `v0_7` | `radial_open_reference_v0_7`, `radial_closed_reference_v0_7` | Bounded B-Rep export contract, edge-family transition defaults, and runtime transition policy metadata. |
 | `v0_8` | `radial_open_reference_v0_8`, `radial_closed_reference_v0_8` | Transition-resolved fillet/chamfer surface patches, trimming metadata, transition-aware mesh, routed STL/OBJ/STEP manifests, and frontend inspection controls. |
 | `v0_9` | `radial_open_reference_v0_9`, `radial_closed_reference_v0_9` | Kernel validity and reviewability line with capability matrix, golden cases, validation reports, double-sided root transitions, trim-aware mesh/STEP gates, and batch regression summaries. |
+| `v0_91` | `radial_open_reference_v0_91`, `radial_closed_reference_v0_91` | Topology-first transition scaffold with V0.9 resources retagged for shared-node transition patch mesh contracts. |
 
 ## Folder Contract
 
@@ -66,7 +67,7 @@ Legacy v0.4 studies remain loadable:
 engine = service.synthesize("impeller", preset_id="radial_open_reference_v0_4")
 ```
 
-v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests. v0.7 is implemented by the `v0_7/` folder, runtime compiler support, bounded B-Rep export contract resources, edge-family transition defaults, and lineage tests. v0.8 is implemented by the `v0_8/` folder, runtime compiler support, transition-resolved B-Rep contract resources, transition resolver routing, transition-aware mesh/export paths, frontend inspection controls, and lineage/workflow tests. v0.9 is implemented by the `v0_9/` folder, runtime compiler support, geometry validation reports, double-sided root transition resolver semantics, trim-aware mesh/STEP export gates, and batch regression tooling.
+v0.5 is implemented by the `v0_5/` folder, runtime compiler support, graph-derived mesh export writer, and lineage tests. v0.6 is implemented by the `v0_6/` folder, runtime compiler support, graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, mesh inspection manifests, Model Output artifacts, explicit fillet/blend controls, and lineage tests. v0.7 is implemented by the `v0_7/` folder, runtime compiler support, bounded B-Rep export contract resources, edge-family transition defaults, and lineage tests. v0.8 is implemented by the `v0_8/` folder, runtime compiler support, transition-resolved B-Rep contract resources, transition resolver routing, transition-aware mesh/export paths, frontend inspection controls, and lineage/workflow tests. v0.9 is implemented by the `v0_9/` folder, runtime compiler support, geometry validation reports, double-sided root transition resolver semantics, trim-aware mesh/STEP export gates, and batch regression tooling. v0.91 is implemented by the `v0_91/` folder and runtime compiler routing as a topology-first resource scaffold; the topology solver is deferred to later V0.91 tasks.
 
 ## Historical Git Tags
 
@@ -159,4 +160,18 @@ docs/evidence/2026-07-04-impeller-v0-9-kernel-validity-reviewability/README.md
 docs/superpowers/specs/2026-07-04-impeller-v0-9-kernel-validity-reviewability-design.md
 docs/superpowers/plans/2026-07-04-impeller-v0-9-kernel-validity-reviewability.md
 src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_9/CHANGELOG.md
+```
+
+## v0.91 Design Note
+
+The v0.91 line is a completion patch scaffold for V0.9 transition validity. It retags
+the V0.9 resources to topology-first transition contract ids and routes runtime
+metadata to `topology_first_validated_transition_graph` with
+`shared_node_transition_patch_mesh`. The actual topology-first transition solver is
+implemented in later tasks.
+
+```text
+docs/superpowers/specs/2026-07-04-impeller-v0-91-topology-first-transitions-design.md
+docs/superpowers/plans/2026-07-04-impeller-v0-91-topology-first-transitions.md
+src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v0_91/CHANGELOG.md
 ```
