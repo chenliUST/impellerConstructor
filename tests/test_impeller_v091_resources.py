@@ -61,6 +61,30 @@ def test_v091_bundle_loads_topology_first_contract():
     assert all(case["case_id"].startswith("v091_") for case in registry["cases"])
 
 
+def test_v091_lineage_points_to_v09_resources():
+    bundle = load_impeller_dsl_bundle("v0_91")
+
+    assert bundle.schema["supersedes"] == "../v0_9/schema.json"
+    assert (
+        bundle.constructors["axisymmetric_throughflow_radial_bladed.open.v0_91"]["supersedes"]
+        == "../../v0_9/constructors/open_impeller.json"
+    )
+    assert (
+        bundle.constructors["axisymmetric_throughflow_radial_bladed.closed.v0_91"]["supersedes"]
+        == "../../v0_9/constructors/closed_impeller.json"
+    )
+    assert (
+        bundle.presets["radial_open_reference_v0_91"]["supersedes"]
+        == "../../v0_9/presets/radial_open_reference.json"
+    )
+    assert (
+        bundle.presets["radial_closed_reference_v0_91"]["supersedes"]
+        == "../../v0_9/presets/radial_closed_reference.json"
+    )
+    changelog = (RESOURCE_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "Supersedes: `v0_9`" in changelog
+
+
 def test_v091_bundle_applies_research_registry_validation(monkeypatch):
     original_loader = impeller_dsl_resources._load_json_directory_by_id
 
@@ -121,9 +145,61 @@ def test_v091_service_export_strategy_recognizes_topology_first_contract():
     assert strategy["unsupported_surface_policy"] == "fail_export"
 
 
+def test_v091_topology_first_export_rejects_missing_validation_report(tmp_path: Path, monkeypatch):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    writer_calls = []
+
+    def fake_bounded_brep(step_path, solid_name, surface_graph, view_id="cad_review_360"):
+        writer_calls.append("step")
+        Path(step_path).write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+        return {
+            "source": "surface_graph",
+            "view": view_id,
+            "export_exactness": "surface_graph_bounded_unsewn_brep_step",
+            "validation_checks": [],
+        }
+
+    def fake_graph_exports(mesh_step_path, stl_path, solid_name, surface_graph, view_id="cad_review_360"):
+        writer_calls.append("mesh")
+        Path(mesh_step_path).write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+        Path(stl_path).write_text("solid impeller\nendsolid impeller\n", encoding="utf-8")
+        return {"stl": {"source": "surface_graph", "export_exactness": "surface_graph_sampled_mesh"}}
+
+    def fake_obj_export(obj_path, solid_name, surface_graph, view_id="cad_review_360"):
+        writer_calls.append("obj")
+        Path(obj_path).write_text("v 0 0 0\n", encoding="utf-8")
+        return {"source": "surface_graph", "export_exactness": "surface_graph_obj_mesh"}
+
+    monkeypatch.setattr(service_module, "write_bounded_brep_step", fake_bounded_brep)
+    monkeypatch.setattr(service_module, "write_surface_graph_exports", fake_graph_exports)
+    monkeypatch.setattr(service_module, "write_surface_graph_obj", fake_obj_export)
+
+    with pytest.raises(RuntimeError, match="geometry validation report.*PASS"):
+        service_module._write_exports(
+            run_dir,
+            "impeller",
+            {},
+            dsl_context={
+                "preset_id": "radial_open_reference_v0_91",
+                "export_contract": {
+                    "mode": "topology_first_transition_bounded_brep",
+                    "default_view": "cad_review_360",
+                },
+            },
+            geometry_metadata={"surface_graph": {"surfaces": [{"id": "hub", "kind": "annular_plane_surface"}]}},
+        )
+
+    assert writer_calls == []
+
+
 def test_v091_resources_do_not_retain_v09_transition_identifiers():
     resource_text = "\n".join(
-        path.read_text(encoding="utf-8")
+        "\n".join(
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if '"supersedes"' not in line and not line.startswith("Supersedes:")
+        )
         for path in sorted(RESOURCE_ROOT.rglob("*"))
         if path.suffix in {".json", ".md"}
     )

@@ -994,7 +994,7 @@ def _write_exports(
             "validated_transition_bounded_brep",
             "topology_first_transition_bounded_brep",
         }:
-            _raise_on_geometry_validation_failures(geometry_validation_report or {})
+            _raise_on_missing_or_failed_geometry_validation(geometry_validation_report)
         bounded_surface_graph = None
         export_surface_graph = surface_graph
         if _uses_legacy_supported_surface_accounting(export_contract):
@@ -1297,6 +1297,23 @@ def _raise_on_geometry_validation_failures(report: dict[str, Any]) -> None:
         "geometry validation blocked validated transition bounded B-Rep export "
         f"({len(failures)}): {'; '.join(details)}"
     )
+
+
+def _raise_on_missing_or_failed_geometry_validation(report: dict[str, Any] | None) -> None:
+    if not isinstance(report, Mapping) or not report:
+        raise RuntimeError(
+            "geometry validation report with geometry_validation_status=PASS is required "
+            "before validated transition bounded B-Rep export"
+        )
+    if report.get("geometry_validation_status") != "PASS":
+        _raise_on_geometry_validation_failures(report)
+        observed_status = report.get("geometry_validation_status", "missing")
+        raise RuntimeError(
+            "geometry validation report with geometry_validation_status=PASS is required "
+            "before validated transition bounded B-Rep export "
+            f"(observed geometry_validation_status={observed_status})"
+        )
+    _raise_on_geometry_validation_failures(report)
 
 
 def _format_transition_failure(source_name: str, failure: Any) -> str:

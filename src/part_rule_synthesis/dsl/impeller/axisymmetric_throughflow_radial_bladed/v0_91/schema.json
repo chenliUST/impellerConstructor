@@ -1,6 +1,6 @@
 {
   "dsl_version": "0.91",
-  "supersedes": "../v0_8/schema.json",
+  "supersedes": "../v0_9/schema.json",
   "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
   "patch_naming_policy": "group_and_instance",
   "required_sections": [

@@ -1,6 +1,6 @@
 {
   "dsl_version": "0.91",
-  "supersedes": "../../v0_8/constructors/open_impeller.json",
+  "supersedes": "../../v0_9/constructors/open_impeller.json",
   "constructor_id": "axisymmetric_throughflow_radial_bladed.open.v0_91",
   "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
   "classification": {

@@ -1,6 +1,6 @@
 {
   "preset_id": "radial_closed_reference_v0_91",
-  "supersedes": "../../v0_8/presets/radial_closed_reference.json",
+  "supersedes": "../../v0_9/presets/radial_closed_reference.json",
   "display_name": "Radial closed reference v0.91",
   "summary": "Closed radial throughflow impeller with validated transition geometry gates, double-sided root transitions, and reviewable export evidence.",
   "geometry_version": "0.91",

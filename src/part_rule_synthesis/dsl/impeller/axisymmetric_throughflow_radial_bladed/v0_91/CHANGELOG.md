@@ -2,7 +2,7 @@
 
 Date: 2026-07-04
 
-Supersedes: `v0_8`
+Supersedes: `v0_9`
 
 ## Changes
 
