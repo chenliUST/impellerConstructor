@@ -19,6 +19,8 @@ from part_rule_synthesis.impeller_transition_topology import (
 
 
 Point3 = tuple[float, float, float]
+V091_CORNER_LOCAL_SAMPLE_COUNT = 5
+V091_CORNER_DESINGULARIZATION_FRACTION = 0.35
 Treatment = Literal["none", "chamfer", "fillet"]
 
 
@@ -1230,6 +1232,8 @@ def _v091_corner_surface(
             "corner_patch": True,
             "u_count": len(grid),
             "v_count": len(grid[0]) if grid else 0,
+            "local_boundary_sample_count": V091_CORNER_LOCAL_SAMPLE_COUNT,
+            "desingularization": "internal_collapsed_rows_and_columns_lifted_from_adjacent_samples",
         },
         "uv_grid": _grid_points_to_lists(grid),
         "transition_corner_node_grid": node_grid,
@@ -1343,11 +1347,13 @@ def _v091_side_corner_grid_and_nodes(
     diagonal = _v091_parallelogram_point(root_row[0], root_row[-1], edge_column[-1])
     east = _resample_points([root_row[-1], diagonal], len(edge_column))
     north = _resample_points([edge_column[-1], diagonal], len(root_row))
-    grid = build_coons_corner_grid(
-        west=edge_column,
-        east=east,
-        south=root_row,
-        north=north,
+    grid = _desingularize_v091_corner_grid(
+        build_coons_corner_grid(
+            west=edge_column,
+            east=east,
+            south=root_row,
+            north=north,
+        )
     )
     node_grid = _v091_unique_corner_node_grid(blade_index, role, len(grid), len(grid[0]))
     for column_offset, root_column_index in enumerate(root_column_indices):
@@ -1384,13 +1390,15 @@ def _v091_tip_corner_grid_and_nodes(
 ) -> tuple[list[list[Point3]], list[list[str]]]:
     south, tip_column_indices = _v091_local_row(tip_grid, tip_row_index, from_start=True)
     north, edge_column_indices = _v091_local_row(edge_grid, edge_row_index, from_start=True)
-    west = _resample_points([south[0], north[0]], 3)
-    east = _resample_points([south[-1], north[-1]], 3)
-    grid = build_coons_corner_grid(
-        west=west,
-        east=east,
-        south=south,
-        north=north,
+    west = _resample_points([south[0], north[0]], len(south))
+    east = _resample_points([south[-1], north[-1]], len(south))
+    grid = _desingularize_v091_corner_grid(
+        build_coons_corner_grid(
+            west=west,
+            east=east,
+            south=south,
+            north=north,
+        )
     )
     node_grid = _v091_unique_corner_node_grid(blade_index, role, len(grid), len(grid[0]))
     tip_row_resolved = _resolve_index(tip_row_index, len(tip_grid))
@@ -1433,7 +1441,7 @@ def _v091_local_row(
     row_index: int,
     *,
     from_start: bool,
-    count: int = 3,
+    count: int = V091_CORNER_LOCAL_SAMPLE_COUNT,
 ) -> tuple[list[Point3], list[int]]:
     resolved_row_index = _resolve_index(row_index, len(grid))
     row = grid[resolved_row_index]
@@ -1454,7 +1462,7 @@ def _v091_local_column(
     column_index: int,
     *,
     from_start: bool,
-    count: int = 3,
+    count: int = V091_CORNER_LOCAL_SAMPLE_COUNT,
 ) -> tuple[list[Point3], list[int]]:
     resolved_column_index = _resolve_index(column_index, len(grid[0]))
     indices = _local_indices(len(grid), from_start=from_start, count=count)
@@ -1502,6 +1510,41 @@ def _v091_parallelogram_point(anchor: Point3, first_arm: Point3, second_arm: Poi
         first_arm[1] + second_arm[1] - anchor[1],
         first_arm[2] + second_arm[2] - anchor[2],
     )
+
+
+def _desingularize_v091_corner_grid(grid: list[list[Point3]]) -> list[list[Point3]]:
+    if not grid or not grid[0]:
+        return grid
+    result = [[_point3_from_any(point) for point in row] for row in grid]
+    for row_index, row in enumerate(result):
+        if len({_rounded_v091_point(point) for point in row}) <= 1:
+            neighbor_index = 1 if row_index == 0 else row_index - 1
+            if 0 <= neighbor_index < len(result):
+                anchor = row[0]
+                for column_index in range(1, len(row) - 1):
+                    result[row_index][column_index] = _lerp_point(
+                        anchor,
+                        result[neighbor_index][column_index],
+                        V091_CORNER_DESINGULARIZATION_FRACTION,
+                    )
+    column_count = len(result[0])
+    for column_index in range(column_count):
+        column = [row[column_index] for row in result]
+        if len({_rounded_v091_point(point) for point in column}) <= 1:
+            neighbor_index = 1 if column_index == 0 else column_index - 1
+            if 0 <= neighbor_index < column_count:
+                anchor = column[0]
+                for row_index in range(1, len(result) - 1):
+                    result[row_index][column_index] = _lerp_point(
+                        anchor,
+                        result[row_index][neighbor_index],
+                        V091_CORNER_DESINGULARIZATION_FRACTION,
+                    )
+    return result
+
+
+def _rounded_v091_point(point: Point3) -> tuple[float, float, float]:
+    return tuple(round(float(component), 9) for component in point)
 
 
 def _v091_unique_corner_node_grid(

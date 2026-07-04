@@ -273,6 +273,7 @@ def _clean_v091_mesh_report(**overrides: int) -> dict:
         "nonmanifold_edge_count": 0,
         "duplicate_face_count": 0,
         "zero_area_face_count": 0,
+        "skipped_triangle_count": 0,
         "source_patch_free_edge_count": 4,
         "synthetic_closure_triangle_count": 4,
         "closure_policy": "synthetic_review_fan_caps_for_undeclared_free_edge_loops",
@@ -336,6 +337,28 @@ def test_v091_validation_fails_on_dirty_final_mesh_counts(mesh_counts: dict, rea
     assert report["geometry_validation_status"] == "FAIL"
     assert any(failure["reason"] == reason for failure in report["blocking_failures"])
     assert any(check["status"] == "FAIL" for check in report["checks"])
+
+
+def test_v091_validation_fails_when_skipped_triangle_accounting_is_missing():
+    mesh_report = _clean_v091_mesh_report()
+    mesh_report.pop("skipped_triangle_count")
+    report = build_geometry_validation_report(
+        parameters={},
+        facets={},
+        transition_policies={},
+        surface_graph=_minimal_v091_graph(mesh_report=mesh_report),
+        capability_matrix_id="impeller_v0_91_kernel_capabilities",
+    )
+
+    assert report["geometry_validation_status"] == "FAIL"
+    assert any(
+        failure["reason"] == "missing_mesh_skipped_triangle_accounting"
+        for failure in report["blocking_failures"]
+    )
+    assert any(
+        check["check_id"] == "v091_mesh_skipped_triangle_accounting" and check["status"] == "FAIL"
+        for check in report["checks"]
+    )
 
 
 def test_v091_validation_fails_on_missing_required_corner_patches():

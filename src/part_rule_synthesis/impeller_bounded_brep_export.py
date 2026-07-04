@@ -207,6 +207,7 @@ def _make_bspline_face_from_uv_grid(surface: dict[str, Any], surface_id: str):
     from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
 
     uv_grid = _rectangular_uv_grid(surface.get("uv_grid"), surface_id)
+    validate_bspline_grid_for_occt(uv_grid, surface_id)
     bspline_surface = _bspline_surface_from_grid(uv_grid, surface_id)
     fit = _bspline_fit_error(bspline_surface, uv_grid)
     _validate_fit_error(surface_id, fit, uv_grid)
@@ -261,6 +262,71 @@ def _bspline_surface_from_grid(uv_grid: list[list[list[float]]], surface_id: str
     if surface is None:
         raise RuntimeError(f"OCCT B-spline interpolation returned no surface for {surface_id}")
     return surface
+
+
+def validate_bspline_grid_for_occt(uv_grid: list[list[list[float]]], surface_id: str) -> None:
+    tolerance = 1.0e-9
+    for row_index, row in enumerate(uv_grid):
+        if _point_set_size(row, tolerance) <= 1:
+            raise ValueError(f"{surface_id} has collapsed row {row_index}; refusing OCCT B-spline interpolation")
+    column_count = len(uv_grid[0])
+    for column_index in range(column_count):
+        column = [row[column_index] for row in uv_grid]
+        if _point_set_size(column, tolerance) <= 1:
+            raise ValueError(
+                f"{surface_id} has collapsed column {column_index}; refusing OCCT B-spline interpolation"
+            )
+    if _grid_bbox_diagonal(uv_grid) <= tolerance:
+        raise ValueError(f"{surface_id} has zero-size uv_grid; refusing OCCT B-spline interpolation")
+    if _grid_has_no_nonzero_area_cell(uv_grid, tolerance):
+        raise ValueError(f"{surface_id} has rank-deficient uv_grid; refusing OCCT B-spline interpolation")
+
+
+def _point_set_size(points: list[list[float]], tolerance: float) -> int:
+    scale = 1.0 / tolerance
+    return len(
+        {
+            (
+                round(float(point[0]) * scale),
+                round(float(point[1]) * scale),
+                round(float(point[2]) * scale),
+            )
+            for point in points
+        }
+    )
+
+
+def _grid_has_no_nonzero_area_cell(uv_grid: list[list[list[float]]], tolerance: float) -> bool:
+    area_tolerance = tolerance * tolerance
+    for u_index in range(len(uv_grid) - 1):
+        for v_index in range(len(uv_grid[0]) - 1):
+            a = uv_grid[u_index][v_index]
+            b = uv_grid[u_index + 1][v_index]
+            c = uv_grid[u_index + 1][v_index + 1]
+            d = uv_grid[u_index][v_index + 1]
+            if (
+                _triangle_area_squared(a, b, d) > area_tolerance
+                or _triangle_area_squared(b, c, d) > area_tolerance
+            ):
+                return False
+    return True
+
+
+def _triangle_area_squared(first: list[float], second: list[float], third: list[float]) -> float:
+    ux, uy, uz = (
+        float(second[0]) - float(first[0]),
+        float(second[1]) - float(first[1]),
+        float(second[2]) - float(first[2]),
+    )
+    vx, vy, vz = (
+        float(third[0]) - float(first[0]),
+        float(third[1]) - float(first[1]),
+        float(third[2]) - float(first[2]),
+    )
+    nx = uy * vz - uz * vy
+    ny = uz * vx - ux * vz
+    nz = ux * vy - uy * vx
+    return 0.25 * (nx * nx + ny * ny + nz * nz)
 
 
 def _bspline_fit_error(bspline_surface: Any, uv_grid: list[list[list[float]]]) -> dict[str, float]:

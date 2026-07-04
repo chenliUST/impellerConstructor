@@ -22,6 +22,7 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
     triangles: list[dict[str, Any]] = []
     regions: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    singular_corner_cells: list[dict[str, Any]] = []
     included_surface_ids: list[str] = []
 
     for patch_id, patch in _iter_patches(patch_complex):
@@ -46,26 +47,46 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
                 b = str(node_grid[row_index + 1][column_index])
                 c = str(node_grid[row_index + 1][column_index + 1])
                 d = str(node_grid[row_index][column_index + 1])
-                for vertex_ids in ((a, b, d), (b, c, d)):
-                    triangle = _triangle_from_vertex_ids(
-                        vertex_ids,
-                        vertices,
-                        surface_graph_id=surface_id,
-                        patch_id=patch_id,
-                        role=str(patch.get("role", "")),
+                patch_role = str(patch.get("role", ""))
+                cell_triangles = _cell_triangles_with_best_diagonal(
+                    (a, b, c, d),
+                    vertices,
+                    surface_graph_id=surface_id,
+                    patch_id=patch_id,
+                    role=patch_role,
+                )
+                if len(cell_triangles) == 2:
+                    triangles.extend(cell_triangles)
+                    continue
+                singular_triangle = _singular_cell_triangle(
+                    (a, b, c, d),
+                    vertices,
+                    surface_graph_id=surface_id,
+                    patch_id=patch_id,
+                    role=patch_role,
+                ) if _is_corner_patch_role(patch_role) else None
+                if singular_triangle is not None:
+                    triangles.append(singular_triangle)
+                    singular_corner_cells.append(
+                        {
+                            "surface_graph_id": surface_id,
+                            "patch_id": patch_id,
+                            "u_index": row_index,
+                            "v_index": column_index,
+                            "reason": "singular_corner_quad_triangulated_as_single_face",
+                        }
                     )
-                    if triangle is None:
-                        skipped.append(
-                            {
-                                "surface_graph_id": surface_id,
-                                "patch_id": patch_id,
-                                "u_index": row_index,
-                                "v_index": column_index,
-                                "reason": "degenerate_triangle",
-                            }
-                        )
-                        continue
-                    triangles.append(triangle)
+                    continue
+                skipped.append(
+                    {
+                        "surface_graph_id": surface_id,
+                        "patch_id": patch_id,
+                        "u_index": row_index,
+                        "v_index": column_index,
+                        "reason": "degenerate_cell",
+                    }
+                )
+                continue
 
         count = len(triangles) - start
         if count <= 0:
@@ -124,6 +145,8 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
         "vertex_count": len(vertices),
         "face_count": len(triangles),
         "zero_area_face_count": zero_area_count,
+        "skipped_triangle_count": len(skipped),
+        "singular_corner_cell_count": len(singular_corner_cells),
         "source_patch_free_edge_count": source_patch_incidence_report["free_edge_count"],
         "synthetic_closure_triangle_count": mesh_closure_report["synthetic_closure_triangle_count"],
         "closure_policy": mesh_closure_report["closure_policy"],
@@ -139,6 +162,8 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
         "triangle_regions": regions,
         "transition_regions": _transition_regions(regions),
         "mesh_closure_regions": stitch_regions,
+        "singular_corner_cell_count": len(singular_corner_cells),
+        "singular_corner_cells": singular_corner_cells,
         "source_patch_incidence_report": source_patch_incidence_report,
         "final_mesh_incidence_report": final_incidence_report,
         "mesh_closure_report": mesh_closure_report,
@@ -246,6 +271,90 @@ def _triangle_from_vertex_ids(
         "patch_id": patch_id,
         "role": role,
     }
+
+
+def _cell_triangles_with_best_diagonal(
+    vertex_ids: tuple[str, str, str, str],
+    vertices: Mapping[str, Point3],
+    *,
+    surface_graph_id: str,
+    patch_id: str,
+    role: str,
+) -> list[dict[str, Any]]:
+    best: list[dict[str, Any]] = []
+    for split in (
+        ((vertex_ids[0], vertex_ids[1], vertex_ids[3]), (vertex_ids[1], vertex_ids[2], vertex_ids[3])),
+        ((vertex_ids[0], vertex_ids[1], vertex_ids[2]), (vertex_ids[0], vertex_ids[2], vertex_ids[3])),
+    ):
+        triangles = [
+            triangle
+            for triangle in (
+                _triangle_from_vertex_ids(
+                    triangle_vertex_ids,
+                    vertices,
+                    surface_graph_id=surface_graph_id,
+                    patch_id=patch_id,
+                    role=role,
+                )
+                for triangle_vertex_ids in split
+            )
+            if triangle is not None
+        ]
+        if len(triangles) > len(best):
+            best = triangles
+        if len(best) == 2:
+            return best
+    return best
+
+
+def _singular_cell_triangle(
+    vertex_ids: tuple[str, str, str, str],
+    vertices: Mapping[str, Point3],
+    *,
+    surface_graph_id: str,
+    patch_id: str,
+    role: str,
+) -> dict[str, Any] | None:
+    if not _has_duplicate_cell_vertex(vertex_ids, vertices):
+        return None
+    for candidate in (
+        (vertex_ids[0], vertex_ids[1], vertex_ids[2]),
+        (vertex_ids[0], vertex_ids[2], vertex_ids[3]),
+        (vertex_ids[0], vertex_ids[1], vertex_ids[3]),
+        (vertex_ids[1], vertex_ids[2], vertex_ids[3]),
+    ):
+        if len(set(candidate)) != 3:
+            continue
+        triangle = _triangle_from_vertex_ids(
+            candidate,
+            vertices,
+            surface_graph_id=surface_graph_id,
+            patch_id=patch_id,
+            role=role,
+        )
+        if triangle is not None:
+            return triangle
+    return None
+
+
+def _is_corner_patch_role(role: str) -> bool:
+    return "corner" in role
+
+
+def _has_duplicate_cell_vertex(vertex_ids: tuple[str, str, str, str], vertices: Mapping[str, Point3]) -> bool:
+    if len(set(vertex_ids)) < len(vertex_ids):
+        return True
+    points = [vertices[vertex_id] for vertex_id in vertex_ids]
+    return len({_point_key(point) for point in points}) < len(points)
+
+
+def _point_key(point: Point3) -> tuple[int, int, int]:
+    scale = 1.0e9
+    return (
+        round(point[0] * scale),
+        round(point[1] * scale),
+        round(point[2] * scale),
+    )
 
 
 def _add_closed_boundary_stitches(

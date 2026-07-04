@@ -47,6 +47,8 @@ def write_surface_graph_exports(
                 "final_mesh_incidence_report": triangulation["final_mesh_incidence_report"],
                 "mesh_closure_report": triangulation["mesh_closure_report"],
                 "mesh_closure_regions": triangulation.get("mesh_closure_regions", []),
+                "singular_corner_cell_count": triangulation.get("singular_corner_cell_count", 0),
+                "singular_corner_cells": triangulation.get("singular_corner_cells", []),
             }
             if "source_patch_incidence_report" in triangulation
             else {}

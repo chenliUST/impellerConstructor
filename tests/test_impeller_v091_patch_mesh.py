@@ -132,6 +132,90 @@ def test_build_patch_mesh_triangulates_closed_shared_node_cube():
     assert mesh["mesh_closure_report"]["synthetic_closure_region_count"] == 0
 
 
+def test_build_patch_mesh_triangulates_singular_corner_cell_as_one_triangle():
+    surface_graph = {
+        "transition_patch_complex": {
+            "nodes": {
+                "corner": {"point": [0.0, 0.0, 0.0]},
+                "left": {"point": [1.0, 0.0, 0.0]},
+                "right": {"point": [0.0, 1.0, 0.0]},
+            },
+            "patches": {
+                "singular_corner": {
+                    "surface_graph_id": "tip_leading_corner",
+                    "role": "tip_leading_corner",
+                    "node_grid": [["corner", "corner"], ["left", "right"]],
+                    "edge_ids": [],
+                }
+            },
+            "declared_open_boundary_ids": ["corner|left", "left|right", "corner|right"],
+        }
+    }
+
+    mesh = build_patch_mesh(surface_graph)
+
+    assert mesh["triangle_count"] == 1
+    assert mesh["singular_corner_cell_count"] == 1
+    assert mesh["skipped_triangle_count"] == 0
+    assert mesh["triangles"][0]["vertex_ids"] == ["corner", "left", "right"]
+
+
+def test_build_patch_mesh_does_not_treat_noncorner_degenerate_quad_as_singular_corner():
+    surface_graph = {
+        "transition_patch_complex": {
+                "nodes": {
+                    "a": {"point": [0.0, 0.0, 0.0]},
+                    "b": {"point": [1.0, 0.0, 0.0]},
+                    "c": {"point": [2.0, 0.0, 0.0]},
+                    "d": {"point": [3.0, 0.0, 0.0]},
+            },
+            "patches": {
+                "malformed_transition": {
+                    "surface_graph_id": "malformed_transition",
+                    "role": "leading",
+                    "node_grid": [["a", "d"], ["b", "c"]],
+                    "edge_ids": [],
+                }
+            },
+            "declared_open_boundary_ids": [],
+        }
+    }
+
+    mesh = build_patch_mesh(surface_graph)
+
+    assert mesh["singular_corner_cell_count"] == 0
+    assert mesh["skipped_triangle_count"] == 1
+    assert mesh["skipped_triangle_reasons"] == {"degenerate_cell": 1}
+
+
+def test_build_patch_mesh_does_not_hide_corner_degenerate_quad_without_duplicate_nodes():
+    surface_graph = {
+        "transition_patch_complex": {
+                "nodes": {
+                    "a": {"point": [0.0, 0.0, 0.0]},
+                    "b": {"point": [1.0, 0.0, 0.0]},
+                    "c": {"point": [2.0, 0.0, 0.0]},
+                    "d": {"point": [3.0, 0.0, 0.0]},
+            },
+            "patches": {
+                "malformed_corner": {
+                    "surface_graph_id": "malformed_corner",
+                    "role": "tip_leading_corner",
+                    "node_grid": [["a", "d"], ["b", "c"]],
+                    "edge_ids": [],
+                }
+            },
+            "declared_open_boundary_ids": [],
+        }
+    }
+
+    mesh = build_patch_mesh(surface_graph)
+
+    assert mesh["singular_corner_cell_count"] == 0
+    assert mesh["skipped_triangle_count"] == 1
+    assert mesh["skipped_triangle_reasons"] == {"degenerate_cell": 1}
+
+
 def test_build_patch_mesh_reports_synthetic_closure_separately_from_source_surfaces():
     surface_graph = {
         "transition_patch_complex": {

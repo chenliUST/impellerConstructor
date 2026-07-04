@@ -146,6 +146,8 @@ def test_v091_default_mesh_has_no_free_or_nonmanifold_edges():
 
     mesh = build_patch_mesh(surface_graph)
     assert mesh["source_patch_incidence_report"]["free_edge_count"] > 0
+    assert mesh["skipped_triangle_count"] == 0
+    assert mesh["singular_corner_cell_count"] == 0
     assert mesh["mesh_closure_report"]["synthetic_closure_region_count"] > 0
     assert mesh["mesh_closure_report"]["synthetic_closure_triangle_count"] > 0
     assert mesh["final_mesh_incidence_report"]["free_edge_count"] == 0
@@ -198,6 +200,36 @@ def test_v091_default_blade_has_required_corner_patch_roles():
         "tip_leading_corner",
         "tip_trailing_corner",
     } <= roles
+
+
+def test_v091_corner_patches_have_reviewable_noncollapsed_grids():
+    manifest = _manifest("radial_open_reference_v0_91")
+    surfaces = _surface_map(manifest["geometry"]["surface_graph"])
+    corner_surfaces = [
+        surface
+        for surface in surfaces.values()
+        if surface.get("cfd_role") == "transition_corner"
+    ]
+
+    assert corner_surfaces
+    for surface in corner_surfaces:
+        grid = surface["uv_grid"]
+        assert len(grid) >= 5, surface["id"]
+        assert len(grid[0]) >= 5, surface["id"]
+        assert not _has_collapsed_row_or_column(grid), surface["id"]
+
+
+def _has_collapsed_row_or_column(grid: list[list[list[float]]]) -> bool:
+    rows_collapsed = any(len({_rounded_point(point) for point in row}) == 1 for row in grid)
+    columns_collapsed = any(
+        len({_rounded_point(row[column_index]) for row in grid}) == 1
+        for column_index in range(len(grid[0]))
+    )
+    return rows_collapsed or columns_collapsed
+
+
+def _rounded_point(point: list[float]) -> tuple[float, float, float]:
+    return tuple(round(float(component), 9) for component in point)
 
 
 def test_v091_root_leading_corners_do_not_require_disabled_trailing_or_tip_surfaces():

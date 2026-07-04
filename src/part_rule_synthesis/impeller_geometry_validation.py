@@ -83,6 +83,8 @@ def build_geometry_validation_report(
         ("v091_final_mesh_nonmanifold_edges", "mesh_has_nonmanifold_edges"),
         ("v091_final_mesh_zero_area_faces", "mesh_has_zero_area_faces"),
         ("v091_final_mesh_duplicate_faces", "mesh_has_duplicate_faces"),
+        ("v091_final_mesh_skipped_triangles", "mesh_has_skipped_triangles"),
+        ("v091_mesh_skipped_triangle_accounting", "missing_mesh_skipped_triangle_accounting"),
     ]:
         checks.append(
             {
@@ -362,6 +364,15 @@ def _validate_v091_topology_and_mesh(
         "duplicate_face_count",
         "mesh_has_duplicate_faces",
     )
+    if "skipped_triangle_count" not in mesh_report:
+        blocking_failures.append(_failure("missing_mesh_skipped_triangle_accounting"))
+    else:
+        _append_positive_count_failure(
+            mesh_report,
+            blocking_failures,
+            "skipped_triangle_count",
+            "mesh_has_skipped_triangles",
+        )
 
 
 def _append_positive_count_failure(
@@ -434,6 +445,8 @@ def _transition_validation_summary(
                     "mesh_free_edge_count": _int_or_zero(mesh_report.get("free_edge_count")),
                     "mesh_nonmanifold_edge_count": _int_or_zero(mesh_report.get("nonmanifold_edge_count")),
                     "mesh_zero_area_face_count": _int_or_zero(mesh_report.get("zero_area_face_count")),
+                    "mesh_skipped_triangle_count": _int_or_zero(mesh_report.get("skipped_triangle_count")),
+                    "singular_corner_cell_count": _int_or_zero(mesh_report.get("singular_corner_cell_count")),
                     "source_patch_free_edge_count": _int_or_zero(
                         mesh_report.get("source_patch_free_edge_count")
                     ),
