@@ -89,6 +89,7 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
         declared_open_boundary_ids=patch_complex.get("declared_open_boundary_ids", []),
     )
     source_triangle_count = len(triangles)
+    source_vertex_count = len(vertices)
     stitch_regions = _add_closed_boundary_stitches(
         triangles,
         vertices,
@@ -105,7 +106,7 @@ def build_patch_mesh(surface_graph: dict[str, Any], view_id: str = "cad_review_3
     source_patch_incidence_report = {
         **source_patch_incidence_report,
         "report_scope": "source_transition_patch_complex_before_synthetic_closure",
-        "vertex_count": len(vertices),
+        "vertex_count": source_vertex_count,
         "face_count": source_triangle_count,
         "zero_area_face_count": sum(
             1 for triangle in triangles[:source_triangle_count] if _is_zero_area_triangle(triangle["points"])

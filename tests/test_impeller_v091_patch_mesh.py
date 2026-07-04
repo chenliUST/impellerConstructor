@@ -156,6 +156,8 @@ def test_build_patch_mesh_reports_synthetic_closure_separately_from_source_surfa
     mesh = build_patch_mesh(surface_graph)
 
     assert mesh["included_surface_ids"] == ["open_surface"]
+    assert mesh["source_patch_incidence_report"]["vertex_count"] == 4
+    assert mesh["mesh_manifoldness_report"]["vertex_count"] == 5
     assert mesh["source_patch_incidence_report"]["free_edge_count"] == 4
     assert mesh["mesh_manifoldness_report"]["free_edge_count"] == 0
     assert mesh["mesh_closure_report"]["synthetic_closure_region_count"] == 1
