@@ -295,12 +295,33 @@ def test_v091_validation_fails_when_mesh_report_is_missing():
     assert any(failure["reason"] == "missing_mesh_manifoldness_report" for failure in report["blocking_failures"])
 
 
+def test_v091_validation_fails_when_topology_report_is_missing():
+    graph = _minimal_v091_graph(mesh_report=_clean_v091_mesh_report())
+    graph.pop("transition_topology_report")
+
+    report = build_geometry_validation_report(
+        parameters={},
+        facets={},
+        transition_policies={},
+        surface_graph=graph,
+        capability_matrix_id="impeller_v0_91_kernel_capabilities",
+    )
+
+    assert report["geometry_validation_status"] == "FAIL"
+    assert any(failure["reason"] == "missing_transition_topology_report" for failure in report["blocking_failures"])
+    assert any(
+        check["check_id"] == "v091_transition_topology_report" and check["status"] == "FAIL"
+        for check in report["checks"]
+    )
+
+
 @pytest.mark.parametrize(
     ("mesh_counts", "reason"),
     [
         ({"free_edge_count": 1}, "mesh_has_free_edges"),
         ({"nonmanifold_edge_count": 1}, "mesh_has_nonmanifold_edges"),
         ({"zero_area_face_count": 1}, "mesh_has_zero_area_faces"),
+        ({"duplicate_face_count": 1}, "mesh_has_duplicate_faces"),
     ],
 )
 def test_v091_validation_fails_on_dirty_final_mesh_counts(mesh_counts: dict, reason: str):
@@ -314,6 +335,7 @@ def test_v091_validation_fails_on_dirty_final_mesh_counts(mesh_counts: dict, rea
 
     assert report["geometry_validation_status"] == "FAIL"
     assert any(failure["reason"] == reason for failure in report["blocking_failures"])
+    assert any(check["status"] == "FAIL" for check in report["checks"])
 
 
 def test_v091_validation_fails_on_missing_required_corner_patches():

@@ -75,12 +75,14 @@ def build_geometry_validation_report(
         ("transition_radius_sync", "transition_radius_not_synchronized"),
         ("disabled_transition_surfaces", "disabled_policy_has_transition_surface"),
         ("double_sided_root_topology", "legacy_single_root_transition_surface"),
+        ("v091_transition_topology_report", "missing_transition_topology_report"),
         ("v091_required_corner_patches", "missing_required_corner_patches"),
         ("v091_boundary_node_identity", "boundary_node_identity_failed"),
         ("v091_mesh_manifoldness_report", "missing_mesh_manifoldness_report"),
         ("v091_final_mesh_free_edges", "mesh_has_free_edges"),
         ("v091_final_mesh_nonmanifold_edges", "mesh_has_nonmanifold_edges"),
         ("v091_final_mesh_zero_area_faces", "mesh_has_zero_area_faces"),
+        ("v091_final_mesh_duplicate_faces", "mesh_has_duplicate_faces"),
     ]:
         checks.append(
             {
@@ -328,7 +330,12 @@ def _validate_v091_topology_and_mesh(
 
     mesh_report = graph.get("mesh_manifoldness_report")
     if not isinstance(mesh_report, Mapping):
-        blocking_failures.append(_failure("missing_mesh_manifoldness_report"))
+        blocking_failures.append(
+            _failure(
+                "missing_mesh_manifoldness_report",
+                mesh_manifoldness_report_error=graph.get("mesh_manifoldness_report_error"),
+            )
+        )
         return
 
     _append_positive_count_failure(
