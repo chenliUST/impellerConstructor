@@ -12,12 +12,14 @@ Supersedes: `v0_8`
    impeller taxonomy line.
 3. Adds kernel capability matrix and golden case registry resources for repeatable
    validation and expert review.
-4. Requires geometry validation reports before export and blocks partial STL/STEP/OBJ
-   success when blocking transition failures are present.
+4. Declares the requirement for geometry validation reports before export and for
+   blocking partial STL/STEP/OBJ success when blocking transition failures are
+   present; follow-up V0.91 tasks implement the runtime/export enforcement.
 5. Replaces the V0.8 single root transition success criterion with double-sided
    pressure-root and suction-root transition surface topology.
-6. Requires shared-node transition patch mesh and bounded review B-Rep export metadata
-   so adjacent main faces do not hide transition defects.
+6. Declares shared-node transition patch mesh and bounded review B-Rep export
+   metadata requirements so adjacent main faces do not hide transition defects;
+   follow-up V0.91 tasks implement shared-node mesh generation.
 
 ## Limitations
 

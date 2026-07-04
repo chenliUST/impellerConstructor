@@ -4,13 +4,18 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from part_rule_synthesis import impeller_dsl_resources
+from part_rule_synthesis import service as service_module
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+from part_rule_synthesis.service import RuleSynthesisService
 
 RESOURCE_ROOT = (
     SRC_ROOT
@@ -56,6 +61,25 @@ def test_v091_bundle_loads_topology_first_contract():
     assert all(case["case_id"].startswith("v091_") for case in registry["cases"])
 
 
+def test_v091_bundle_applies_research_registry_validation(monkeypatch):
+    original_loader = impeller_dsl_resources._load_json_directory_by_id
+
+    def missing_v091_capability_matrix(path: Path, id_field: str):
+        loaded = original_loader(path, id_field)
+        if "v0_91" in path.parts and path.name == "capability_matrices":
+            return {}
+        return loaded
+
+    monkeypatch.setattr(
+        impeller_dsl_resources,
+        "_load_json_directory_by_id",
+        missing_v091_capability_matrix,
+    )
+
+    with pytest.raises(ValueError, match="impeller v0.91 missing kernel capability matrix"):
+        load_impeller_dsl_bundle("v0_91")
+
+
 def test_v091_runtime_marks_topology_first_transition_graph():
     runtime = compile_impeller_runtime_preset("radial_open_reference_v0_91")
 
@@ -70,6 +94,31 @@ def test_v091_runtime_marks_topology_first_transition_graph():
     assert runtime["edge_families"]["blade_root_to_hub"]["default_treatment"] == "fillet"
     assert runtime["transition_policy_defaults"]["blade_root_to_hub.default"]["treatment"] == "fillet"
     assert runtime["transition_policy_defaults"]["mounting_bore_top.default"]["treatment"] == "chamfer"
+
+
+def test_v091_service_blocks_until_topology_first_solver_exists(tmp_path: Path):
+    service = RuleSynthesisService(tmp_path)
+
+    engine = service.synthesize("impeller", "radial_open_reference_v0_91")
+
+    with pytest.raises(RuntimeError, match="geometry validation.*legacy_single_root_transition_surface"):
+        service.instantiate(engine.engine_id, {})
+
+
+def test_v091_service_export_strategy_recognizes_topology_first_contract():
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_91")
+
+    strategy = service_module._export_strategy("impeller", dsl_context=runtime, export_manifests={})
+
+    assert strategy["mode"] == "topology_first_transition_bounded_brep"
+    assert strategy["step_exactness"] == "validated_bounded_unsewn_review_brep_step"
+    assert strategy["target_step_exactness"] == "surface_graph_trimmed_brep_step"
+    assert strategy["coverage_status"] == "complete_topology_first_validated_transition_graph"
+    assert (
+        strategy["cad_export_scope"]
+        == "all_topology_first_validated_transition_graph_cad_surfaces"
+    )
+    assert strategy["unsupported_surface_policy"] == "fail_export"
 
 
 def test_v091_resources_do_not_retain_v09_transition_identifiers():
