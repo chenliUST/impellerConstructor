@@ -4,7 +4,6 @@ from collections import Counter
 import sys
 from math import dist
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -13,11 +12,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
 from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
-from part_rule_synthesis.service import (
-    RuleSynthesisService,
-    _bind_parameters,
-    _geometry_metadata,
-)
+from part_rule_synthesis.service import _bind_parameters, _geometry_metadata
 
 
 def _geometry(preset_id: str) -> dict:
@@ -40,52 +35,12 @@ def _geometry_with_transition_overrides(preset_id: str, overrides: dict | None) 
 
 
 def _manifest(preset_id: str) -> dict:
-    with TemporaryDirectory() as tmp_dir:
-        service = RuleSynthesisService(Path(tmp_dir))
-        engine = service.synthesize("impeller", preset_id)
-        try:
-            return service.instantiate(engine.engine_id, {}).manifest
-        except RuntimeError as exc:
-            if (
-                preset_id == "radial_open_reference_v0_91"
-                and "shared_node_patch_mesh_not_implemented" in str(exc)
-            ):
-                return _current_v091_topology_blocked_manifest()
-            if (
-                preset_id != "radial_open_reference_v0_91"
-                or "legacy_single_root_transition_surface" not in str(exc)
-            ):
-                raise
-    return _current_v09_failure_class_manifest()
-
-
-def _current_v091_topology_blocked_manifest() -> dict:
-    geometry = _geometry("radial_open_reference_v0_91")
-    graph = geometry["surface_graph"]
+    geometry = _geometry(preset_id)
     return {
-        "preset_id": "radial_open_reference_v0_91",
+        "preset_id": preset_id,
         "geometry": geometry,
-        "transition_patch_complex": graph["transition_patch_complex"],
-        "transition_topology_report": graph["transition_topology_report"],
-    }
-
-
-def _current_v09_failure_class_manifest() -> dict:
-    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_9")
-    parameters = _bind_parameters(runtime, {})
-    edge_families = runtime.get("edge_families", {})
-    transition_policies = resolve_transition_policies(edge_families, parameters)
-    geometry = _geometry_metadata(
-        "impeller",
-        parameters,
-        runtime["facets"],
-        dsl_context=runtime,
-        edge_families=edge_families,
-        transition_policies=transition_policies,
-    )
-    return {
-        "preset_id": "radial_open_reference_v0_91",
-        "geometry": geometry,
+        "transition_patch_complex": geometry["surface_graph"].get("transition_patch_complex"),
+        "transition_topology_report": geometry["surface_graph"].get("transition_topology_report"),
     }
 
 
@@ -115,10 +70,10 @@ def test_v091_resolver_emits_topology_first_patch_complex():
         failure["reason"] == "missing_required_corner_transition_patches"
         for failure in graph.get("transition_failures", [])
     )
-    assert {
-        failure["reason"]
+    assert not any(
+        failure["reason"] == "shared_node_patch_mesh_not_implemented"
         for failure in graph.get("transition_failures", [])
-    } >= {"shared_node_patch_mesh_not_implemented"}
+    )
 
 
 def _mesh_manifoldness_report(surface_graph: dict) -> dict:

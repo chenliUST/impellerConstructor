@@ -15,7 +15,9 @@ from part_rule_synthesis import impeller_dsl_resources
 from part_rule_synthesis import service as service_module
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
-from part_rule_synthesis.service import RuleSynthesisService
+from part_rule_synthesis.impeller_patch_mesh import V091_SHARED_NODE_PATCH_MESH_CAPABILITY
+from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
+from part_rule_synthesis.service import RuleSynthesisService, _bind_parameters, _geometry_metadata
 
 RESOURCE_ROOT = (
     SRC_ROOT
@@ -120,13 +122,27 @@ def test_v091_runtime_marks_topology_first_transition_graph():
     assert runtime["transition_policy_defaults"]["mounting_bore_top.default"]["treatment"] == "chamfer"
 
 
-def test_v091_service_blocks_until_shared_node_patch_mesh_exists(tmp_path: Path):
-    service = RuleSynthesisService(tmp_path)
+def test_v091_geometry_uses_shared_node_patch_mesh_capability():
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v0_91")
+    parameters = _bind_parameters(runtime, {})
+    edge_families = runtime.get("edge_families", {})
+    transition_policies = resolve_transition_policies(edge_families, parameters)
 
-    engine = service.synthesize("impeller", "radial_open_reference_v0_91")
+    geometry = _geometry_metadata(
+        "impeller",
+        parameters,
+        runtime["facets"],
+        dsl_context=runtime,
+        edge_families=edge_families,
+        transition_policies=transition_policies,
+    )
+    failures = geometry["surface_graph"].get("transition_failures", [])
 
-    with pytest.raises(RuntimeError, match="shared_node_patch_mesh_not_implemented"):
-        service.instantiate(engine.engine_id, {})
+    assert V091_SHARED_NODE_PATCH_MESH_CAPABILITY == "implemented"
+    assert not any(
+        failure["reason"] == "shared_node_patch_mesh_not_implemented"
+        for failure in failures
+    )
 
 
 def test_v091_service_export_strategy_recognizes_topology_first_contract():

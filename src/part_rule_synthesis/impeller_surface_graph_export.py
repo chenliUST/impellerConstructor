@@ -36,6 +36,11 @@ def write_surface_graph_exports(
         "source": triangulation.get("source", "surface_graph"),
         "view": view_id,
         **({"mesh_type": triangulation["mesh_type"]} if "mesh_type" in triangulation else {}),
+        **(
+            {"mesh_manifoldness_report": triangulation["mesh_manifoldness_report"]}
+            if "mesh_manifoldness_report" in triangulation
+            else {}
+        ),
         "surface_count": len(triangulation["included_surface_ids"]),
         "included_surface_ids": triangulation["included_surface_ids"],
         "excluded_surface_ids": triangulation["excluded_surface_ids"],
@@ -70,6 +75,10 @@ def write_surface_graph_exports(
 
 
 def _mesh_for_surface_graph(surface_graph: dict[str, Any], view_id: str) -> dict[str, Any]:
+    if surface_graph.get("transition_geometry_status") == "topology_first_validated_transition_graph":
+        from part_rule_synthesis.impeller_patch_mesh import build_patch_mesh
+
+        return build_patch_mesh(surface_graph, view_id=view_id)
     if surface_graph.get("transition_geometry_status") in {
         "resolved_trimmed_surface_graph",
         "validated_transition_surface_graph",
