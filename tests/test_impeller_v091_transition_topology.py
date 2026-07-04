@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import sys
 from math import dist
 from pathlib import Path
@@ -57,13 +58,67 @@ def _surface_map(surface_graph: dict) -> dict:
     return {surface["id"]: surface for surface in surface_graph["surfaces"]}
 
 
+def _mesh_manifoldness_report(surface_graph: dict) -> dict:
+    try:
+        from part_rule_synthesis.impeller_patch_mesh import build_patch_mesh
+    except ModuleNotFoundError as exc:
+        if exc.name != "part_rule_synthesis.impeller_patch_mesh":
+            raise
+    else:
+        return build_patch_mesh(surface_graph)["mesh_manifoldness_report"]
+
+    from part_rule_synthesis.impeller_transition_mesh import build_transition_aware_mesh
+
+    mesh = build_transition_aware_mesh(surface_graph)
+    edge_incidence = Counter(
+        edge
+        for triangle in mesh["triangles"]
+        for edge in _triangle_edge_keys(triangle["points"])
+    )
+    return {
+        "free_edge_count": sum(1 for count in edge_incidence.values() if count == 1),
+        "nonmanifold_edge_count": sum(1 for count in edge_incidence.values() if count > 2),
+        "zero_area_face_count": sum(
+            1
+            for triangle in mesh["triangles"]
+            if _is_zero_area_triangle(triangle["points"])
+        ),
+    }
+
+
+def _triangle_edge_keys(points: list[list[float]]) -> list[tuple]:
+    first, second, third = points
+    return [
+        _edge_key(first, second),
+        _edge_key(second, third),
+        _edge_key(third, first),
+    ]
+
+
+def _edge_key(first: list[float], second: list[float]) -> tuple:
+    return tuple(sorted((_point_key(first), _point_key(second))))
+
+
+def _point_key(point: list[float]) -> tuple[float, float, float]:
+    return tuple(round(float(component), 12) for component in point)
+
+
+def _is_zero_area_triangle(points: list[list[float]]) -> bool:
+    first, second, third = points
+    ab = [second[index] - first[index] for index in range(3)]
+    ac = [third[index] - first[index] for index in range(3)]
+    cross = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ]
+    return sum(component * component for component in cross) <= 1.0e-24
+
+
 def test_v091_default_mesh_has_no_free_or_nonmanifold_edges():
-    from part_rule_synthesis.impeller_patch_mesh import build_patch_mesh
-
     manifest = _manifest("radial_open_reference_v0_91")
-    mesh = build_patch_mesh(manifest["geometry"]["surface_graph"])
+    report = _mesh_manifoldness_report(manifest["geometry"]["surface_graph"])
 
-    report = mesh["mesh_manifoldness_report"]
     assert report["free_edge_count"] == 0
     assert report["nonmanifold_edge_count"] == 0
     assert report["zero_area_face_count"] == 0
@@ -86,8 +141,9 @@ def test_v091_root_leading_corner_boundaries_are_closed():
 
 def test_v091_transition_patch_complex_uses_shared_node_ids():
     manifest = _manifest("radial_open_reference_v0_91")
-    complex_report = manifest.get("transition_topology_report", {})
 
-    assert complex_report.get("transition_patch_count", 0) > 0
-    assert complex_report.get("corner_patch_count", 0) > 0
-    assert complex_report.get("boundary_node_identity_failures") == []
+    assert "transition_topology_report" in manifest
+    complex_report = manifest["transition_topology_report"]
+    assert complex_report["transition_patch_count"] > 0
+    assert complex_report["corner_patch_count"] > 0
+    assert complex_report["boundary_node_identity_failures"] == []
