@@ -44,7 +44,7 @@ def _manifest(preset_id: str) -> dict:
         except RuntimeError as exc:
             if (
                 preset_id == "radial_open_reference_v0_91"
-                and "missing_required_corner_transition_patches" in str(exc)
+                and "shared_node_patch_mesh_not_implemented" in str(exc)
             ):
                 return _current_v091_topology_blocked_manifest()
             if (
@@ -102,13 +102,19 @@ def test_v091_resolver_emits_topology_first_patch_complex():
     assert "transition_topology_report" in graph
     topology_report = graph["transition_topology_report"]
     assert topology_report["transition_patch_count"] > 0
-    assert topology_report["boundary_identity_status"] != "PASS"
-    assert topology_report["missing_shared_boundary_link_count"] > 0
-    assert topology_report["evaluated_shared_boundary_count"] == 0
+    assert topology_report["corner_patch_count"] == topology_report["required_corner_patch_count"]
+    assert topology_report["corner_patch_count"] > 0
+    assert topology_report["boundary_identity_status"] == "PASS"
+    assert topology_report["missing_shared_boundary_link_count"] == 0
+    assert topology_report["evaluated_shared_boundary_count"] > 0
+    assert not any(
+        failure["reason"] == "missing_required_corner_transition_patches"
+        for failure in graph.get("transition_failures", [])
+    )
     assert {
         failure["reason"]
-        for failure in graph["transition_failures"]
-    } >= {"missing_required_corner_transition_patches"}
+        for failure in graph.get("transition_failures", [])
+    } >= {"shared_node_patch_mesh_not_implemented"}
 
 
 def _mesh_manifoldness_report(surface_graph: dict) -> dict:
@@ -199,4 +205,24 @@ def test_v091_transition_patch_complex_uses_shared_node_ids():
     complex_report = manifest["transition_topology_report"]
     assert complex_report["transition_patch_count"] > 0
     assert complex_report["corner_patch_count"] > 0
+    assert complex_report["missing_shared_boundary_links"] == []
     assert complex_report["boundary_node_identity_failures"] == []
+
+
+def test_v091_default_blade_has_required_corner_patch_roles():
+    manifest = _manifest("radial_open_reference_v0_91")
+    patch_complex = manifest["geometry"]["surface_graph"]["transition_patch_complex"]
+    roles = {
+        patch["role"]
+        for patch in patch_complex["patches"].values()
+        if patch["surface_graph_id"].startswith("blade_0_")
+    }
+
+    assert {
+        "root_leading_pressure_corner",
+        "root_leading_suction_corner",
+        "root_trailing_pressure_corner",
+        "root_trailing_suction_corner",
+        "tip_leading_corner",
+        "tip_trailing_corner",
+    } <= roles

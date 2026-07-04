@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import importlib.util
 import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from part_rule_synthesis.impeller_transition_corners import build_coons_corner_grid
 from part_rule_synthesis.impeller_transition_sections import (
     build_chamfer_section as build_topology_chamfer_section,
     build_fillet_section as build_topology_fillet_section,
@@ -462,16 +464,35 @@ def _resolve_v091_transition_geometry(
             )
 
     surface_by_id = {surface["id"]: surface for surface in surfaces}
+    corner_surfaces, corner_failures, endpoint_adjustments = _build_v091_corner_patch_surfaces(
+        surfaces,
+        blade_indices,
+        transition_policies,
+    )
+    surfaces.extend(corner_surfaces)
+    transition_failures.extend(corner_failures)
+    surface_by_id = {surface["id"]: surface for surface in surfaces}
     _rewrite_v091_transition_edges(edges, set(surface_by_id))
     patch_complex = _build_v091_transition_patch_complex(surfaces)
     resolved_graph["transition_patch_complex"] = patch_complex_manifest(patch_complex)
-    missing_shared_boundary_links = _v091_missing_shared_boundary_links(blade_indices, transition_policies)
+    required_corner_roles = _v091_required_corner_roles(blade_indices, transition_policies)
+    missing_shared_boundary_links = _v091_missing_shared_boundary_links(
+        blade_indices,
+        transition_policies,
+        patch_complex=patch_complex,
+    )
+    evaluated_shared_boundary_count = max(
+        0,
+        len(required_corner_roles) - len(missing_shared_boundary_links),
+    )
     resolved_graph["transition_topology_report"] = patch_complex_report(
         patch_complex,
-        required_corner_patch_count=_v091_required_corner_patch_count(blade_indices, transition_policies),
+        required_corner_patch_count=len(required_corner_roles),
         missing_shared_boundary_links=missing_shared_boundary_links,
-        evaluated_shared_boundary_count=0,
+        evaluated_shared_boundary_count=evaluated_shared_boundary_count,
     )
+    resolved_graph["transition_topology_report"]["corner_endpoint_adjustment_count"] = len(endpoint_adjustments)
+    resolved_graph["transition_topology_report"]["corner_endpoint_adjustments"] = endpoint_adjustments
     topology_report = resolved_graph["transition_topology_report"]
     if topology_report["corner_patch_count"] < topology_report["required_corner_patch_count"]:
         transition_failures.append(
@@ -483,6 +504,18 @@ def _resolve_v091_transition_geometry(
                 "reason": "missing_required_corner_transition_patches",
                 "corner_patch_count": topology_report["corner_patch_count"],
                 "required_corner_patch_count": topology_report["required_corner_patch_count"],
+            }
+        )
+    elif not _v091_shared_node_patch_mesh_available():
+        transition_failures.append(
+            {
+                "edge_treatment_site_id": "v091.shared_node_patch_mesh",
+                "edge_family": "transition_patch_mesh",
+                "transition_policy_id": "v091.shared_node_patch_mesh",
+                "status": "FAIL",
+                "reason": "shared_node_patch_mesh_not_implemented",
+                "patch_count": topology_report["patch_count"],
+                "corner_patch_count": topology_report["corner_patch_count"],
             }
         )
     resolved_graph["edge_treatment_sites"] = site_dicts
@@ -982,6 +1015,551 @@ def _rewrite_v091_transition_edges(
             ]
 
 
+def _build_v091_corner_patch_surfaces(
+    surfaces: list[dict[str, Any]],
+    blade_indices: list[int],
+    transition_policies: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    surface_by_id = {str(surface.get("id")): surface for surface in surfaces}
+    endpoint_adjustments: list[dict[str, Any]] = []
+    for blade_index in blade_indices:
+        _synchronize_v091_corner_endpoints(
+            surface_by_id,
+            blade_index,
+            transition_policies,
+            endpoint_adjustments,
+        )
+
+    corner_surfaces: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for spec in _v091_required_corner_roles(blade_indices, transition_policies):
+        try:
+            corner_surfaces.append(_v091_corner_surface(surface_by_id, spec))
+        except KeyError as exc:
+            failures.append(
+                {
+                    "edge_treatment_site_id": f"blade_{spec['blade_index']}.{spec['role']}",
+                    "edge_family": "transition_corner",
+                    "transition_policy_id": "v091.corner_patch",
+                    "status": "FAIL",
+                    "reason": "missing_corner_boundary_edge",
+                    "missing_boundary": str(exc).strip("'"),
+                    "corner_role": spec["role"],
+                }
+            )
+        except (TypeError, ValueError) as exc:
+            failures.append(
+                {
+                    "edge_treatment_site_id": f"blade_{spec['blade_index']}.{spec['role']}",
+                    "edge_family": "transition_corner",
+                    "transition_policy_id": "v091.corner_patch",
+                    "status": "FAIL",
+                    "reason": "missing_corner_boundary_edge",
+                    "detail": str(exc),
+                    "corner_role": spec["role"],
+                }
+            )
+    return corner_surfaces, failures, endpoint_adjustments
+
+
+def _synchronize_v091_corner_endpoints(
+    surface_by_id: dict[str, dict[str, Any]],
+    blade_index: int,
+    transition_policies: dict[str, Any],
+    endpoint_adjustments: list[dict[str, Any]],
+) -> None:
+    root_active = _policy_enabled(transition_policies.get("blade_root_to_hub.default"))
+    leading_active = _policy_enabled(transition_policies.get("blade_leading_edge.default"))
+    trailing_active = _policy_enabled(transition_policies.get("blade_trailing_edge.default"))
+    tip_active = (
+        _policy_enabled(transition_policies.get("blade_tip_or_shroud.default"))
+        or _policy_enabled(transition_policies.get("blade_tip_to_shroud.default"))
+    )
+    if root_active and leading_active:
+        _sync_v091_corner_endpoint(
+            surface_by_id,
+            source_surface_id=f"blade_{blade_index}_pressure_root_transition_surface",
+            source_row_index=0,
+            source_column_index=0,
+            target_surface_id=f"blade_{blade_index}_leading_transition_surface",
+            target_row_index=0,
+            target_column_index=0,
+            corner_role="root_leading_pressure_corner",
+            endpoint_adjustments=endpoint_adjustments,
+        )
+        _sync_v091_corner_endpoint(
+            surface_by_id,
+            source_surface_id=f"blade_{blade_index}_suction_root_transition_surface",
+            source_row_index=0,
+            source_column_index=0,
+            target_surface_id=f"blade_{blade_index}_leading_transition_surface",
+            target_row_index=0,
+            target_column_index=-1,
+            corner_role="root_leading_suction_corner",
+            endpoint_adjustments=endpoint_adjustments,
+        )
+    if root_active and trailing_active:
+        _sync_v091_corner_endpoint(
+            surface_by_id,
+            source_surface_id=f"blade_{blade_index}_pressure_root_transition_surface",
+            source_row_index=-1,
+            source_column_index=0,
+            target_surface_id=f"blade_{blade_index}_trailing_transition_surface",
+            target_row_index=0,
+            target_column_index=0,
+            corner_role="root_trailing_pressure_corner",
+            endpoint_adjustments=endpoint_adjustments,
+        )
+        _sync_v091_corner_endpoint(
+            surface_by_id,
+            source_surface_id=f"blade_{blade_index}_suction_root_transition_surface",
+            source_row_index=-1,
+            source_column_index=0,
+            target_surface_id=f"blade_{blade_index}_trailing_transition_surface",
+            target_row_index=0,
+            target_column_index=-1,
+            corner_role="root_trailing_suction_corner",
+            endpoint_adjustments=endpoint_adjustments,
+        )
+    if tip_active and leading_active:
+        _sync_v091_corner_endpoint(
+            surface_by_id,
+            source_surface_id=f"blade_{blade_index}_tip_transition_surface",
+            source_row_index=0,
+            source_column_index=0,
+            target_surface_id=f"blade_{blade_index}_leading_transition_surface",
+            target_row_index=-1,
+            target_column_index=0,
+            corner_role="tip_leading_corner",
+            endpoint_adjustments=endpoint_adjustments,
+        )
+        _sync_v091_corner_endpoint(
+            surface_by_id,
+            source_surface_id=f"blade_{blade_index}_tip_transition_surface",
+            source_row_index=0,
+            source_column_index=-1,
+            target_surface_id=f"blade_{blade_index}_leading_transition_surface",
+            target_row_index=-1,
+            target_column_index=-1,
+            corner_role="tip_leading_corner",
+            endpoint_adjustments=endpoint_adjustments,
+        )
+    if tip_active and trailing_active:
+        _sync_v091_corner_endpoint(
+            surface_by_id,
+            source_surface_id=f"blade_{blade_index}_tip_transition_surface",
+            source_row_index=-1,
+            source_column_index=0,
+            target_surface_id=f"blade_{blade_index}_trailing_transition_surface",
+            target_row_index=-1,
+            target_column_index=0,
+            corner_role="tip_trailing_corner",
+            endpoint_adjustments=endpoint_adjustments,
+        )
+        _sync_v091_corner_endpoint(
+            surface_by_id,
+            source_surface_id=f"blade_{blade_index}_tip_transition_surface",
+            source_row_index=-1,
+            source_column_index=-1,
+            target_surface_id=f"blade_{blade_index}_trailing_transition_surface",
+            target_row_index=-1,
+            target_column_index=-1,
+            corner_role="tip_trailing_corner",
+            endpoint_adjustments=endpoint_adjustments,
+        )
+
+
+def _sync_v091_corner_endpoint(
+    surface_by_id: dict[str, dict[str, Any]],
+    *,
+    source_surface_id: str,
+    source_row_index: int,
+    source_column_index: int,
+    target_surface_id: str,
+    target_row_index: int,
+    target_column_index: int,
+    corner_role: str,
+    endpoint_adjustments: list[dict[str, Any]],
+) -> None:
+    source = surface_by_id.get(source_surface_id)
+    target = surface_by_id.get(target_surface_id)
+    if source is None or target is None:
+        return
+    source_grid = source.get("uv_grid")
+    target_grid = target.get("uv_grid")
+    source_point = _v091_grid_point(
+        source_grid,
+        source_row_index,
+        source_column_index,
+        surface_id=source_surface_id,
+    )
+    target_point = _v091_grid_point(
+        target_grid,
+        target_row_index,
+        target_column_index,
+        surface_id=target_surface_id,
+    )
+    gap = _norm(_subtract(source_point, target_point))
+    _set_v091_grid_point(target_grid, target_row_index, target_column_index, source_point)
+    _set_surface_grid(target, target_grid)
+    if gap > 1.0e-12:
+        endpoint_adjustments.append(
+            {
+                "corner_role": corner_role,
+                "source_surface_id": source_surface_id,
+                "target_surface_id": target_surface_id,
+                "gap_before_mm": gap,
+                "shared_point": [source_point[0], source_point[1], source_point[2]],
+            }
+        )
+
+
+def _v091_corner_surface(
+    surface_by_id: dict[str, dict[str, Any]],
+    spec: dict[str, Any],
+) -> dict[str, Any]:
+    blade_index = int(spec["blade_index"])
+    role = str(spec["role"])
+    surface_id = f"blade_{blade_index}_{role}_transition_surface"
+    grid, node_grid = _v091_corner_grid_and_nodes(surface_by_id, blade_index, role)
+    return {
+        "id": surface_id,
+        "kind": "transition_surface",
+        "role": role,
+        "cfd_role": "transition_corner",
+        "feature_id": f"blade_{blade_index:02d}.{role}",
+        "edge_family": "transition_corner",
+        "transition_geometry": "topology_first_corner_patch",
+        "transition_quality": {
+            "corner_patch": True,
+            "u_count": len(grid),
+            "v_count": len(grid[0]) if grid else 0,
+        },
+        "uv_grid": _grid_points_to_lists(grid),
+        "transition_corner_node_grid": node_grid,
+        "boundary_ids": [f"blade_{blade_index}.{role}"],
+    }
+
+
+def _v091_corner_grid_and_nodes(
+    surface_by_id: dict[str, dict[str, Any]],
+    blade_index: int,
+    role: str,
+) -> tuple[list[list[Point3]], list[list[str]]]:
+    pressure_root = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_pressure_root_transition_surface")
+    suction_root = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_suction_root_transition_surface")
+    leading = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_leading_transition_surface")
+    trailing = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_trailing_transition_surface")
+    tip = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_tip_transition_surface")
+
+    if role == "root_leading_pressure_corner":
+        return _v091_side_corner_grid_and_nodes(
+            blade_index=blade_index,
+            role=role,
+            root_grid=pressure_root,
+            root_patch_role="root.pressure",
+            root_row_index=0,
+            edge_grid=leading,
+            edge_patch_role="leading",
+            edge_column_index=0,
+            edge_from_start=True,
+        )
+    if role == "root_leading_suction_corner":
+        return _v091_side_corner_grid_and_nodes(
+            blade_index=blade_index,
+            role=role,
+            root_grid=suction_root,
+            root_patch_role="root.suction",
+            root_row_index=0,
+            edge_grid=leading,
+            edge_patch_role="leading",
+            edge_column_index=-1,
+            edge_from_start=True,
+        )
+    if role == "root_trailing_pressure_corner":
+        return _v091_side_corner_grid_and_nodes(
+            blade_index=blade_index,
+            role=role,
+            root_grid=pressure_root,
+            root_patch_role="root.pressure",
+            root_row_index=-1,
+            edge_grid=trailing,
+            edge_patch_role="trailing",
+            edge_column_index=0,
+            edge_from_start=True,
+        )
+    if role == "root_trailing_suction_corner":
+        return _v091_side_corner_grid_and_nodes(
+            blade_index=blade_index,
+            role=role,
+            root_grid=suction_root,
+            root_patch_role="root.suction",
+            root_row_index=-1,
+            edge_grid=trailing,
+            edge_patch_role="trailing",
+            edge_column_index=-1,
+            edge_from_start=True,
+        )
+    if role == "tip_leading_corner":
+        return _v091_tip_corner_grid_and_nodes(
+            blade_index=blade_index,
+            role=role,
+            tip_grid=tip,
+            tip_row_index=0,
+            edge_grid=leading,
+            edge_patch_role="leading",
+            edge_row_index=-1,
+        )
+    if role == "tip_trailing_corner":
+        return _v091_tip_corner_grid_and_nodes(
+            blade_index=blade_index,
+            role=role,
+            tip_grid=tip,
+            tip_row_index=-1,
+            edge_grid=trailing,
+            edge_patch_role="trailing",
+            edge_row_index=-1,
+        )
+    raise ValueError(f"unsupported V0.91 corner role: {role}")
+
+
+def _v091_side_corner_grid_and_nodes(
+    *,
+    blade_index: int,
+    role: str,
+    root_grid: list[list[Any]],
+    root_patch_role: str,
+    root_row_index: int,
+    edge_grid: list[list[Any]],
+    edge_patch_role: str,
+    edge_column_index: int,
+    edge_from_start: bool,
+) -> tuple[list[list[Point3]], list[list[str]]]:
+    root_row, root_column_indices = _v091_local_row(root_grid, root_row_index, from_start=True)
+    edge_column, edge_row_indices = _v091_local_column(edge_grid, edge_column_index, from_start=edge_from_start)
+    root_row[0] = edge_column[0]
+    diagonal = _v091_parallelogram_point(root_row[0], root_row[-1], edge_column[-1])
+    east = _resample_points([root_row[-1], diagonal], len(edge_column))
+    north = _resample_points([edge_column[-1], diagonal], len(root_row))
+    grid = build_coons_corner_grid(
+        west=edge_column,
+        east=east,
+        south=root_row,
+        north=north,
+    )
+    node_grid = _v091_unique_corner_node_grid(blade_index, role, len(grid), len(grid[0]))
+    for column_offset, root_column_index in enumerate(root_column_indices):
+        node_grid[column_offset][0] = _v091_node_id(
+            blade_index=blade_index,
+            patch_role=root_patch_role,
+            row_index=_resolve_index(root_row_index, len(root_grid)),
+            row_count=len(root_grid),
+            column_index=root_column_index,
+            column_count=len(root_grid[_resolve_index(root_row_index, len(root_grid))]),
+        )
+    edge_column_resolved = _resolve_index(edge_column_index, len(edge_grid[0]))
+    for row_offset, edge_row_index in enumerate(edge_row_indices):
+        node_grid[0][row_offset] = _v091_node_id(
+            blade_index=blade_index,
+            patch_role=edge_patch_role,
+            row_index=edge_row_index,
+            row_count=len(edge_grid),
+            column_index=edge_column_resolved,
+            column_count=len(edge_grid[edge_row_index]),
+        )
+    return grid, node_grid
+
+
+def _v091_tip_corner_grid_and_nodes(
+    *,
+    blade_index: int,
+    role: str,
+    tip_grid: list[list[Any]],
+    tip_row_index: int,
+    edge_grid: list[list[Any]],
+    edge_patch_role: str,
+    edge_row_index: int,
+) -> tuple[list[list[Point3]], list[list[str]]]:
+    south, tip_column_indices = _v091_local_row(tip_grid, tip_row_index, from_start=True)
+    north, edge_column_indices = _v091_local_row(edge_grid, edge_row_index, from_start=True)
+    west = _resample_points([south[0], north[0]], 3)
+    east = _resample_points([south[-1], north[-1]], 3)
+    grid = build_coons_corner_grid(
+        west=west,
+        east=east,
+        south=south,
+        north=north,
+    )
+    node_grid = _v091_unique_corner_node_grid(blade_index, role, len(grid), len(grid[0]))
+    tip_row_resolved = _resolve_index(tip_row_index, len(tip_grid))
+    edge_row_resolved = _resolve_index(edge_row_index, len(edge_grid))
+    for column_offset, tip_column_index in enumerate(tip_column_indices):
+        node_grid[column_offset][0] = _v091_node_id(
+            blade_index=blade_index,
+            patch_role="tip",
+            row_index=tip_row_resolved,
+            row_count=len(tip_grid),
+            column_index=tip_column_index,
+            column_count=len(tip_grid[tip_row_resolved]),
+        )
+    for column_offset, edge_column_index in enumerate(edge_column_indices):
+        node_grid[column_offset][-1] = _v091_node_id(
+            blade_index=blade_index,
+            patch_role=edge_patch_role,
+            row_index=edge_row_resolved,
+            row_count=len(edge_grid),
+            column_index=edge_column_index,
+            column_count=len(edge_grid[edge_row_resolved]),
+        )
+    return grid, node_grid
+
+
+def _v091_surface_grid(
+    surface_by_id: dict[str, dict[str, Any]],
+    surface_id: str,
+) -> list[list[Any]]:
+    surface = surface_by_id.get(surface_id)
+    if surface is None:
+        raise KeyError(surface_id)
+    grid = surface.get("uv_grid")
+    _validate_uv_grid(grid, surface_id=surface_id)
+    return grid
+
+
+def _v091_local_row(
+    grid: list[list[Any]],
+    row_index: int,
+    *,
+    from_start: bool,
+    count: int = 3,
+) -> tuple[list[Point3], list[int]]:
+    resolved_row_index = _resolve_index(row_index, len(grid))
+    row = grid[resolved_row_index]
+    indices = _local_indices(len(row), from_start=from_start, count=count)
+    return [
+        _point3_from_grid_point(
+            row[index],
+            surface_id="v091.corner.row",
+            row_index=resolved_row_index,
+            point_index=index,
+        )
+        for index in indices
+    ], indices
+
+
+def _v091_local_column(
+    grid: list[list[Any]],
+    column_index: int,
+    *,
+    from_start: bool,
+    count: int = 3,
+) -> tuple[list[Point3], list[int]]:
+    resolved_column_index = _resolve_index(column_index, len(grid[0]))
+    indices = _local_indices(len(grid), from_start=from_start, count=count)
+    return [
+        _point3_from_grid_point(
+            grid[index][resolved_column_index],
+            surface_id="v091.corner.column",
+            row_index=index,
+            point_index=resolved_column_index,
+        )
+        for index in indices
+    ], indices
+
+
+def _local_indices(length: int, *, from_start: bool, count: int) -> list[int]:
+    if length < 2:
+        raise ValueError("corner boundary edge must contain at least two samples")
+    sample_count = min(count, length)
+    if from_start:
+        return list(range(sample_count))
+    return list(range(length - sample_count, length))
+
+
+def _resample_points(points: list[Point3], count: int) -> list[Point3]:
+    if len(points) < 2:
+        raise ValueError("cannot resample a corner boundary with fewer than two points")
+    if count <= 1:
+        raise ValueError("corner boundary resample count must exceed one")
+    if len(points) == count:
+        return list(points)
+    result: list[Point3] = []
+    max_source = len(points) - 1
+    for index in range(count):
+        source_t = index * max_source / (count - 1)
+        low = int(math.floor(source_t))
+        high = min(max_source, low + 1)
+        local_t = source_t - low
+        result.append(_lerp_point(points[low], points[high], local_t))
+    return result
+
+
+def _v091_parallelogram_point(anchor: Point3, first_arm: Point3, second_arm: Point3) -> Point3:
+    return (
+        first_arm[0] + second_arm[0] - anchor[0],
+        first_arm[1] + second_arm[1] - anchor[1],
+        first_arm[2] + second_arm[2] - anchor[2],
+    )
+
+
+def _v091_unique_corner_node_grid(
+    blade_index: int,
+    role: str,
+    row_count: int,
+    column_count: int,
+) -> list[list[str]]:
+    return [
+        [
+            f"blade_{blade_index}.{role}.row_{row_index:03d}.column_{column_index:03d}"
+            for column_index in range(column_count)
+        ]
+        for row_index in range(row_count)
+    ]
+
+
+def _grid_points_to_lists(grid: list[list[Point3]]) -> list[list[list[float]]]:
+    return [
+        [[point[0], point[1], point[2]] for point in row]
+        for row in grid
+    ]
+
+
+def _v091_grid_point(
+    grid: Any,
+    row_index: int,
+    column_index: int,
+    *,
+    surface_id: str,
+) -> Point3:
+    _validate_uv_grid(grid, surface_id=surface_id)
+    resolved_row_index = _resolve_index(row_index, len(grid))
+    resolved_column_index = _resolve_index(column_index, len(grid[resolved_row_index]))
+    return _point3_from_grid_point(
+        grid[resolved_row_index][resolved_column_index],
+        surface_id=surface_id,
+        row_index=resolved_row_index,
+        point_index=resolved_column_index,
+    )
+
+
+def _set_v091_grid_point(
+    grid: Any,
+    row_index: int,
+    column_index: int,
+    point: Point3,
+) -> None:
+    resolved_row_index = _resolve_index(row_index, len(grid))
+    resolved_column_index = _resolve_index(column_index, len(grid[resolved_row_index]))
+    grid[resolved_row_index][resolved_column_index] = [point[0], point[1], point[2]]
+
+
+def _resolve_index(index: int, length: int) -> int:
+    resolved = index if index >= 0 else length + index
+    if resolved < 0 or resolved >= length:
+        raise IndexError(index)
+    return resolved
+
+
 def _build_v091_transition_patch_complex(surfaces: list[dict[str, Any]]) -> PatchComplex:
     patch_complex = PatchComplex()
     for surface in surfaces:
@@ -997,6 +1575,7 @@ def _build_v091_transition_patch_complex(surfaces: list[dict[str, Any]]) -> Patc
             blade_index=blade_index,
             patch_role=patch_role,
             grid=grid,
+            explicit_node_grid=surface.get("transition_corner_node_grid"),
         )
         if not node_grid or not node_grid[0]:
             continue
@@ -1028,18 +1607,30 @@ def _v091_patch_node_grid(
     blade_index: int,
     patch_role: str,
     grid: list[list[Any]],
+    explicit_node_grid: Any = None,
 ) -> list[list[str]]:
     node_grid: list[list[str]] = []
     for row_index, row in enumerate(grid):
         node_row = []
         for column_index, point in enumerate(row):
-            node_id = _v091_node_id(
-                blade_index=blade_index,
-                patch_role=patch_role,
-                row_index=row_index,
-                column_index=column_index,
-                column_count=len(row),
-            )
+            if explicit_node_grid is not None:
+                if (
+                    not isinstance(explicit_node_grid, list)
+                    or row_index >= len(explicit_node_grid)
+                    or not isinstance(explicit_node_grid[row_index], list)
+                    or column_index >= len(explicit_node_grid[row_index])
+                ):
+                    raise ValueError(f"{patch_role} explicit corner node grid does not match uv_grid")
+                node_id = str(explicit_node_grid[row_index][column_index])
+            else:
+                node_id = _v091_node_id(
+                    blade_index=blade_index,
+                    patch_role=patch_role,
+                    row_index=row_index,
+                    row_count=len(grid),
+                    column_index=column_index,
+                    column_count=len(row),
+                )
             point3 = _point3_from_grid_point(
                 point,
                 surface_id=f"blade_{blade_index}.{patch_role}",
@@ -1093,6 +1684,12 @@ def _v091_transition_patch_descriptor(surface_id: str) -> tuple[int, str] | None
         "leading_transition_surface": "leading",
         "trailing_transition_surface": "trailing",
         "tip_transition_surface": "tip",
+        "root_leading_pressure_corner_transition_surface": "root_leading_pressure_corner",
+        "root_leading_suction_corner_transition_surface": "root_leading_suction_corner",
+        "root_trailing_pressure_corner_transition_surface": "root_trailing_pressure_corner",
+        "root_trailing_suction_corner_transition_surface": "root_trailing_suction_corner",
+        "tip_leading_corner_transition_surface": "tip_leading_corner",
+        "tip_trailing_corner_transition_surface": "tip_trailing_corner",
     }
     role = role_by_suffix.get(suffix)
     if role is None:
@@ -1105,9 +1702,20 @@ def _v091_node_id(
     blade_index: int,
     patch_role: str,
     row_index: int,
+    row_count: int,
     column_index: int,
     column_count: int,
 ) -> str:
+    endpoint_node_id = _v091_corner_endpoint_node_id(
+        blade_index=blade_index,
+        patch_role=patch_role,
+        row_index=row_index,
+        row_count=row_count,
+        column_index=column_index,
+        column_count=column_count,
+    )
+    if endpoint_node_id is not None:
+        return endpoint_node_id
     station = f"station_{row_index:03d}"
     last_column = max(0, column_count - 1)
     if column_index == 0:
@@ -1119,14 +1727,68 @@ def _v091_node_id(
     return f"blade_{blade_index}.{patch_role}.{station}.{boundary}"
 
 
+def _v091_corner_endpoint_node_id(
+    *,
+    blade_index: int,
+    patch_role: str,
+    row_index: int,
+    row_count: int,
+    column_index: int,
+    column_count: int,
+) -> str | None:
+    last_row = max(0, row_count - 1)
+    last_column = max(0, column_count - 1)
+    endpoint_key: str | None = None
+    if patch_role == "root.pressure" and column_index == 0:
+        if row_index == 0:
+            endpoint_key = "root_leading_pressure"
+        elif row_index == last_row:
+            endpoint_key = "root_trailing_pressure"
+    elif patch_role == "root.suction" and column_index == 0:
+        if row_index == 0:
+            endpoint_key = "root_leading_suction"
+        elif row_index == last_row:
+            endpoint_key = "root_trailing_suction"
+    elif patch_role == "leading":
+        if row_index == 0 and column_index == 0:
+            endpoint_key = "root_leading_pressure"
+        elif row_index == 0 and column_index == last_column:
+            endpoint_key = "root_leading_suction"
+        elif row_index == last_row and column_index == 0:
+            endpoint_key = "tip_leading_pressure"
+        elif row_index == last_row and column_index == last_column:
+            endpoint_key = "tip_leading_suction"
+    elif patch_role == "trailing":
+        if row_index == 0 and column_index == 0:
+            endpoint_key = "root_trailing_pressure"
+        elif row_index == 0 and column_index == last_column:
+            endpoint_key = "root_trailing_suction"
+        elif row_index == last_row and column_index == 0:
+            endpoint_key = "tip_trailing_pressure"
+        elif row_index == last_row and column_index == last_column:
+            endpoint_key = "tip_trailing_suction"
+    elif patch_role == "tip":
+        if row_index == 0 and column_index == 0:
+            endpoint_key = "tip_leading_pressure"
+        elif row_index == 0 and column_index == last_column:
+            endpoint_key = "tip_leading_suction"
+        elif row_index == last_row and column_index == 0:
+            endpoint_key = "tip_trailing_pressure"
+        elif row_index == last_row and column_index == last_column:
+            endpoint_key = "tip_trailing_suction"
+    if endpoint_key is None:
+        return None
+    return f"blade_{blade_index}.corner_endpoint.{endpoint_key}"
+
+
 def _v091_required_corner_patch_count(
     blade_indices: list[int],
     transition_policies: dict[str, Any],
 ) -> int:
-    return len(_v091_missing_shared_boundary_links(blade_indices, transition_policies))
+    return len(_v091_required_corner_roles(blade_indices, transition_policies))
 
 
-def _v091_missing_shared_boundary_links(
+def _v091_required_corner_roles(
     blade_indices: list[int],
     transition_policies: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -1137,34 +1799,60 @@ def _v091_missing_shared_boundary_links(
         _policy_enabled(transition_policies.get("blade_tip_or_shroud.default"))
         or _policy_enabled(transition_policies.get("blade_tip_to_shroud.default"))
     )
-    missing_links: list[dict[str, Any]] = []
-    corner_specs = []
+    role_specs: list[tuple[str, list[str]]] = []
     if root_active and leading_active:
-        corner_specs.append(
-            (
-                "root_leading",
-                ["root.pressure", "root.suction", "leading"],
-            )
+        role_specs.extend(
+            [
+                ("root_leading_pressure_corner", ["root.pressure", "leading"]),
+                ("root_leading_suction_corner", ["root.suction", "leading"]),
+            ]
         )
     if root_active and trailing_active:
-        corner_specs.append(
-            (
-                "root_trailing",
-                ["root.pressure", "root.suction", "trailing"],
-            )
+        role_specs.extend(
+            [
+                ("root_trailing_pressure_corner", ["root.pressure", "trailing"]),
+                ("root_trailing_suction_corner", ["root.suction", "trailing"]),
+            ]
         )
     if tip_active and leading_active:
-        corner_specs.append(("tip_leading", ["tip", "leading"]))
+        role_specs.append(("tip_leading_corner", ["tip", "leading"]))
     if tip_active and trailing_active:
-        corner_specs.append(("tip_trailing", ["tip", "trailing"]))
+        role_specs.append(("tip_trailing_corner", ["tip", "trailing"]))
 
+    required: list[dict[str, Any]] = []
     for blade_index in blade_indices:
-        for corner_id, patch_roles in corner_specs:
-            missing_links.append(
+        for role, patch_roles in role_specs:
+            required.append(
                 {
                     "blade_index": blade_index,
-                    "corner_id": f"blade_{blade_index}.{corner_id}",
+                    "corner_id": f"blade_{blade_index}.{role}",
+                    "role": role,
                     "required_patch_roles": patch_roles,
+                }
+            )
+    return required
+
+
+def _v091_missing_shared_boundary_links(
+    blade_indices: list[int],
+    transition_policies: dict[str, Any],
+    *,
+    patch_complex: PatchComplex,
+) -> list[dict[str, Any]]:
+    available = {
+        (patch.surface_graph_id, patch.role)
+        for patch in patch_complex.patches.values()
+    }
+    missing_links: list[dict[str, Any]] = []
+    for spec in _v091_required_corner_roles(blade_indices, transition_policies):
+        surface_id = f"blade_{spec['blade_index']}_{spec['role']}_transition_surface"
+        if (surface_id, spec["role"]) not in available:
+            missing_links.append(
+                {
+                    "blade_index": spec["blade_index"],
+                    "corner_id": spec["corner_id"],
+                    "role": spec["role"],
+                    "required_patch_roles": spec["required_patch_roles"],
                     "reason": "corner_patch_not_constructed",
                 }
             )
@@ -1174,6 +1862,10 @@ def _v091_missing_shared_boundary_links(
 def _is_legacy_root_transition_surface_id(surface_id: str) -> bool:
     parsed = _blade_index_and_suffix_from_surface_id(surface_id)
     return bool(parsed and parsed[1] == "root_transition_surface")
+
+
+def _v091_shared_node_patch_mesh_available() -> bool:
+    return importlib.util.find_spec("part_rule_synthesis.impeller_patch_mesh") is not None
 
 
 def _blade_index_and_suffix_from_surface_id(surface_id: str) -> tuple[int, str] | None:
