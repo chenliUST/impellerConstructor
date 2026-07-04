@@ -120,6 +120,61 @@ class PatchComplex:
                 ]
 
 
+def patch_complex_manifest(patch_complex: PatchComplex) -> dict:
+    return {
+        "schema_version": "0.91",
+        "nodes": {
+            node_id: {
+                "point": [node.point[0], node.point[1], node.point[2]],
+            }
+            for node_id, node in sorted(patch_complex.nodes.items())
+        },
+        "edges": {
+            edge_id: {
+                "node_ids": list(edge.node_ids),
+                "role": edge.role,
+                "adjacent_patch_ids": list(edge.adjacent_patch_ids),
+                "physical_boundary": edge.physical_boundary,
+            }
+            for edge_id, edge in sorted(patch_complex.edges.items())
+        },
+        "patches": {
+            patch_id: {
+                "surface_graph_id": patch.surface_graph_id,
+                "role": patch.role,
+                "node_grid": [list(row) for row in patch.node_grid],
+                "edge_ids": list(patch.edge_ids),
+                "edge_family": patch.edge_family,
+                "transition_policy_id": patch.transition_policy_id,
+                "treatment": patch.treatment,
+            }
+            for patch_id, patch in sorted(patch_complex.patches.items())
+        },
+    }
+
+
+def patch_complex_report(
+    patch_complex: PatchComplex,
+    *,
+    required_corner_patch_count: int = 0,
+) -> dict:
+    corner_patch_count = sum(
+        1
+        for patch in patch_complex.patches.values()
+        if "corner" in patch.role
+    )
+    transition_patch_count = len(patch_complex.patches) - corner_patch_count
+    return {
+        "transition_patch_count": transition_patch_count,
+        "corner_patch_count": corner_patch_count,
+        "required_corner_patch_count": required_corner_patch_count,
+        "node_count": len(patch_complex.nodes),
+        "edge_count": len(patch_complex.edges),
+        "patch_count": len(patch_complex.patches),
+        "boundary_node_identity_failures": list(patch_complex.boundary_node_identity_failures),
+    }
+
+
 def point_key(point: Iterable[float], tolerance: float = 1.0e-6) -> str:
     scale = 1.0 / tolerance
     return "_".join(str(round(float(value) * scale)) for value in point)

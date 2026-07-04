@@ -120,12 +120,12 @@ def test_v091_runtime_marks_topology_first_transition_graph():
     assert runtime["transition_policy_defaults"]["mounting_bore_top.default"]["treatment"] == "chamfer"
 
 
-def test_v091_service_blocks_until_topology_first_solver_exists(tmp_path: Path):
+def test_v091_service_blocks_until_corner_patch_solver_exists(tmp_path: Path):
     service = RuleSynthesisService(tmp_path)
 
     engine = service.synthesize("impeller", "radial_open_reference_v0_91")
 
-    with pytest.raises(RuntimeError, match="geometry validation.*legacy_single_root_transition_surface"):
+    with pytest.raises(RuntimeError, match="geometry validation.*missing_required_corner_transition_patches"):
         service.instantiate(engine.engine_id, {})
 
 

@@ -20,6 +20,21 @@ from part_rule_synthesis.service import (
 )
 
 
+def _geometry(preset_id: str) -> dict:
+    runtime = compile_impeller_runtime_preset(preset_id)
+    parameters = _bind_parameters(runtime, {})
+    edge_families = runtime.get("edge_families", {})
+    transition_policies = resolve_transition_policies(edge_families, parameters)
+    return _geometry_metadata(
+        "impeller",
+        parameters,
+        runtime["facets"],
+        dsl_context=runtime,
+        edge_families=edge_families,
+        transition_policies=transition_policies,
+    )
+
+
 def _manifest(preset_id: str) -> dict:
     with TemporaryDirectory() as tmp_dir:
         service = RuleSynthesisService(Path(tmp_dir))
@@ -28,11 +43,27 @@ def _manifest(preset_id: str) -> dict:
             return service.instantiate(engine.engine_id, {}).manifest
         except RuntimeError as exc:
             if (
+                preset_id == "radial_open_reference_v0_91"
+                and "missing_required_corner_transition_patches" in str(exc)
+            ):
+                return _current_v091_topology_blocked_manifest()
+            if (
                 preset_id != "radial_open_reference_v0_91"
                 or "legacy_single_root_transition_surface" not in str(exc)
             ):
                 raise
     return _current_v09_failure_class_manifest()
+
+
+def _current_v091_topology_blocked_manifest() -> dict:
+    geometry = _geometry("radial_open_reference_v0_91")
+    graph = geometry["surface_graph"]
+    return {
+        "preset_id": "radial_open_reference_v0_91",
+        "geometry": geometry,
+        "transition_patch_complex": graph["transition_patch_complex"],
+        "transition_topology_report": graph["transition_topology_report"],
+    }
 
 
 def _current_v09_failure_class_manifest() -> dict:
@@ -56,6 +87,21 @@ def _current_v09_failure_class_manifest() -> dict:
 
 def _surface_map(surface_graph: dict) -> dict:
     return {surface["id"]: surface for surface in surface_graph["surfaces"]}
+
+
+def test_v091_resolver_emits_topology_first_patch_complex():
+    geometry = _geometry("radial_open_reference_v0_91")
+    graph = geometry["surface_graph"]
+    surfaces = _surface_map(graph)
+
+    assert graph["transition_geometry_status"] == "topology_first_validated_transition_graph"
+    assert "blade_0_root_transition_surface" not in surfaces
+    assert "blade_0_pressure_root_transition_surface" in surfaces
+    assert "blade_0_suction_root_transition_surface" in surfaces
+    assert "transition_patch_complex" in graph
+    assert "transition_topology_report" in graph
+    assert graph["transition_topology_report"]["transition_patch_count"] > 0
+    assert graph["transition_topology_report"]["boundary_node_identity_failures"] == []
 
 
 def _mesh_manifoldness_report(surface_graph: dict) -> dict:
