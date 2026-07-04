@@ -465,9 +465,12 @@ def _resolve_v091_transition_geometry(
     _rewrite_v091_transition_edges(edges, set(surface_by_id))
     patch_complex = _build_v091_transition_patch_complex(surfaces)
     resolved_graph["transition_patch_complex"] = patch_complex_manifest(patch_complex)
+    missing_shared_boundary_links = _v091_missing_shared_boundary_links(blade_indices, transition_policies)
     resolved_graph["transition_topology_report"] = patch_complex_report(
         patch_complex,
         required_corner_patch_count=_v091_required_corner_patch_count(blade_indices, transition_policies),
+        missing_shared_boundary_links=missing_shared_boundary_links,
+        evaluated_shared_boundary_count=0,
     )
     topology_report = resolved_graph["transition_topology_report"]
     if topology_report["corner_patch_count"] < topology_report["required_corner_patch_count"]:
@@ -504,8 +507,11 @@ def _resolve_v091_transition_geometry(
         },
         {
             "check_id": "transition_patch_boundary_node_identity",
-            "status": "PASS" if not topology_report["boundary_node_identity_failures"] else "FAIL",
+            "status": "PASS" if topology_report["boundary_identity_status"] == "PASS" else "FAIL",
+            "boundary_identity_status": topology_report["boundary_identity_status"],
             "failure_count": len(topology_report["boundary_node_identity_failures"]),
+            "missing_shared_boundary_link_count": topology_report["missing_shared_boundary_link_count"],
+            "evaluated_shared_boundary_count": topology_report["evaluated_shared_boundary_count"],
         },
         {
             "check_id": "corner_transition_patches_present",
@@ -1117,6 +1123,13 @@ def _v091_required_corner_patch_count(
     blade_indices: list[int],
     transition_policies: dict[str, Any],
 ) -> int:
+    return len(_v091_missing_shared_boundary_links(blade_indices, transition_policies))
+
+
+def _v091_missing_shared_boundary_links(
+    blade_indices: list[int],
+    transition_policies: dict[str, Any],
+) -> list[dict[str, Any]]:
     root_active = _policy_enabled(transition_policies.get("blade_root_to_hub.default"))
     leading_active = _policy_enabled(transition_policies.get("blade_leading_edge.default"))
     trailing_active = _policy_enabled(transition_policies.get("blade_trailing_edge.default"))
@@ -1124,16 +1137,38 @@ def _v091_required_corner_patch_count(
         _policy_enabled(transition_policies.get("blade_tip_or_shroud.default"))
         or _policy_enabled(transition_policies.get("blade_tip_to_shroud.default"))
     )
-    per_blade = 0
+    missing_links: list[dict[str, Any]] = []
+    corner_specs = []
     if root_active and leading_active:
-        per_blade += 1
+        corner_specs.append(
+            (
+                "root_leading",
+                ["root.pressure", "root.suction", "leading"],
+            )
+        )
     if root_active and trailing_active:
-        per_blade += 1
+        corner_specs.append(
+            (
+                "root_trailing",
+                ["root.pressure", "root.suction", "trailing"],
+            )
+        )
     if tip_active and leading_active:
-        per_blade += 1
+        corner_specs.append(("tip_leading", ["tip", "leading"]))
     if tip_active and trailing_active:
-        per_blade += 1
-    return len(blade_indices) * per_blade
+        corner_specs.append(("tip_trailing", ["tip", "trailing"]))
+
+    for blade_index in blade_indices:
+        for corner_id, patch_roles in corner_specs:
+            missing_links.append(
+                {
+                    "blade_index": blade_index,
+                    "corner_id": f"blade_{blade_index}.{corner_id}",
+                    "required_patch_roles": patch_roles,
+                    "reason": "corner_patch_not_constructed",
+                }
+            )
+    return missing_links
 
 
 def _is_legacy_root_transition_surface_id(surface_id: str) -> bool:

@@ -157,6 +157,8 @@ def patch_complex_report(
     patch_complex: PatchComplex,
     *,
     required_corner_patch_count: int = 0,
+    missing_shared_boundary_links: list[dict] | None = None,
+    evaluated_shared_boundary_count: int = 0,
 ) -> dict:
     corner_patch_count = sum(
         1
@@ -164,6 +166,14 @@ def patch_complex_report(
         if "corner" in patch.role
     )
     transition_patch_count = len(patch_complex.patches) - corner_patch_count
+    boundary_failures = list(patch_complex.boundary_node_identity_failures)
+    missing_links = list(missing_shared_boundary_links or [])
+    if boundary_failures:
+        boundary_identity_status = "FAIL"
+    elif missing_links or evaluated_shared_boundary_count == 0:
+        boundary_identity_status = "NOT_EVALUATED"
+    else:
+        boundary_identity_status = "PASS"
     return {
         "transition_patch_count": transition_patch_count,
         "corner_patch_count": corner_patch_count,
@@ -171,7 +181,11 @@ def patch_complex_report(
         "node_count": len(patch_complex.nodes),
         "edge_count": len(patch_complex.edges),
         "patch_count": len(patch_complex.patches),
-        "boundary_node_identity_failures": list(patch_complex.boundary_node_identity_failures),
+        "boundary_identity_status": boundary_identity_status,
+        "evaluated_shared_boundary_count": evaluated_shared_boundary_count,
+        "missing_shared_boundary_link_count": len(missing_links),
+        "missing_shared_boundary_links": missing_links,
+        "boundary_node_identity_failures": boundary_failures,
     }
 
 

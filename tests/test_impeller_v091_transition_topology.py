@@ -100,8 +100,15 @@ def test_v091_resolver_emits_topology_first_patch_complex():
     assert "blade_0_suction_root_transition_surface" in surfaces
     assert "transition_patch_complex" in graph
     assert "transition_topology_report" in graph
-    assert graph["transition_topology_report"]["transition_patch_count"] > 0
-    assert graph["transition_topology_report"]["boundary_node_identity_failures"] == []
+    topology_report = graph["transition_topology_report"]
+    assert topology_report["transition_patch_count"] > 0
+    assert topology_report["boundary_identity_status"] != "PASS"
+    assert topology_report["missing_shared_boundary_link_count"] > 0
+    assert topology_report["evaluated_shared_boundary_count"] == 0
+    assert {
+        failure["reason"]
+        for failure in graph["transition_failures"]
+    } >= {"missing_required_corner_transition_patches"}
 
 
 def _mesh_manifoldness_report(surface_graph: dict) -> dict:
