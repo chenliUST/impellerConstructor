@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import math
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -481,15 +481,11 @@ def _resolve_v091_transition_geometry(
         transition_policies,
         patch_complex=patch_complex,
     )
-    evaluated_shared_boundary_count = max(
-        0,
-        len(required_corner_roles) - len(missing_shared_boundary_links),
-    )
     resolved_graph["transition_topology_report"] = patch_complex_report(
         patch_complex,
         required_corner_patch_count=len(required_corner_roles),
         missing_shared_boundary_links=missing_shared_boundary_links,
-        evaluated_shared_boundary_count=evaluated_shared_boundary_count,
+        evaluated_shared_boundary_count=0,
     )
     resolved_graph["transition_topology_report"]["corner_endpoint_adjustment_count"] = len(endpoint_adjustments)
     resolved_graph["transition_topology_report"]["corner_endpoint_adjustments"] = endpoint_adjustments
@@ -1246,13 +1242,9 @@ def _v091_corner_grid_and_nodes(
     blade_index: int,
     role: str,
 ) -> tuple[list[list[Point3]], list[list[str]]]:
-    pressure_root = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_pressure_root_transition_surface")
-    suction_root = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_suction_root_transition_surface")
-    leading = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_leading_transition_surface")
-    trailing = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_trailing_transition_surface")
-    tip = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_tip_transition_surface")
-
     if role == "root_leading_pressure_corner":
+        pressure_root = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_pressure_root_transition_surface")
+        leading = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_leading_transition_surface")
         return _v091_side_corner_grid_and_nodes(
             blade_index=blade_index,
             role=role,
@@ -1265,6 +1257,8 @@ def _v091_corner_grid_and_nodes(
             edge_from_start=True,
         )
     if role == "root_leading_suction_corner":
+        suction_root = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_suction_root_transition_surface")
+        leading = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_leading_transition_surface")
         return _v091_side_corner_grid_and_nodes(
             blade_index=blade_index,
             role=role,
@@ -1277,6 +1271,8 @@ def _v091_corner_grid_and_nodes(
             edge_from_start=True,
         )
     if role == "root_trailing_pressure_corner":
+        pressure_root = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_pressure_root_transition_surface")
+        trailing = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_trailing_transition_surface")
         return _v091_side_corner_grid_and_nodes(
             blade_index=blade_index,
             role=role,
@@ -1289,6 +1285,8 @@ def _v091_corner_grid_and_nodes(
             edge_from_start=True,
         )
     if role == "root_trailing_suction_corner":
+        suction_root = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_suction_root_transition_surface")
+        trailing = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_trailing_transition_surface")
         return _v091_side_corner_grid_and_nodes(
             blade_index=blade_index,
             role=role,
@@ -1301,6 +1299,8 @@ def _v091_corner_grid_and_nodes(
             edge_from_start=True,
         )
     if role == "tip_leading_corner":
+        tip = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_tip_transition_surface")
+        leading = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_leading_transition_surface")
         return _v091_tip_corner_grid_and_nodes(
             blade_index=blade_index,
             role=role,
@@ -1311,6 +1311,8 @@ def _v091_corner_grid_and_nodes(
             edge_row_index=-1,
         )
     if role == "tip_trailing_corner":
+        tip = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_tip_transition_surface")
+        trailing = _v091_surface_grid(surface_by_id, f"blade_{blade_index}_trailing_transition_surface")
         return _v091_tip_corner_grid_and_nodes(
             blade_index=blade_index,
             role=role,
@@ -1865,7 +1867,14 @@ def _is_legacy_root_transition_surface_id(surface_id: str) -> bool:
 
 
 def _v091_shared_node_patch_mesh_available() -> bool:
-    return importlib.util.find_spec("part_rule_synthesis.impeller_patch_mesh") is not None
+    try:
+        module = importlib.import_module("part_rule_synthesis.impeller_patch_mesh")
+    except ModuleNotFoundError:
+        return False
+    return (
+        getattr(module, "V091_SHARED_NODE_PATCH_MESH_CAPABILITY", None) == "implemented"
+        and callable(getattr(module, "build_patch_mesh", None))
+    )
 
 
 def _blade_index_and_suffix_from_surface_id(surface_id: str) -> tuple[int, str] | None:

@@ -21,10 +21,14 @@ from part_rule_synthesis.service import (
 
 
 def _geometry(preset_id: str) -> dict:
+    return _geometry_with_transition_overrides(preset_id, None)
+
+
+def _geometry_with_transition_overrides(preset_id: str, overrides: dict | None) -> dict:
     runtime = compile_impeller_runtime_preset(preset_id)
     parameters = _bind_parameters(runtime, {})
     edge_families = runtime.get("edge_families", {})
-    transition_policies = resolve_transition_policies(edge_families, parameters)
+    transition_policies = resolve_transition_policies(edge_families, parameters, overrides)
     return _geometry_metadata(
         "impeller",
         parameters,
@@ -104,9 +108,9 @@ def test_v091_resolver_emits_topology_first_patch_complex():
     assert topology_report["transition_patch_count"] > 0
     assert topology_report["corner_patch_count"] == topology_report["required_corner_patch_count"]
     assert topology_report["corner_patch_count"] > 0
-    assert topology_report["boundary_identity_status"] == "PASS"
+    assert topology_report["boundary_identity_status"] == "NOT_EVALUATED"
     assert topology_report["missing_shared_boundary_link_count"] == 0
-    assert topology_report["evaluated_shared_boundary_count"] > 0
+    assert topology_report["evaluated_shared_boundary_count"] == 0
     assert not any(
         failure["reason"] == "missing_required_corner_transition_patches"
         for failure in graph.get("transition_failures", [])
@@ -226,3 +230,30 @@ def test_v091_default_blade_has_required_corner_patch_roles():
         "tip_leading_corner",
         "tip_trailing_corner",
     } <= roles
+
+
+def test_v091_root_leading_corners_do_not_require_disabled_trailing_or_tip_surfaces():
+    geometry = _geometry_with_transition_overrides(
+        "radial_open_reference_v0_91",
+        {
+            "blade_trailing_edge.default": {"treatment": "none"},
+            "blade_tip_or_shroud.default": {"treatment": "none"},
+        },
+    )
+    graph = geometry["surface_graph"]
+    report = graph["transition_topology_report"]
+    patch_complex = graph["transition_patch_complex"]
+    blade_0_roles = {
+        patch["role"]
+        for patch in patch_complex["patches"].values()
+        if patch["surface_graph_id"].startswith("blade_0_")
+    }
+
+    assert report["corner_patch_count"] == report["required_corner_patch_count"]
+    assert {"root_leading_pressure_corner", "root_leading_suction_corner"} <= blade_0_roles
+    assert "root_trailing_pressure_corner" not in blade_0_roles
+    assert "tip_leading_corner" not in blade_0_roles
+    assert not any(
+        failure["reason"] == "missing_corner_boundary_edge"
+        for failure in graph.get("transition_failures", [])
+    )
