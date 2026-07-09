@@ -3,6 +3,9 @@ worktrees/
 .superpowers/
 .codex-local/
 Model Output/
+model_runs/
+rule_engines/
+.tmp-*/
 frontend/node_modules/
 runs/
 .pytest_cache/
@@ -10,5 +13,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+*.log
+*.err.log
+*.step
+*.mesh.step
 dist/
 build/
