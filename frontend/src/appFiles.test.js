@@ -385,4 +385,11 @@ describe("frontend application files", () => {
     assert.match(modelSource, /cfdPatchGroups/);
     assert.match(modelSource, /surfaceVisibleInView/);
   });
+
+  test("application includes V1.1.2 parameter views panel", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    assert.match(appSource, /ParameterViewsPanel/);
+    assert.match(appSource, /activePreset=\{activePreset\}/);
+    assert.match(appSource, /manifest=\{manifest\}/);
+  });
 });

@@ -23,6 +23,7 @@ import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js?v=1.1.5";
 import { ManifestPanel } from "./components/ManifestPanel.js?v=1.1.5";
 import { ModelViewer } from "./components/ModelViewer.js?v=1.1.5";
 import { ParameterPanel } from "./components/ParameterPanel.js?v=1.1.5";
+import { ParameterViewsPanel } from "./components/ParameterViewsPanel.js?v=1.1.6";
 import { ProfileCurveEditor } from "./components/ProfileCurveEditor.js?v=1.1.5";
 import { PresetList } from "./components/PresetList.js?v=1.1.5";
 
@@ -243,6 +244,11 @@ export function App() {
             onChange: handleCurveControlChange,
           })
         : null,
+      // <ParameterViewsPanel activePreset={activePreset} manifest={manifest} />
+      h(ParameterViewsPanel, {
+        activePreset,
+        manifest,
+      }),
       h(GeometryLayerPanel, {
         manifest,
         visibleLayers,
