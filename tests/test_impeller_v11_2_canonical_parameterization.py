@@ -71,7 +71,25 @@ def test_v11_defaults_translate_to_canonical_nurbs_payload():
     assert canonical["blade_population"]["splitter_blade_count"] == 8
     assert canonical["blade_skeleton_field"]["kind"] == "nurbs_surface"
     assert canonical["thickness_field"]["kind"] == "nurbs_surface"
+    assert canonical["blade_skeleton_field"]["weights"] == [
+        [1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0],
+    ]
     assert canonical["section_loop_family"]["mode"] == "skeleton_thickness_caps"
     assert canonical["section_loop_family"]["segments"]["leading_edge_cap"]["kind"] == "nurbs_cap_curve"
     assert canonical["metrics"]["support_profile_control_count"]["hub_profile"] == 6
     assert canonical["metrics"]["thickness_min_mm"] > 0.0
+
+
+def test_thickness_field_uses_translated_main_streamwise_interval():
+    parameters, defaults = _runtime()
+    defaults["main_streamwise_interval_s"] = [0.11, 0.81]
+
+    canonical = canonical_nurbs_from_v11_defaults(parameters, defaults)
+    thickness_field = canonical["thickness_field"]
+    thickness_s_values = [point[0] for row in thickness_field["control_points"] for point in row]
+    unique_s_values = sorted({point[0] for point in thickness_field["control_points"][0]})
+
+    assert all(0.11 <= s_value <= 0.81 for s_value in thickness_s_values)
+    assert unique_s_values == [0.11, 0.306, 0.544, 0.81]

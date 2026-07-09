@@ -49,8 +49,6 @@ def evaluate_nurbs_surface(surface: dict[str, Any], u: float, v: float) -> list[
     knots_u = _surface_knots(surface, "u", len(grid), degree_u)
     knots_v = _surface_knots(surface, "v", len(grid[0]), degree_v)
     weights = surface.get("weights") or [[1.0 for _ in row] for row in grid]
-    if weights == "all_ones":
-        weights = [[1.0 for _ in row] for row in grid]
     basis_u = [_basis(index, degree_u, _clamp01(u), knots_u) for index in range(len(grid))]
     basis_v = [_basis(index, degree_v, _clamp01(v), knots_v) for index in range(len(grid[0]))]
     dimensions = len(grid[0][0])
@@ -210,7 +208,6 @@ def _skeleton_field(defaults: Mapping[str, Any]) -> dict[str, Any]:
         control_points,
         degree_s=3,
         degree_h=2,
-        weights="all_ones",
         extra={"field_role": "blade_skeleton"},
     )
 
@@ -221,19 +218,19 @@ def _thickness_field(
     maximum_thickness: float,
 ) -> dict[str, Any]:
     s0, s1 = _streamwise_interval(defaults.get("main_streamwise_interval_s", [0.06, 0.94]))
+    s_columns = [s0, _round(_lerp(s0, s1, 0.28)), _round(_lerp(s0, s1, 0.62)), s1]
     delta = max(maximum_thickness - average_thickness, 0.0)
     trailing = max(average_thickness * 0.55, 1.0)
     control_points = [
-        [[s0, 0.0, _round(max(average_thickness - 0.30 * delta, 1.0))], [0.25, 0.0, _round(maximum_thickness)], [0.65, 0.0, _round(average_thickness + 0.50 * delta)], [s1, 0.0, _round(trailing)]],
-        [[s0, 0.5, _round(max(average_thickness - 0.38 * delta, 1.0))], [0.25, 0.5, _round(average_thickness)], [0.65, 0.5, _round(max(average_thickness - 0.07 * delta, 1.0))], [s1, 0.5, _round(max(trailing - 1.0, 1.0))]],
-        [[s0, 1.0, _round(max(average_thickness - 0.50 * delta, 1.0))], [0.25, 1.0, _round(max(average_thickness - 0.33 * delta, 1.0))], [0.65, 1.0, _round(max(average_thickness - 0.50 * delta, 1.0))], [s1, 1.0, _round(max(trailing - 2.0, 1.0))]],
+        [[s_columns[0], 0.0, _round(max(average_thickness - 0.30 * delta, 1.0))], [s_columns[1], 0.0, _round(maximum_thickness)], [s_columns[2], 0.0, _round(average_thickness + 0.50 * delta)], [s_columns[3], 0.0, _round(trailing)]],
+        [[s_columns[0], 0.5, _round(max(average_thickness - 0.38 * delta, 1.0))], [s_columns[1], 0.5, _round(average_thickness)], [s_columns[2], 0.5, _round(max(average_thickness - 0.07 * delta, 1.0))], [s_columns[3], 0.5, _round(max(trailing - 1.0, 1.0))]],
+        [[s_columns[0], 1.0, _round(max(average_thickness - 0.50 * delta, 1.0))], [s_columns[1], 1.0, _round(max(average_thickness - 0.33 * delta, 1.0))], [s_columns[2], 1.0, _round(max(average_thickness - 0.50 * delta, 1.0))], [s_columns[3], 1.0, _round(max(trailing - 2.0, 1.0))]],
     ]
     return _surface(
         "s_h_thickness_mm",
         control_points,
         degree_s=3,
         degree_h=2,
-        weights="all_ones",
         extra={"field_role": "thickness", "minimum_thickness_mm": 1.0},
     )
 
@@ -304,7 +301,6 @@ def _pose_field(parameters: Mapping[str, Any], defaults: Mapping[str, Any]) -> d
         control_points,
         degree_s=2,
         degree_h=1,
-        weights="all_ones",
         extra={"field_role": "pose"},
     )
 
@@ -366,9 +362,9 @@ def _surface(
     *,
     degree_s: int,
     degree_h: int,
-    weights: str | list[list[float]],
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    weights = [[1.0 for _ in row] for row in control_points]
     surface = {
         "kind": "nurbs_surface",
         "coordinate_system": coordinate_system,
