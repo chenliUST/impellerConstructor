@@ -5,6 +5,7 @@ import math
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from part_rule_synthesis.impeller_v11_2_canonical import evaluate_nurbs_surface
 from part_rule_synthesis.impeller_v11_constants import (
     COORDINATE_SYSTEM,
     CURVATURE_PROXY_MISMATCH_TOLERANCE,
@@ -50,6 +51,7 @@ def build_v11_blade_to_blade_loop_family(
     values = _validated_defaults(parameters, defaults, overrides or {})
     segment_control_point_overrides = _segment_control_point_overrides(overrides or {})
     mapper = _domain_mapper(values)
+    active_span_policy_metrics = _active_span_policy_metrics(values)
     blades: list[dict[str, Any]] = []
     blades.extend(
         _build_blade_set(
@@ -74,6 +76,8 @@ def build_v11_blade_to_blade_loop_family(
         "domain_id": values["domain_id"],
         "coordinate_system": values["coordinate_system"],
         "span_stations_h": copy.deepcopy(values["span_stations_h"]),
+        "canonical_nurbs_parameterization": copy.deepcopy(values.get("canonical_nurbs_parameterization")),
+        "active_span_policy_metrics": active_span_policy_metrics,
         "segment_control_count_minimums": copy.deepcopy(values["segment_control_count_minimums"]),
         "resolved_defaults": {
             "main_streamwise_interval_s": copy.deepcopy(values["main_streamwise_interval_s"]),
@@ -116,6 +120,36 @@ def _validated_defaults(
     values["domain_id"] = DOMAIN_ID
     values["coordinate_system"] = str(values.get("coordinate_system", COORDINATE_SYSTEM))
     values["span_stations_h"] = _float_list(values.get("span_stations_h", SPAN_STATIONS_H), "span_stations_h")
+    canonical = values.get("canonical_nurbs_parameterization")
+    if isinstance(canonical, Mapping):
+        values["canonical_nurbs_parameterization"] = copy.deepcopy(canonical)
+        population = canonical.get("blade_population", {})
+        values["span_stations_h"] = _float_list(
+            canonical.get("section_loop_family", {}).get("span_stations_h", values["span_stations_h"]),
+            "span_stations_h",
+        )
+        values["main_blade_count"] = _int_value(
+            population.get(
+                "main_blade_count",
+                values.get("main_blade_count", _parameter_value(parameters, "blade_count", 12) // 2),
+            )
+        )
+        values["splitter_blade_count"] = _int_value(
+            population.get(
+                "splitter_blade_count",
+                values.get("splitter_blade_count", _parameter_value(parameters, "blade_count", 12) // 2),
+            ),
+            minimum=None,
+        )
+        values["main_streamwise_interval_s"] = _pair(
+            population.get("main_streamwise_interval_s", values.get("main_streamwise_interval_s", [0.06, 0.94]))
+        )
+        values["splitter_streamwise_interval_s"] = _pair(
+            population.get("splitter_streamwise_interval_s", values.get("splitter_streamwise_interval_s", [0.35, 0.88]))
+        )
+        values["splitter_phase_offset_pitch"] = float(
+            population.get("splitter_phase_offset_pitch", values.get("splitter_phase_offset_pitch", 0.5))
+        )
     values["main_blade_count"] = _int_value(
         values.get("main_blade_count", _parameter_value(parameters, "blade_count", 12) // 2)
     )
@@ -208,6 +242,7 @@ def _domain_mapper(values: Mapping[str, Any]) -> Callable[[dict[str, float]], Po
     blade_pitch_rad = 2.0 * math.pi / max(int(values["main_blade_count"]), 1)
     hub_profile = values["hub_profile_rz_mm"]
     tip_profile = values["tip_or_shroud_profile_rz_mm"]
+    root_offset, tip_offset = _resolved_active_span_offsets(values)
 
     def mapper(sample: dict[str, float]) -> Point3:
         s = float(sample["s"])
@@ -224,18 +259,18 @@ def _domain_mapper(values: Mapping[str, Any]) -> Callable[[dict[str, float]], Po
                 0.0,
                 min(
                     0.45,
-                    float(values.get("root_blade_lift_mm", 0.0))
+                    root_offset
                     * float(values.get("span_material_clearance_compensation", 1.0))
                     / span_length_mm,
                 ),
             )
         tip_fraction = 0.0
-        if values.get("tip_attachment_mode") == "closed_shroud_attachment" and span_length_mm > 1.0e-9:
+        if span_length_mm > 1.0e-9:
             tip_fraction = max(
                 0.0,
                 min(
                     0.45,
-                    float(values.get("shroud_blade_inset_mm", 0.0))
+                    tip_offset
                     * float(values.get("span_material_clearance_compensation", 1.0))
                     / span_length_mm,
                 ),
@@ -328,6 +363,7 @@ def _build_loop(
                 for point in data["points_s_q"]
             ],
             "control_points_s_q": copy.deepcopy(data["control_points_s_q"]),
+            **({"canonical_curve": copy.deepcopy(data["canonical_curve"])} if "canonical_curve" in data else {}),
         }
         for name, data in segments_s_q.items()
     }
@@ -336,14 +372,27 @@ def _build_loop(
         streamwise_metric_scale_mm=float(values["streamwise_metric_scale_mm"]),
     )
     join_status = "PASS" if all(metric["status"] == "PASS" for metric in join_metrics.values()) else "FAIL"
+    minimum_span_length = _minimum_span_length(values)
+    root_offset, tip_offset = _resolved_active_span_offsets(values)
+    active_span_fraction = 0.0
+    if minimum_span_length > 1.0e-9:
+        root_fraction = max(0.0, min(0.45, root_offset / minimum_span_length))
+        tip_fraction = max(0.0, min(0.45, tip_offset / minimum_span_length))
+        tip_fraction = min(tip_fraction, max(0.0, 0.9 - root_fraction))
+        active_span_fraction = root_fraction + h * max(0.0, 1.0 - root_fraction - tip_fraction)
     return {
         "h": round(h, 9),
+        "active_span_fraction": _round(active_span_fraction),
         "streamwise_metric_scale_mm": float(values["streamwise_metric_scale_mm"]),
         "segments": segments,
         "join_metrics": join_metrics,
         "metrics": {
             "join_status": join_status,
             "orientation_status": "PASS",
+            "leading_cap_sagitta_target_mm": _round(segments_s_q["leading_edge"]["canonical_curve"]["target_sagitta_mm"]),
+            "leading_cap_sagitta_resolved_mm": _round(segments_s_q["leading_edge"]["canonical_curve"]["resolved_sagitta_mm"]),
+            "trailing_cap_sagitta_target_mm": _round(segments_s_q["trailing_edge"]["canonical_curve"]["target_sagitta_mm"]),
+            "trailing_cap_sagitta_resolved_mm": _round(segments_s_q["trailing_edge"]["canonical_curve"]["resolved_sagitta_mm"]),
             "max_position_gap_mm": _max_join_value(join_metrics, "position_gap_mm"),
             "max_tangent_angle_deg": _max_join_value(join_metrics, "tangent_angle_deg"),
             "max_normal_angle_deg": _max_join_value(join_metrics, "normal_angle_deg"),
@@ -417,6 +466,16 @@ def _loop_segments_s_q(
         end_second_diff=_second_diff(pressure_points[-3], pressure_points[-2], pressure_points[-1]),
         roundness=float(values["trailing_edge_cap_roundness"]),
     )
+    leading_sagitta = _cap_sagitta_mm(
+        pressure_points[0],
+        suction_points[0],
+        float(values["streamwise_metric_scale_mm"]),
+    )
+    trailing_sagitta = _cap_sagitta_mm(
+        suction_points[-1],
+        pressure_points[-1],
+        float(values["streamwise_metric_scale_mm"]),
+    )
     segments = {
         "pressure_side": {
             "points_s_q": pressure_points,
@@ -425,6 +484,14 @@ def _loop_segments_s_q(
         "leading_edge": {
             "points_s_q": leading_points,
             "control_points_s_q": _control_polygon(leading_points, leading_cap_control_count),
+            "canonical_curve": {
+                "kind": "nurbs_cap_curve",
+                "coordinate_system": "s_q_mm",
+                "sagitta_policy": {"mode": "local_thickness_ratio", "ratio": 0.5},
+                "target_sagitta_mm": _round(leading_sagitta),
+                "resolved_sagitta_mm": _round(leading_sagitta),
+                "continuity_goal": "C2",
+            },
         },
         "suction_side": {
             "points_s_q": suction_points,
@@ -433,6 +500,14 @@ def _loop_segments_s_q(
         "trailing_edge": {
             "points_s_q": trailing_points,
             "control_points_s_q": _control_polygon(trailing_points, trailing_cap_control_count),
+            "canonical_curve": {
+                "kind": "nurbs_cap_curve",
+                "coordinate_system": "s_q_mm",
+                "sagitta_policy": {"mode": "local_thickness_ratio", "ratio": 0.5},
+                "target_sagitta_mm": _round(trailing_sagitta),
+                "resolved_sagitta_mm": _round(trailing_sagitta),
+                "continuity_goal": "C2",
+            },
         },
     }
     _apply_segment_control_point_overrides(
@@ -460,18 +535,29 @@ def _sample_side_points(
     sample_count: int,
 ) -> list[Point2]:
     points: list[Point2] = []
+    canonical = values.get("canonical_nurbs_parameterization") or {}
+    skeleton_field = canonical.get("blade_skeleton_field")
+    thickness_field = canonical.get("thickness_field")
     for index in range(sample_count):
         s_norm = index / max(sample_count - 1, 1)
         s = _lerp(s0, s1, s_norm)
-        camber_q = _camber_q(
-            s_norm,
-            h,
-            blade_class,
-            values,
-            streamwise_s=s,
-        )
-        half_t = 0.5 * thickness_mm * (0.75 + 0.25 * math.sin(math.pi * _smootherstep(s_norm)))
-        q = camber_q + sign * half_t
+        if isinstance(skeleton_field, Mapping) and isinstance(thickness_field, Mapping):
+            skeleton_surface = _normalized_surface_degree_payload(dict(skeleton_field))
+            thickness_surface = _normalized_surface_degree_payload(dict(thickness_field))
+            skeleton_sample = evaluate_nurbs_surface(skeleton_surface, s_norm, h)
+            thickness_sample = evaluate_nurbs_surface(thickness_surface, s_norm, h)
+            camber_q = float(skeleton_sample[2])
+            local_thickness = max(1.0e-9, float(thickness_sample[2]))
+        else:
+            camber_q = _camber_q(
+                s_norm,
+                h,
+                blade_class,
+                values,
+                streamwise_s=s,
+            )
+            local_thickness = thickness_mm * (0.75 + 0.25 * math.sin(math.pi * _smootherstep(s_norm)))
+        q = camber_q + sign * 0.5 * local_thickness
         points.append(_round_point_2d([s, q]))
     return points
 
@@ -585,6 +671,84 @@ def _local_camber_q(s_norm: float, h: float, blade_class: str, values: Mapping[s
     progress = _smootherstep(max(0.0, min(1.0, s_norm)))
     bow_q = float(values["midspan_bow_q_mm"]) * math.sin(math.pi * progress) * (1.0 + 0.15 * span_bias)
     return span_adjusted_turn_q * progress + bow_q
+
+
+def _resolved_active_span_offsets(values: Mapping[str, Any]) -> tuple[float, float]:
+    canonical = values.get("canonical_nurbs_parameterization") or {}
+    active_policy = canonical.get("active_span_policy") or {}
+    root_offset = float(
+        active_policy.get("root_offset", {}).get("resolved_constant_mm", values.get("root_blade_lift_mm", 0.0))
+    )
+    tip_offset = float(
+        active_policy.get("tip_offset", {}).get(
+            "resolved_constant_mm",
+            values.get(
+                "shroud_blade_inset_mm",
+                0.0
+                if values.get("tip_attachment_mode") != "closed_shroud_attachment"
+                else values.get("root_blade_lift_mm", 0.0),
+            ),
+        )
+    )
+    return root_offset, tip_offset
+
+
+def _minimum_span_length(values: Mapping[str, Any]) -> float:
+    hub_profile = values["hub_profile_rz_mm"]
+    tip_profile = values["tip_or_shroud_profile_rz_mm"]
+    intervals = [values["main_streamwise_interval_s"]]
+    if int(values.get("splitter_blade_count", 0)) > 0:
+        intervals.append(values["splitter_streamwise_interval_s"])
+    sample_count = 33
+    minimum = math.inf
+    for interval in intervals:
+        span_lengths = []
+        s0, s1 = interval
+        for index in range(sample_count):
+            s = _lerp(s0, s1, index / max(sample_count - 1, 1))
+            hub_r, hub_z = _profile_sample(hub_profile, s)
+            tip_r, tip_z = _profile_sample(tip_profile, s)
+            span_lengths.append(math.hypot(tip_r - hub_r, tip_z - hub_z))
+        if span_lengths:
+            minimum = min(minimum, sum(span_lengths) / len(span_lengths))
+    if not math.isfinite(minimum):
+        return 0.0
+    return minimum
+
+
+def _active_span_policy_metrics(values: Mapping[str, Any]) -> dict[str, Any]:
+    root_offset, tip_offset = _resolved_active_span_offsets(values)
+    status = (
+        "PASS"
+        if root_offset >= 0.0 and tip_offset >= 0.0 and root_offset + tip_offset < 0.9 * _minimum_span_length(values)
+        else "FAIL"
+    )
+    return {
+        "resolved_root_offset_min_mm": _round(root_offset),
+        "resolved_root_offset_max_mm": _round(root_offset),
+        "resolved_tip_offset_min_mm": _round(tip_offset),
+        "resolved_tip_offset_max_mm": _round(tip_offset),
+        "offset_feasibility_status": status,
+    }
+
+
+def _cap_sagitta_mm(start: Point2, end: Point2, streamwise_metric_scale_mm: float) -> float:
+    del streamwise_metric_scale_mm
+    return 0.5 * abs(float(end[1]) - float(start[1]))
+
+
+def _normalized_surface_degree_payload(surface: dict[str, Any]) -> dict[str, Any]:
+    control_points = surface.get("control_points")
+    if not isinstance(control_points, list) or not control_points or not isinstance(control_points[0], list):
+        return surface
+    degree_u = min(int(surface.get("degree_u", surface.get("degree_s", 1))), max(len(control_points) - 1, 1))
+    degree_v = min(
+        int(surface.get("degree_v", surface.get("degree_h", 1))),
+        max(len(control_points[0]) - 1, 1),
+    )
+    surface["degree_u"] = degree_u
+    surface["degree_v"] = degree_v
+    return surface
 
 
 def _join_metrics(
@@ -1270,6 +1434,10 @@ def _vector_angle_deg(left: Point2, right: Point2) -> float:
 
 def _max_join_value(join_metrics: Mapping[str, Mapping[str, float | str]], key: str) -> float:
     return max(float(join[key]) for join in join_metrics.values())
+
+
+def _round(value: float) -> float:
+    return round(float(value), 9)
 
 
 def _round_point(point: list[float]) -> Point3:
