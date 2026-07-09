@@ -388,8 +388,14 @@ describe("frontend application files", () => {
 
   test("application includes V1.1.2 parameter views panel", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    const stylesSource = readFileSync(resolve(root, "src/styles.css"), "utf-8");
+
     assert.match(appSource, /ParameterViewsPanel/);
-    assert.match(appSource, /activePreset=\{activePreset\}/);
-    assert.match(appSource, /manifest=\{manifest\}/);
+    assert.match(
+      appSource,
+      /h\(ParameterViewsPanel,\s*\{\s*[\r\n\s]*activePreset,\s*[\r\n\s]*manifest,\s*[\r\n\s]*\}\)/,
+    );
+    assert.doesNotMatch(appSource, /\/\/\s*<ParameterViewsPanel\s+activePreset=\{activePreset\}\s+manifest=\{manifest\}\s*\/>/);
+    assert.match(stylesSource, /\.parameter-views-panel\s+\.annotation-list\s*\{/);
   });
 });

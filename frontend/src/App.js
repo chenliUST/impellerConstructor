@@ -244,7 +244,6 @@ export function App() {
             onChange: handleCurveControlChange,
           })
         : null,
-      // <ParameterViewsPanel activePreset={activePreset} manifest={manifest} />
       h(ParameterViewsPanel, {
         activePreset,
         manifest,

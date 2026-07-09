@@ -948,20 +948,20 @@ pre {
   background: #ecfdf5;
 }
 
-.annotation-list {
+.parameter-views-panel .annotation-list {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px 10px;
   margin: 0;
 }
 
-.annotation-list dt,
-.annotation-list dd {
+.parameter-views-panel .annotation-list dt,
+.parameter-views-panel .annotation-list dd {
   margin: 0;
   font-size: 12px;
 }
 
-.annotation-list dt {
+.parameter-views-panel .annotation-list dt {
   color: #52635e;
 }
 
