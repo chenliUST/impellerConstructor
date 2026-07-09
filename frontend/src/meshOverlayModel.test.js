@@ -8,6 +8,7 @@ import {
   meshOverlayOptions,
   transitionRegionRows,
   transitionSurfaceIds,
+  viewerLayerVisibility,
   viewerVisibilityForMeshOverlay,
 } from "./meshOverlayModel.js";
 
@@ -29,19 +30,108 @@ describe("mesh overlay model", () => {
     assert.equal(meshOverlayControlVisible("cfd_full_360"), false);
   });
 
-  test("viewer visibility falls back to shaded surfaces when mesh wireframe overlay is off", () => {
+  test("viewerLayerVisibility separates shaded surfaces and UV wire by view mode", () => {
     assert.deepEqual(
-      viewerVisibilityForMeshOverlay({
-        simulationViewMode: "mesh",
-        viewMode: "wireframe",
-        meshOverlayMode: "off",
+      viewerLayerVisibility({
+        simulationViewMode: "cad_review_360",
+        viewMode: "shaded",
+        meshOverlayMode: "triangle_edges",
         visibleLayers: { shaded_surfaces: true },
       }),
-      { showShaded: true, showMeshOverlay: false },
+      {
+        showShadedSurfaces: true,
+        showSurfaceUvWire: false,
+        showMeshEdges: false,
+        showConstructionLines: false,
+      },
+    );
+    assert.deepEqual(
+      viewerLayerVisibility({
+        simulationViewMode: "cad_review_360",
+        viewMode: "wireframe",
+        meshOverlayMode: "triangle_edges",
+        visibleLayers: { shaded_surfaces: true },
+      }),
+      {
+        showShadedSurfaces: false,
+        showSurfaceUvWire: true,
+        showMeshEdges: false,
+        showConstructionLines: false,
+      },
+    );
+    assert.deepEqual(
+      viewerLayerVisibility({
+        simulationViewMode: "cad_review_360",
+        viewMode: "combined",
+        meshOverlayMode: "triangle_edges",
+        visibleLayers: { shaded_surfaces: true },
+      }),
+      {
+        showShadedSurfaces: true,
+        showSurfaceUvWire: true,
+        showMeshEdges: false,
+        showConstructionLines: false,
+      },
     );
   });
 
-  test("viewer visibility preserves mesh overlay behavior for shaded and combined modes", () => {
+  test("viewerLayerVisibility shows mesh edges only in mesh inspection non-shaded modes when enabled", () => {
+    assert.deepEqual(
+      viewerLayerVisibility({
+        simulationViewMode: "mesh",
+        viewMode: "wireframe",
+        meshOverlayMode: "triangle_edges",
+        visibleLayers: { shaded_surfaces: true },
+      }),
+      {
+        showShadedSurfaces: false,
+        showSurfaceUvWire: true,
+        showMeshEdges: true,
+        showConstructionLines: false,
+      },
+    );
+    assert.deepEqual(
+      viewerLayerVisibility({
+        simulationViewMode: "mesh",
+        viewMode: "shaded",
+        meshOverlayMode: "triangle_edges",
+        visibleLayers: { shaded_surfaces: true },
+      }),
+      {
+        showShadedSurfaces: true,
+        showSurfaceUvWire: false,
+        showMeshEdges: false,
+        showConstructionLines: false,
+      },
+    );
+    assert.deepEqual(
+      viewerLayerVisibility({
+        simulationViewMode: "mesh",
+        viewMode: "combined",
+        meshOverlayMode: "off",
+        visibleLayers: { shaded_surfaces: true },
+      }),
+      {
+        showShadedSurfaces: true,
+        showSurfaceUvWire: true,
+        showMeshEdges: false,
+        showConstructionLines: false,
+      },
+    );
+  });
+
+  test("viewerLayerVisibility only enables construction lines in feature debug", () => {
+    assert.equal(
+      viewerLayerVisibility({ simulationViewMode: "cad_review_360", viewMode: "combined" }).showConstructionLines,
+      false,
+    );
+    assert.equal(
+      viewerLayerVisibility({ simulationViewMode: "feature_debug", viewMode: "shaded" }).showConstructionLines,
+      true,
+    );
+  });
+
+  test("viewerVisibilityForMeshOverlay wraps the layer visibility model for legacy callers", () => {
     assert.deepEqual(
       viewerVisibilityForMeshOverlay({
         simulationViewMode: "mesh",
@@ -54,11 +144,11 @@ describe("mesh overlay model", () => {
     assert.deepEqual(
       viewerVisibilityForMeshOverlay({
         simulationViewMode: "mesh",
-        viewMode: "shaded",
-        meshOverlayMode: "triangle_edges",
+        viewMode: "wireframe",
+        meshOverlayMode: "off",
         visibleLayers: { shaded_surfaces: true },
       }),
-      { showShaded: true, showMeshOverlay: false },
+      { showShaded: false, showMeshOverlay: false },
     );
   });
 
@@ -94,6 +184,12 @@ describe("mesh overlay model", () => {
       })],
       ["blade_00_root_fillet", "blade_00_tip_chamfer"],
     );
+  });
+
+  test("transition helpers tolerate absent mesh manifest during surface render", () => {
+    assert.deepEqual(transitionRegionRows(null), []);
+    assert.deepEqual([...transitionSurfaceIds(null)], []);
+    assert.equal(isTransitionSurface({ id: "blade_0_pressure_surface", role: "blade_pressure" }, null), false);
   });
 
   test("isTransitionSurface ignores raw edge family without transition evidence", () => {

@@ -1,4 +1,4 @@
-import { buildInstantiatePayload, buildSynthesizePayload, exportUrl } from "./appModel.js";
+import { buildInstantiatePayload, buildSynthesizePayload, exportUrl } from "./appModel.js?v=1.1.5";
 
 export async function synthesizeImpeller(apiBase, preset) {
   return requestJson(`${normalizeBase(apiBase)}/api/rule-engines/synthesize`, {
@@ -16,11 +16,23 @@ export async function instantiateImpeller(
   curveOverrides = null,
   geometryStage = "edge_closures",
   transitionOverrides = null,
+  sectionLoopOverrides = null,
+  bladeToBladeLoopFamilyOverrides = null,
 ) {
   return requestJson(`${normalizeBase(apiBase)}/api/rule-engines/${encodeURIComponent(engineId)}/instantiate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildInstantiatePayload(parameters, profileOverrides, curveOverrides, transitionOverrides, geometryStage)),
+    body: JSON.stringify(
+      buildInstantiatePayload(
+        parameters,
+        profileOverrides,
+        curveOverrides,
+        transitionOverrides,
+        geometryStage,
+        sectionLoopOverrides,
+        bladeToBladeLoopFamilyOverrides,
+      ),
+    ),
   });
 }
 

@@ -1,7 +1,7 @@
 import React from "react";
 
-import { transitionRegionRows } from "../meshOverlayModel.js";
-import { meshInspectionSummary } from "../meshViewModel.js";
+import { transitionRegionRows } from "../meshOverlayModel.js?v=1.1.5";
+import { meshInspectionSummary } from "../meshViewModel.js?v=1.1.5";
 
 const h = React.createElement;
 

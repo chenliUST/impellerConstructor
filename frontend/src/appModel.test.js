@@ -7,10 +7,11 @@ import {
   exportFilename,
   exportFileOptions,
   exportUrl,
-  facetSchema,
+  hiddenParameterIdsForPreset,
   overridesAfterParameterChange,
   parameterGroups,
   parameterSchema,
+  parameterSchemaForPreset,
   presets,
 } from "./appModel.js";
 
@@ -41,72 +42,84 @@ describe("impeller frontend model", () => {
     }
   });
 
-  test("presets include public data approximation cases", () => {
-    const publicCases = presets.filter((preset) => preset.tags.includes("public-data"));
-
-    assert.equal(publicCases.length, 8);
+  test("v1.1.1 frontend catalog contains exactly five representative presets", () => {
     assert.deepEqual(
-      publicCases.map((preset) => preset.id),
+      presets.map((preset) => preset.id),
       [
-        "public-nasa-rotor67-axial-blisk",
-        "public-nasa-rotor37-compressor-blisk",
+        "axisymmetric-nurbs-open-throughflow",
+        "axisymmetric-nurbs-closed-throughflow",
         "public-nasa-stage37-stator-ring",
-        "public-nasa-sdt-r4-turbofan-fan",
         "public-rr-ultrafan-cti-fan",
-        "public-rr-ultrafan-ogv-ring",
         "public-liquid-rocket-turbopump-inducer",
-        "public-nasa-sr7l-propfan",
       ],
     );
-    for (const preset of publicCases) {
-      assert.match(preset.presetId, /_v0_9$/);
-      assert.equal(preset.facets.flow_topology, "axial");
-      assert.ok(preset.profileOverrides?.hub_profile?.control_points.length >= 4);
-      assert.ok(preset.profileOverrides?.tip_or_shroud_profile?.control_points.length >= 4);
-      assert.ok(preset.curveOverrides?.blade_mean?.theta_center_u_curve?.control_points.length >= 4);
-      assert.ok(preset.curveOverrides?.blade_mean?.span_lean_u_curve?.control_points.length >= 5);
-      assert.ok(preset.curveOverrides?.blade_edges?.leading_edge_sweep_v_curve?.control_points.length >= 5);
-      assert.ok(preset.curveOverrides?.blade_edges?.trailing_edge_sweep_v_curve?.control_points.length >= 5);
-      assert.ok(preset.curveOverrides?.thickness?.thickness_u_curve?.control_points.length >= 5);
-      assert.equal(Number.isFinite(preset.parameters.leading_edge_radius_mm), true);
-      assert.equal(Number.isFinite(preset.parameters.trailing_edge_radius_mm), true);
-      assert.equal(Number.isFinite(preset.parameters.tip_edge_radius_mm), true);
-    }
-  });
-
-  test("presets include mechanical analogy cases", () => {
-    const analogyCases = presets.filter((preset) => preset.tags.includes("mechanical-analogy"));
-
     assert.deepEqual(
-      analogyCases.map((preset) => preset.id),
+      presets.map((preset) => preset.presetId),
       [
-        "reference-spur-gear-tooth-ring",
-        "reference-axial-turbine-rotor",
-        "reference-double-start-worm",
+        "radial_open_reference_v1_1",
+        "radial_closed_reference_v1_1",
+        "nasa_stage37_stator_ring_v1_1",
+        "rr_ultrafan_cti_fan_v1_1",
+        "public_rocket_turbopump_inducer_v1_1",
       ],
     );
-    for (const preset of analogyCases) {
-      assert.match(preset.presetId, /_v0_9$/);
-      assert.ok(preset.profileOverrides?.hub_profile?.control_points.length >= 4);
-      assert.ok(preset.profileOverrides?.tip_or_shroud_profile?.control_points.length >= 4);
-      assert.ok(preset.curveOverrides?.blade_mean?.theta_center_u_curve?.control_points.length >= 4);
-      assert.ok(preset.curveOverrides?.blade_edges?.leading_edge_sweep_v_curve?.control_points.length >= 5);
-      assert.ok(preset.curveOverrides?.blade_edges?.trailing_edge_sweep_v_curve?.control_points.length >= 5);
-      assert.equal(preset.facets.passage_topology, "throughflow_bladed_channel");
-      assert.equal(Number.isFinite(preset.parameters.blade_wrap_deg), true);
-    }
+    assert.ok(presets.every((preset) => preset.geometryPatchVersion === "1.1.1"));
   });
 
-  test("public and analogy edge sweep overrides stay near scalar sweep envelope", () => {
-    const cases = presets.filter((preset) => preset.curveOverrides);
+  test("v1.1.1 parameter panel schema follows preset editableParameters", () => {
+    const open = presets[0];
+    const closed = presets[1];
+    const nasaStage37 = "public-nasa-stage37-stator-ring";
 
-    for (const preset of cases) {
-      const leading = preset.curveOverrides.blade_edges.leading_edge_sweep_v_curve;
-      const trailing = preset.curveOverrides.blade_edges.trailing_edge_sweep_v_curve;
+    assert.deepEqual(Object.keys(parameterSchemaForPreset(open)), [
+      "mounting_bore_radius_mm",
+      "blade_wrap_deg",
+      "blade_thickness_mm",
+      "hub_wall_thickness_mm",
+      "hub_bottom_thickness_mm",
+    ]);
+    assert.deepEqual(Object.keys(parameterSchemaForPreset(closed)), [
+      "mounting_bore_radius_mm",
+      "blade_wrap_deg",
+      "blade_thickness_mm",
+      "hub_wall_thickness_mm",
+      "hub_bottom_thickness_mm",
+      "hood_wall_thickness_mm",
+    ]);
+    assert.deepEqual(Object.keys(parameterSchemaForPreset(nasaStage37)), [
+      "mounting_bore_radius_mm",
+      "blade_thickness_mm",
+      "blade_wrap_deg",
+      "hub_wall_thickness_mm",
+      "hub_bottom_thickness_mm",
+      "hood_wall_thickness_mm",
+    ]);
+    assert.ok(hiddenParameterIdsForPreset(open).includes("blade_count"));
+    assert.ok(hiddenParameterIdsForPreset(open).includes("root_fillet_radius_mm"));
+    assert.ok(hiddenParameterIdsForPreset(open).includes("leading_edge_radius_mm"));
+  });
 
-      assert.ok(maxAbsCurveValue(leading) <= supportOffsetEnvelope(preset.parameters, "leading_edge_sweep_mm"));
-      assert.ok(maxAbsCurveValue(trailing) <= supportOffsetEnvelope(preset.parameters, "trailing_edge_sweep_mm"));
-    }
+  test("v1.1.1 frontend open and closed population defaults match backend contract", () => {
+    const open = presets[0];
+    const closed = presets[1];
+
+    assert.equal(open.parameters.blade_count, 16);
+    assert.equal(open.loopFamilyDefaults.main_blade_count, 8);
+    assert.equal(open.loopFamilyDefaults.splitter_blade_count, 8);
+    assert.equal(closed.parameters.blade_count, 12);
+    assert.equal(closed.loopFamilyDefaults.main_blade_count, 12);
+    assert.equal(closed.loopFamilyDefaults.splitter_blade_count, 0);
+  });
+
+  test("v1.1.1 closed preset sends the closed shroud material-domain profiles", () => {
+    const closed = presets.find((preset) => preset.id === "axisymmetric-nurbs-closed-throughflow");
+
+    assert.deepEqual(closed.profileOverrides.hub_profile.control_points, [
+      [180, 300], [210, 220], [270, 145], [380, 75], [500, 24], [610, 0],
+    ]);
+    assert.deepEqual(closed.profileOverrides.tip_or_shroud_profile.control_points, [
+      [260, 306], [290, 240], [350, 165], [450, 95], [540, 50], [615, 34],
+    ]);
   });
 
   test("buildInstantiatePayload preserves direct numeric input without UI range clamping", () => {
@@ -135,13 +148,17 @@ describe("impeller frontend model", () => {
     assert.deepEqual(payload.facets, presets[0].facets);
   });
 
-  test("facetSchema focuses the first workflow on open and closed throughflow NURBS impellers", () => {
-    assert.deepEqual(facetSchema.flow_topology.values, ["axial", "mixed", "radial"]);
-    assert.deepEqual(facetSchema.shroud_topology.values, ["open", "closed"]);
-    assert.deepEqual(facetSchema.suction_topology.values, ["single_suction"]);
-    assert.deepEqual(facetSchema.blade_exit_geometry.values, ["backward_curved"]);
-    assert.deepEqual(facetSchema.passage_topology.values, ["throughflow_bladed_channel"]);
-    assert.deepEqual(facetSchema.working_domain.values, ["pump", "compressor", "fan_or_blower"]);
+  test("buildSynthesizePayload omits display-only public preset facets outside the v1.1 slice", () => {
+    const publicPresets = presets.filter((preset) => preset.tags.includes("public-data"));
+
+    assert.ok(publicPresets.length > 0);
+    for (const preset of publicPresets) {
+      const payload = buildSynthesizePayload(preset);
+
+      assert.equal(payload.part_family_id, "impeller");
+      assert.equal(payload.preset_id, preset.presetId);
+      assert.deepEqual(payload.facets, {});
+    }
   });
 
   test("parameterSchema only exposes key NURBS construction controls", () => {
@@ -176,52 +193,84 @@ describe("impeller frontend model", () => {
     ]);
   });
 
-  test("presets include focused open and closed B-Rep throughflow studies", () => {
-    const open = presets.find((preset) => preset.presetId === "radial_open_reference_v0_9");
-    const closed = presets.find((preset) => preset.presetId === "radial_closed_reference_v0_9");
+  test("buildInstantiatePayload serializes section-loop overrides separately from curve overrides", () => {
+    const sectionLoopOverrides = {
+      blade_section_loop_template: {
+        construction: "s_camber_normal_offset_c2_loop",
+        stations: [
+          { eta: 0, s_camber_amplitude_mm: 32, max_thickness_mm: 40 },
+          { eta: 0.5, s_camber_amplitude_mm: 28, max_thickness_mm: 36 },
+          { eta: 1, s_camber_amplitude_mm: 22, max_thickness_mm: 32 },
+        ],
+      },
+    };
 
-    assert.ok(open);
-    assert.ok(closed);
-    assert.equal(open.facets.shroud_topology, "open");
-    assert.equal(closed.facets.shroud_topology, "closed");
-    assert.equal(open.facets.passage_topology, "throughflow_bladed_channel");
-    assert.equal(closed.facets.passage_topology, "throughflow_bladed_channel");
-    assert.equal(open.parameters.blade_count, 12);
-    assert.equal(closed.parameters.blade_count, 12);
-    assert.equal(open.parameters.leading_edge_lean_deg, 0);
-    assert.equal(open.parameters.trailing_edge_lean_deg, 0);
-    assert.equal(open.parameters.leading_edge_sweep_mm, 0);
-    assert.equal(open.parameters.trailing_edge_sweep_mm, 0);
-    assert.equal(closed.parameters.leading_edge_lean_deg, 0);
-    assert.equal(closed.parameters.trailing_edge_lean_deg, 0);
-    assert.equal(closed.parameters.leading_edge_sweep_mm, 0);
-    assert.equal(closed.parameters.trailing_edge_sweep_mm, 0);
-    assert.ok(open.parameters.blade_wrap_deg > 0);
-    assert.ok(closed.parameters.blade_wrap_deg > 0);
-    assert.equal(open.parameters.root_fillet_radius_mm, 8);
-    assert.equal(open.parameters.leading_edge_radius_mm, 3);
-    assert.equal(open.parameters.trailing_edge_radius_mm, 2);
-    assert.equal(open.parameters.tip_edge_radius_mm, 2);
-    assert.equal(closed.parameters.root_fillet_radius_mm, 8);
-    assert.equal(closed.parameters.leading_edge_radius_mm, 3);
-    assert.equal(closed.parameters.trailing_edge_radius_mm, 2);
-    assert.equal(closed.parameters.tip_edge_radius_mm, 2);
-    assert.equal(closed.parameters.hub_bottom_thickness_mm, 22);
-    assert.ok(open.parameters.hub_wall_thickness_mm > 0);
-    assert.ok(closed.parameters.hood_wall_thickness_mm > 0);
+    const payload = buildInstantiatePayload(
+      presets[0].parameters,
+      null,
+      { blade_mean: { theta_center_u_curve: { control_points: [[0, 0], [1, -120]] } } },
+      null,
+      "edge_closures",
+      sectionLoopOverrides,
+    );
+
+    assert.deepEqual(payload.section_loop_overrides, sectionLoopOverrides);
+    assert.equal(payload.curve_overrides.blade_mean.theta_center_u_curve.control_points.length, 2);
   });
 
-  test("default UI presets route generation through v0.9 transition-resolved backends", () => {
-    assert.equal(presets[0].presetId, "radial_open_reference_v0_9");
-    assert.equal(presets[1].presetId, "radial_closed_reference_v0_9");
-    assert.equal(buildSynthesizePayload(presets[0]).preset_id, "radial_open_reference_v0_9");
-    assert.equal(buildSynthesizePayload(presets[1]).preset_id, "radial_closed_reference_v0_9");
+  test("buildInstantiatePayload keeps blade-to-blade overrides separate from section-loop overrides", () => {
+    const sectionLoopOverrides = { legacy: true };
+    const bladeToBladeLoopFamilyOverrides = { main: { station_count: 5 } };
 
-    for (const preset of presets) {
-      assert.match(preset.presetId, /_v0_9$/);
-      assert.ok(preset.tags.includes("v0.9"));
-      assert.ok(!preset.tags.includes("v0.7"));
-    }
+    const payload = buildInstantiatePayload(
+      presets[0].parameters,
+      null,
+      null,
+      null,
+      "full",
+      sectionLoopOverrides,
+      bladeToBladeLoopFamilyOverrides,
+    );
+
+    assert.deepEqual(payload.blade_to_blade_loop_family_overrides, bladeToBladeLoopFamilyOverrides);
+    assert.deepEqual(payload.section_loop_overrides, sectionLoopOverrides);
+  });
+
+  test("buildInstantiatePayload omits empty blade-to-blade overrides", () => {
+    const payload = buildInstantiatePayload(
+      presets[0].parameters,
+      null,
+      null,
+      null,
+      "full",
+      null,
+      {},
+    );
+
+    assert.equal("blade_to_blade_loop_family_overrides" in payload, false);
+  });
+
+  test("first UI preset advertises active v1.1.1 geometry contract", () => {
+    assert.equal(presets[0].presetId, "radial_open_reference_v1_1");
+    assert.equal(presets[0].geometryPatchVersion, "1.1.1");
+    assert.match(presets[0].name, /v1\.1/);
+    assert.equal(
+      presets[0].metadata.transitionGeometryStatus,
+      "topology_first_blade_to_blade_5_loop_surface_family_graph",
+    );
+  });
+
+  test("curve-owned values are not duplicated as scalar controls for v1.1.1 open preset", () => {
+    const hidden = hiddenParameterIdsForPreset("radial_open_reference_v1_1");
+
+    assert.ok(hidden.includes("root_fillet_radius_mm"));
+    assert.ok(hidden.includes("leading_edge_radius_mm"));
+    assert.ok(hidden.includes("trailing_edge_radius_mm"));
+    assert.ok(hidden.includes("tip_edge_radius_mm"));
+    assert.ok(hidden.includes("inlet_blade_height_mm"));
+    assert.ok(hidden.includes("outlet_blade_height_mm"));
+    assert.ok(hidden.includes("hub_curve_height_mm"));
+    assert.equal(hidden.includes("blade_thickness_mm"), false);
   });
 
   test("declares parameter groups in display order", () => {
@@ -249,7 +298,7 @@ describe("impeller frontend model", () => {
     assert.equal(parameterSchema.hub_base_radius_mm.controlKind, "semantic_handle");
   });
 
-  test("v0.9 exposes interactive fillet and edge radius controls", () => {
+  test("parameter schema keeps interactive fillet and edge radius definitions available", () => {
     assert.equal(parameterSchema.root_fillet_radius_mm.group, "edge_treatment");
     assert.equal(parameterSchema.leading_edge_radius_mm.group, "edge_treatment");
     assert.equal(parameterSchema.trailing_edge_radius_mm.group, "edge_treatment");

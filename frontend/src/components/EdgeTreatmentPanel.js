@@ -5,7 +5,7 @@ import {
   effectiveTransitionRow,
   transitionRuntimeSummary,
   updateTransitionRow,
-} from "../edgeTreatmentModel.js";
+} from "../edgeTreatmentModel.js?v=1.1.5";
 
 const h = React.createElement;
 const treatments = ["none", "chamfer", "fillet"];

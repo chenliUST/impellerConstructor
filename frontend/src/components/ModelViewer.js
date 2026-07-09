@@ -8,10 +8,18 @@ import {
   isTransitionSurface,
   meshOverlayControlVisible,
   meshOverlayOptions,
-  viewerVisibilityForMeshOverlay,
-} from "../meshOverlayModel.js";
-import { patchBoundaryCurveIds, patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js";
-import { defaultVisibleLayers, layerForConstructionFeature, layerForSurface } from "../workspaceModel.js";
+  viewerLayerVisibility,
+} from "../meshOverlayModel.js?v=1.1.5";
+import { patchBoundaryCurveIds, patchSurfaceIds, surfaceVisibleInView } from "../simulationViewModel.js?v=1.1.5";
+import {
+  defaultVisibleLayers,
+  layerForConstructionFeature,
+  layerForSurface,
+  usesV11ViewerLayers,
+  meshOverlayLayerForV104,
+  sharedEdgeLayerForV104,
+  usesV104ViewerLayers,
+} from "../workspaceModel.js?v=1.1.5";
 
 const h = React.createElement;
 
@@ -187,6 +195,7 @@ export function ModelViewer({
             side: THREE.DoubleSide,
           }),
         );
+        shaded.userData.layer = "shade_surfaces";
 
         modelRef.current.shaded = shaded;
         sceneRef.current.add(shaded);
@@ -210,30 +219,43 @@ export function ModelViewer({
     const shaded = modelRef.current.shaded;
     const constructionGroup = modelRef.current.constructionGroup;
     if (shaded) {
-      const { showShaded, showMeshOverlay } = viewerVisibilityForMeshOverlay({
+      const { showShadedSurfaces, showSurfaceUvWire, showMeshEdges } = viewerLayerVisibility({
         simulationViewMode,
         viewMode,
         meshOverlayMode: activeMeshOverlayMode,
         visibleLayers,
       });
-      shaded.visible = showShaded || showMeshOverlay;
+      shaded.visible = showShadedSurfaces || showSurfaceUvWire || showMeshEdges;
       shaded.traverse((child) => {
         if (child.isMesh && child.userData.layer) {
-          child.visible = showShaded && visibleLayers[child.userData.layer] !== false;
+          child.visible = showShadedSurfaces && visibleLayers[child.userData.layer] !== false;
+        }
+        if (child.isLineSegments && child.userData.isSurfaceUvWire && child.userData.layer) {
+          child.visible = showSurfaceUvWire && visibleLayers[child.userData.layer] !== false;
         }
         if (child.isLineSegments && child.userData.isMeshOverlay && child.userData.layer) {
-          child.visible = showMeshOverlay && visibleLayers[child.userData.layer] !== false;
+          child.visible = showMeshEdges && visibleLayers[child.userData.layer] !== false;
         }
       });
     }
     if (constructionGroup) {
-      const showConstruction =
-        viewMode !== "shaded" &&
-        (!isCfdInspectionView(simulationViewMode) || constructionGroup.userData.hasCfdBoundarySelection);
+      const { showConstructionLines } = viewerLayerVisibility({
+        simulationViewMode,
+        viewMode,
+        meshOverlayMode: activeMeshOverlayMode,
+        visibleLayers,
+      });
+      const hasCfdBoundarySelection =
+        isCfdInspectionView(simulationViewMode) && constructionGroup.userData.hasCfdBoundarySelection;
+      const showConstruction = showConstructionLines || hasCfdBoundarySelection;
       constructionGroup.visible = showConstruction;
       constructionGroup.traverse((child) => {
+        const showChild = showConstructionLines || (hasCfdBoundarySelection && child.userData.isCfdSelectedBoundary);
         if (child.isLineSegments && child.userData.layer) {
-          child.visible = showConstruction && visibleLayers[child.userData.layer] !== false;
+          child.visible = showChild && visibleLayers[child.userData.layer] !== false;
+        }
+        if (child.isMesh && child.userData.layer) {
+          child.visible = showChild && visibleLayers[child.userData.layer] !== false;
         }
       });
     }
@@ -273,6 +295,7 @@ export function ModelViewer({
     }
     clearConstructionGroup();
     const group = createConstructionGroup(linesByFeature || {}, centerRef.current, selectedBoundaryIds);
+    addCurveControlOverlays(group, curveControlsFromManifest(manifest), centerRef.current, usesV104ViewerLayers(manifest));
     group.userData.hasCfdBoundarySelection = selectedBoundaryIds.size > 0;
     if (group.children.length === 0) {
       return;
@@ -359,6 +382,13 @@ function createSurfaceGraphGroup(
   manifest = null,
 ) {
   const group = new THREE.Group();
+  const surfaceGraphStatus =
+    surfaceGraph?.transition_geometry_status ||
+    manifest?.transition_geometry_status ||
+    manifest?.metadata?.transitionGeometryStatus;
+  const v11SurfaceFamilyGraph = surfaceGraphStatus === "topology_first_blade_to_blade_5_loop_surface_family_graph";
+  const v11ViewerLayers = usesV11ViewerLayers(manifest, surfaceGraph);
+  const v104ViewerLayers = usesV104ViewerLayers(manifest, surfaceGraph);
   const colors = {
     hub: "#7aa58f",
     hub_wall: "#7aa58f",
@@ -373,6 +403,16 @@ function createSurfaceGraphGroup(
     blade_trailing_edge_closure: "#ef4444",
     blade_root_hub_closure: "#22c55e",
     blade_tip_closure: "#38bdf8",
+    blade_pressure: "#6f9b85",
+    blade_suction: "#5d806f",
+    blade_leading_edge: "#f59e0b",
+    blade_trailing_edge: "#ef4444",
+    blade_root: "#ff00cc",
+    blade_tip: "#38bdf8",
+    hub_shell: "#7aa58f",
+    hub_cap: "#8aa883",
+    hub_bevel: "#f59e0b",
+    mounting_bore: "#425563",
   };
 
   for (const surface of surfaceGraph.surfaces || []) {
@@ -380,18 +420,20 @@ function createSurfaceGraphGroup(
       continue;
     }
     const grid = surface.uv_grid || [];
-    if (grid.length < 2 || grid[0].length < 2) {
+    const hasGrid = hasRectangularSurfaceGrid(grid);
+    const geometry = surfaceMeshGeometry(surface.mesh, center, grid) || (hasGrid ? surfaceGridGeometry(grid, center) : null);
+    if (!geometry) {
       continue;
     }
-    const geometry = surfaceGridGeometry(grid, center);
     geometry.computeVertexNormals();
     const display = surface.display || {};
     const isEdgeClosure = surface.kind === "edge_closure_surface";
     const surfaceId = surface.id || surface.surface_graph_id;
     const isSelected = selectedSurfaceIds.has(surfaceId);
     const hasSelection = selectedSurfaceIds.size > 0;
+    const priorityColor = inspectionColor(surface, isSelected);
     const material = new THREE.MeshStandardMaterial({
-      color: isSelected ? "#f97316" : display.color || colors[surface.cfd_role] || colors[surface.role] || "#7aa58f",
+      color: priorityColor || display.color || colors[surface.face_family] || colors[surface.cfd_role] || colors[surface.role] || "#7aa58f",
       emissive: isSelected ? "#7c2d12" : "#000000",
       emissiveIntensity: isSelected ? 0.18 : 0,
       roughness: 0.58,
@@ -403,41 +445,169 @@ function createSurfaceGraphGroup(
           ? 1.0
           : hasSelection
             ? 0.42
-            : display.opacity ??
-              (surface.role === "open_tip_reference" || surface.role === "reference_only"
-                ? 0.3
-                : isEdgeClosure
-                  ? 1.0
-                  : 0.92),
+            : v11ViewerLayers || v11SurfaceFamilyGraph
+              ? (display.opacity === undefined ? 0.62 : display.opacity)
+              : defaultSurfaceOpacity(surface, display, isEdgeClosure),
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData.layer = layerForSurface(surface, cfdSurfaceMeshManifest(manifest));
+    mesh.userData.layer = v104ViewerLayers ? "shade_surfaces" : layerForSurface(surface, cfdSurfaceMeshManifest(manifest));
     mesh.userData.surfaceId = surfaceId;
     group.add(mesh);
 
+    if (hasGrid) {
+      group.add(createSurfaceUvWireOverlay(grid, center, surface, cfdSurfaceMeshManifest(manifest), v104ViewerLayers));
+    }
+
     if (simulationViewMode === "mesh" && meshOverlayMode !== "off") {
-      const overlay = createMeshEdgeOverlay(geometry, surface, cfdSurfaceMeshManifest(manifest));
+      const overlay = createMeshEdgeOverlay(geometry, surface, cfdSurfaceMeshManifest(manifest), v104ViewerLayers);
       group.add(overlay);
+    }
+  }
+
+  if (simulationViewMode === "mesh" && meshOverlayMode !== "off") {
+    const sharedEdgeGroup = createSharedEdgeGroup(surfaceGraph, center, v104ViewerLayers);
+    if (sharedEdgeGroup.children.length > 0) {
+      group.add(sharedEdgeGroup);
     }
   }
 
   return group;
 }
 
-function createMeshEdgeOverlay(geometry, surface, meshManifest = null) {
+function defaultSurfaceOpacity(surface, display, isEdgeClosure) {
+  if (display.opacity !== undefined) {
+    return display.opacity;
+  }
+  if (surface.role === "open_tip_reference" || surface.role === "reference_only") {
+    return 0.3;
+  }
+  if (isEdgeClosure) {
+    return 1.0;
+  }
+  return 0.92;
+}
+
+function createSurfaceUvWireOverlay(grid, center, surface, meshManifest = null, v104ViewerLayers = false) {
+  const positions = [];
+  for (let rowIndex = 0; rowIndex < grid.length; rowIndex += 1) {
+    for (let columnIndex = 0; columnIndex < grid[rowIndex].length - 1; columnIndex += 1) {
+      pushPoint(positions, grid[rowIndex][columnIndex], center);
+      pushPoint(positions, grid[rowIndex][columnIndex + 1], center);
+    }
+  }
+  const columnCount = grid[0]?.length || 0;
+  for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+    for (let rowIndex = 0; rowIndex < grid.length - 1; rowIndex += 1) {
+      pushPoint(positions, grid[rowIndex][columnIndex], center);
+      pushPoint(positions, grid[rowIndex + 1][columnIndex], center);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  const display = surface.display || {};
+  const line = new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color: display.wire_color || surface.wireframe?.color || "#315f72",
+      transparent: true,
+      opacity: surface.face_family === "hub" ? 0.42 : 0.58,
+      depthTest: true,
+      depthWrite: false,
+    }),
+  );
+  line.userData.isSurfaceUvWire = true;
+  line.userData.layer = v104ViewerLayers ? "nurbs_uv_wire" : layerForSurface(surface, meshManifest);
+  line.userData.surfaceId = surface.id || surface.surface_graph_id;
+  return line;
+}
+
+function createMeshEdgeOverlay(geometry, surface, meshManifest = null, v104ViewerLayers = false) {
   const transitionSurface = isTransitionSurface(surface, meshManifest);
+  const display = surface.display || {};
+  const inspectionClass = display.inspection_class || "";
+  const inspectionWire = ["root_to_hub_native_root_face", "tip_to_shroud_attachment", "root_to_hub_blend", "open_tip_dome"].includes(
+    inspectionClass,
+  );
+  const isNativeRootFace = surface.kind === "native_topology_face" && surface.face_family === "blade_root";
   const material = new THREE.LineBasicMaterial({
-    color: transitionSurface ? "#f97316" : "#1f2933",
+    color:
+      inspectionWire || isNativeRootFace
+        ? display.wire_color || "#fff200"
+        : transitionSurface
+          ? "#f97316"
+          : display.wire_color || "#1f2933",
     transparent: true,
-    opacity: transitionSurface ? 0.92 : 0.28,
+    opacity: inspectionWire || isNativeRootFace || transitionSurface ? 0.92 : 0.28,
     depthTest: true,
     depthWrite: false,
   });
   const overlay = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), material);
   overlay.userData.isMeshOverlay = true;
-  overlay.userData.layer = transitionSurface ? "transition_mesh_edges" : "mesh_edges";
+  overlay.userData.layer = v104ViewerLayers
+    ? meshOverlayLayerForV104(surface)
+    : inspectionWire || transitionSurface
+      ? "transition_mesh_edges"
+      : "mesh_edges";
   overlay.userData.surfaceId = surface.id || surface.surface_graph_id;
   return overlay;
+}
+
+function inspectionColor(surface, selected) {
+  const display = surface.display || {};
+  if (selected) {
+    return "#f97316";
+  }
+  if (display.inspection_class === "root_to_hub_native_root_face") {
+    return display.color || "#ff00cc";
+  }
+  if (display.inspection_class === "root_to_hub_blend") {
+    return display.color || "#ff00cc";
+  }
+  if (display.inspection_class === "tip_to_shroud_attachment") {
+    return display.color || "#00e5ff";
+  }
+  if (display.inspection_class === "open_tip_dome") {
+    return display.color || "#6f8fb8";
+  }
+  return null;
+}
+
+function createSharedEdgeGroup(surfaceGraph, center, v104ViewerLayers = false) {
+  const group = new THREE.Group();
+  const facesById = new Map((surfaceGraph.surfaces || []).map((surface) => [surface.id || surface.surface_graph_id, surface]));
+  const sharedEdges = surfaceGraph.topology_graph?.shared_edges || [];
+  for (const shared_edge of sharedEdges) {
+    const face = facesById.get(shared_edge.first_face_id);
+    const points = face?.edge_samples?.[shared_edge.first_edge_role] || [];
+    if (points.length < 2) {
+      continue;
+    }
+    const positions = [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      pushPoint(positions, points[index], center);
+      pushPoint(positions, points[index + 1], center);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    const line = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: "#fff200",
+        transparent: true,
+        opacity: 0.48,
+        depthWrite: false,
+      }),
+    );
+    line.userData.isMeshOverlay = true;
+    if (v104ViewerLayers) {
+      line.userData.layer = sharedEdgeLayerForV104(shared_edge);
+    } else {
+      line.userData.layer = "mesh_edges";
+    }
+    line.userData.sharedEdgeId = shared_edge.id;
+    group.add(line);
+  }
+  return group;
 }
 
 function isCfdInspectionView(simulationViewMode) {
@@ -449,8 +619,16 @@ function meshInspectionStatus(manifest) {
   if (!meshManifest) {
     return "CFD360 mesh manifest not available.";
   }
+  const meshStrategyStatus =
+    meshManifest.mesh_strategy_status ||
+    meshManifest.mesh_generation_status ||
+    meshManifest.mesh_status ||
+    meshManifest.status;
   const triangles = Number(meshManifest.triangle_count || 0);
   const degenerate = Number(meshManifest.degenerate_triangle_count || 0);
+  if (meshStrategyStatus === "v1_1_loop_family_shared_boundary_uv_mesh") {
+    return `CFD360 mesh inspection: ${triangles} triangles, ${degenerate} degenerate.`;
+  }
   return `CFD360 mesh inspection: ${triangles} triangles, ${degenerate} degenerate.`;
 }
 
@@ -485,6 +663,99 @@ function surfaceGridGeometry(grid, center) {
   return geometry;
 }
 
+function surfaceMeshGeometry(mesh, center, uvGrid = []) {
+  const points = surfaceMeshPoints(mesh, uvGrid);
+  if (points.length < 3) {
+    return null;
+  }
+
+  const positions = [];
+  for (const point of points) {
+    pushPoint(positions, point, center);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return geometry;
+}
+
+function surfaceMeshPoints(mesh, uvGrid = []) {
+  if (!mesh || typeof mesh !== "object") {
+    return [];
+  }
+
+  const points = [];
+  const pushFace = (face) => {
+    const facePoints = face?.points || face?.vertices || face?.indices || face;
+    if (!Array.isArray(facePoints) || facePoints.length < 3) {
+      return;
+    }
+    const normalized = facePoints.map((point) => meshPoint(point, mesh.vertices, uvGrid)).filter(Boolean);
+    if (normalized.length < 3) {
+      return;
+    }
+    for (let index = 1; index < normalized.length - 1; index += 1) {
+      points.push(normalized[0], normalized[index], normalized[index + 1]);
+    }
+  };
+
+  for (const triangle of mesh.triangles || []) {
+    pushFace(triangle);
+  }
+  for (const quad of mesh.quads || []) {
+    pushFace(quad);
+  }
+  for (const face of mesh.faces || []) {
+    pushFace(face);
+  }
+  if (Array.isArray(mesh.indices)) {
+    for (let index = 0; index < mesh.indices.length - 2; index += 3) {
+      pushFace([mesh.indices[index], mesh.indices[index + 1], mesh.indices[index + 2]]);
+    }
+  }
+
+  return points;
+}
+
+function meshPoint(point, vertices = [], uvGrid = []) {
+  if (Number.isInteger(point) && Array.isArray(vertices)) {
+    return meshPoint(vertices[point], [], uvGrid);
+  }
+  if (Array.isArray(point) && point.length >= 3) {
+    const x = Number(point[0]);
+    const y = Number(point[1]);
+    const z = Number(point[2]);
+    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+      return [x, y, z];
+    }
+  }
+  if (
+    Array.isArray(point) &&
+    point.length >= 2 &&
+    Number.isInteger(point[0]) &&
+    Number.isInteger(point[1]) &&
+    hasRectangularSurfaceGrid(uvGrid) &&
+    uvGrid[point[0]]?.[point[1]]
+  ) {
+    return meshPoint(uvGrid[point[0]][point[1]], [], []);
+  }
+  const x = Number(Array.isArray(point) ? point[0] : point?.x);
+  const y = Number(Array.isArray(point) ? point[1] : point?.y);
+  const z = Number(Array.isArray(point) ? point[2] : point?.z);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return null;
+  }
+  return [x, y, z];
+}
+
+function hasRectangularSurfaceGrid(grid) {
+  if (!Array.isArray(grid) || grid.length < 2 || !Array.isArray(grid[0]) || grid[0].length < 2) {
+    return false;
+  }
+  const columnCount = grid[0].length;
+  return grid.every((row) => Array.isArray(row) && row.length === columnCount);
+}
+
 function filterSurfaceGraph(surfaceGraph, simulationViewMode, manifest) {
   return {
     ...(surfaceGraph || {}),
@@ -497,11 +768,15 @@ function surfaceGraphBounds(surfaceGraph) {
   let hasPoint = false;
 
   for (const surface of surfaceGraph.surfaces || []) {
-    for (const row of surface.uv_grid || []) {
+    for (const row of hasRectangularSurfaceGrid(surface.uv_grid) ? surface.uv_grid : []) {
       for (const point of row) {
         box.expandByPoint(new THREE.Vector3(point[0], point[1], point[2]));
         hasPoint = true;
       }
+    }
+    for (const point of surfaceMeshPoints(surface.mesh, surface.uv_grid || [])) {
+      box.expandByPoint(new THREE.Vector3(point[0], point[1], point[2]));
+      hasPoint = true;
     }
   }
 
@@ -552,11 +827,95 @@ function createConstructionGroup(linesByFeature, center, selectedBoundaryIds = n
       });
       const lineSegments = new THREE.LineSegments(geometry, material);
       lineSegments.userData.layer = layerForConstructionFeature(feature);
+      lineSegments.userData.isCfdSelectedBoundary = isSelectedBoundary;
       group.add(lineSegments);
     }
   }
 
   return group;
+}
+
+function addCurveControlOverlays(group, curveControls, center, v104ViewerLayers = false) {
+  for (const [curveId, curve] of Object.entries(curveControls || {})) {
+    if (curve.segments) {
+      for (const [segmentId, segment] of orderedSegmentEntries(curve.segments)) {
+        addCurveControlPolyline(group, segment.control_points || [], center, `${curveId}:${segmentId}`, "#ff00cc", v104ViewerLayers);
+        for (const point of segment.control_points || []) {
+          group.add(makeControlPointMarker(point, center, `${curveId}:${segmentId}`, v104ViewerLayers));
+        }
+      }
+      continue;
+    }
+
+    addCurveControlPolyline(group, curve.sampled_points || curve.control_points || [], center, curveId, "#1f6f66", v104ViewerLayers);
+    addCurveControlPolyline(group, curve.control_points || [], center, curveId, "#ff00cc", v104ViewerLayers);
+    for (const point of curve.control_points || []) {
+      group.add(makeControlPointMarker(point, center, curveId, v104ViewerLayers));
+    }
+  }
+}
+
+function addCurveControlPolyline(group, points, center, curveId, color = "#ff00cc", v104ViewerLayers = false) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return;
+  }
+  const positions = [];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    pushPoint(positions, curveControlPoint3d(points[index]), center);
+    pushPoint(positions, curveControlPoint3d(points[index + 1]), center);
+  }
+  if (!positions.length) {
+    return;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  const line = new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    }),
+  );
+  line.userData.layer = v104ViewerLayers ? "control_curves" : "blade_boundaries";
+  line.userData.curveControlId = curveId;
+  group.add(line);
+}
+
+function makeControlPointMarker(point, center, curveId, v104ViewerLayers = false) {
+  const vector = curveControlPoint3d(point);
+  const geometry = new THREE.SphereGeometry(5, 12, 8);
+  const material = new THREE.MeshStandardMaterial({
+    color: "#fff200",
+    emissive: "#ff00cc",
+    emissiveIntensity: 0.18,
+    roughness: 0.42,
+    metalness: 0.05,
+  });
+  const marker = new THREE.Mesh(geometry, material);
+  marker.position.set(vector[0] - center.x, vector[1] - center.y, vector[2] - center.z);
+  marker.userData.layer = v104ViewerLayers ? "control_points" : "blade_boundaries";
+  marker.userData.curveControlId = curveId;
+  return marker;
+}
+
+function curveControlPoint3d(point) {
+  if (Array.isArray(point) && point.length >= 3) {
+    return [Number(point[0]) || 0, Number(point[1]) || 0, Number(point[2]) || 0];
+  }
+  return [Number(point?.[0]) || 0, 0, Number(point?.[1]) || 0];
+}
+
+function orderedSegmentEntries(segments = {}) {
+  const order = ["pressure_side", "leading_edge", "suction_side", "trailing_edge"];
+  const knownEntries = order.filter((segmentId) => segments[segmentId]).map((segmentId) => [segmentId, segments[segmentId]]);
+  const extraEntries = Object.entries(segments).filter(([segmentId]) => !order.includes(segmentId));
+  return [...knownEntries, ...extraEntries];
+}
+
+function curveControlsFromManifest(manifest) {
+  return manifest?.curve_controls || manifest?.geometry?.curve_controls || {};
 }
 
 function mergeConstructionLines(constructionLines, surfaceGraph, simulationViewMode = "cad_review_360", selectedBoundaryIds = new Set()) {

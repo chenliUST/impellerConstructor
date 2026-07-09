@@ -8,7 +8,7 @@ import {
   screenToRz,
   updateControlPoint,
   validateProfileOverrides,
-} from "../profileEditorModel.js";
+} from "../profileEditorModel.js?v=1.1.5";
 
 const h = React.createElement;
 const viewport = { width: 520, height: 320 };

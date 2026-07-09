@@ -1,4 +1,4 @@
-import { isTransitionSurface } from "./meshOverlayModel.js";
+import { isTransitionSurface } from "./meshOverlayModel.js?v=1.1.5";
 
 const CFD_HIDDEN_ROLES = new Set([
   "construction_support_only",
@@ -8,7 +8,7 @@ const CFD_HIDDEN_ROLES = new Set([
   "keyway",
   "rear_hub_groove",
 ]);
-const CFD_SURFACE_VIEWS = new Set(["cfd_full_360", "mesh"]);
+const MESH_HIDDEN_ROLES = new Set(["open_tip_reference", "reference_only", "construction_support_only"]);
 
 export function viewModeOptions() {
   return [
@@ -19,15 +19,36 @@ export function viewModeOptions() {
   ];
 }
 
+export function buildSimulationViewModel(manifest, { simulationViewMode = "cad_review_360", selectedPatch = null } = {}) {
+  const surfaceGraph = manifest?.geometry?.surface_graph || {};
+  return {
+    simulationViewMode,
+    surfaces: (surfaceGraph.surfaces || []).filter((surface) => surfaceVisibleInView(surface, simulationViewMode, manifest)),
+    patchGroups: cfdPatchGroups(manifest),
+    patchInstances: cfdPatchInstances(manifest),
+    selectedPatchSurfaceIds: [...patchSurfaceIds(manifest, selectedPatch)],
+    selectedPatchBoundaryCurveIds: [...patchBoundaryCurveIds(manifest, selectedPatch)],
+  };
+}
+
 export function surfaceVisibleInView(surface, viewMode, manifest = null) {
-  if (!CFD_SURFACE_VIEWS.has(viewMode)) {
+  if (surface?.display?.visible_by_default === false && viewMode !== "feature_debug") {
+    return false;
+  }
+  if (["open_tip_reference", "reference_only"].includes(surface?.role) && viewMode !== "feature_debug") {
+    return false;
+  }
+  if (viewMode === "mesh") {
+    if ([surface?.role, surface?.cfd_role, surface?.kind, surface?.assembly_role].some((role) => MESH_HIDDEN_ROLES.has(role))) {
+      return false;
+    }
+    return hasRenderableMeshReviewGeometry(surface);
+  }
+  if (viewMode !== "cfd_full_360") {
     return true;
   }
   if ([surface?.role, surface?.cfd_role, surface?.kind, surface?.assembly_role].some((role) => CFD_HIDDEN_ROLES.has(role))) {
     return false;
-  }
-  if (viewMode === "mesh" && isTransitionSurface(surface, cfdSurfaceMeshManifest(manifest))) {
-    return true;
   }
   const patchSurfaceIds = cfdPatchSurfaceIds(manifest);
   if (patchSurfaceIds.size > 0) {
@@ -100,6 +121,16 @@ export function cfdPatchSurfaceIds(manifest) {
       surfaceIds.add(surfaceId);
     }
   }
+  if (surfaceIds.size > 0) {
+    return surfaceIds;
+  }
+  const meshManifest = cfdSurfaceMeshManifest(manifest);
+  for (const region of meshManifest?.patch_regions || []) {
+    const surfaceId = region?.surface_graph_id || region?.surfaceGraphId || region?.source_id || region?.sourceId;
+    if (surfaceId && Number(region?.triangle_count ?? 1) > 0) {
+      surfaceIds.add(surfaceId);
+    }
+  }
   return surfaceIds;
 }
 
@@ -109,6 +140,18 @@ function cfdFull360Manifest(manifest) {
 
 function cfdSurfaceMeshManifest(manifest) {
   return manifest?.simulation_manifests?.cfd_surface_mesh;
+}
+
+function hasRenderableMeshReviewGeometry(surface = {}) {
+  return hasRectangularUvGrid(surface.uv_grid) || Boolean(surface.mesh);
+}
+
+function hasRectangularUvGrid(grid) {
+  if (!Array.isArray(grid) || grid.length < 2 || !Array.isArray(grid[0]) || grid[0].length < 2) {
+    return false;
+  }
+  const columnCount = grid[0].length;
+  return grid.every((row) => Array.isArray(row) && row.length === columnCount);
 }
 
 function unscopedInstanceId(instanceId) {

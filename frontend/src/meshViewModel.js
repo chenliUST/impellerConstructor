@@ -1,4 +1,4 @@
-import { transitionRegionRows } from "./meshOverlayModel.js";
+import { transitionRegionRows } from "./meshOverlayModel.js?v=1.1.5";
 
 export const meshViewModes = [
   { id: "patches", label: "Patch view" },

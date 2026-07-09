@@ -16,7 +16,24 @@ export function meshOverlayControlVisible(simulationViewMode) {
   return simulationViewMode === "mesh";
 }
 
-export function viewerVisibilityForMeshOverlay({
+const TRANSITION_INSPECTION_CLASSES = new Set([
+  "root_to_hub_blend",
+  "open_tip_dome",
+  "blade_leading_edge",
+  "blade_trailing_edge",
+  "root_to_hub_native_root_face",
+  "tip_to_shroud_attachment",
+]);
+
+const TRANSITION_ROLES = new Set([
+  "root_to_hub_blend",
+  "open_tip_dome",
+  "blade_leading_edge",
+  "blade_trailing_edge",
+  "blade_root_fillet",
+]);
+
+export function viewerLayerVisibility({
   simulationViewMode,
   viewMode,
   meshOverlayMode = "triangle_edges",
@@ -24,13 +41,21 @@ export function viewerVisibilityForMeshOverlay({
 } = {}) {
   const activeMeshOverlayMode = effectiveMeshOverlayMode(simulationViewMode, meshOverlayMode);
   const shadedSurfacesEnabled = visibleLayers.shaded_surfaces !== false;
-  const showMeshOverlay = simulationViewMode === "mesh" && activeMeshOverlayMode !== "off" && viewMode !== "shaded";
-  const showWireframeFallback =
-    simulationViewMode === "mesh" && viewMode === "wireframe" && activeMeshOverlayMode === "off";
+  const activeViewMode = viewMode || "combined";
 
   return {
-    showShaded: shadedSurfacesEnabled && (viewMode !== "wireframe" || showWireframeFallback),
-    showMeshOverlay,
+    showShadedSurfaces: shadedSurfacesEnabled && activeViewMode !== "wireframe",
+    showSurfaceUvWire: activeViewMode === "wireframe" || activeViewMode === "combined",
+    showMeshEdges: simulationViewMode === "mesh" && activeMeshOverlayMode !== "off" && activeViewMode !== "shaded",
+    showConstructionLines: simulationViewMode === "feature_debug",
+  };
+}
+
+export function viewerVisibilityForMeshOverlay(options = {}) {
+  const { showShadedSurfaces, showMeshEdges } = viewerLayerVisibility(options);
+  return {
+    showShaded: showShadedSurfaces,
+    showMeshOverlay: showMeshEdges,
   };
 }
 
@@ -56,6 +81,10 @@ export function isTransitionSurface(surface = {}, meshManifest = {}) {
     return true;
   }
 
+  if (TRANSITION_INSPECTION_CLASSES.has(surface.display?.inspection_class) || TRANSITION_ROLES.has(surface.role)) {
+    return true;
+  }
+
   const surfaceId = surface.id || surface.surface_graph_id || surface.surfaceGraphId;
   if (surfaceId && transitionSurfaceIds(meshManifest).has(surfaceId)) {
     return true;
@@ -67,6 +96,9 @@ export function isTransitionSurface(surface = {}, meshManifest = {}) {
 }
 
 function transitionRegionEntries(meshManifest = {}) {
+  if (!meshManifest || typeof meshManifest !== "object") {
+    return [];
+  }
   const regions = meshManifest.transition_regions || [];
   return Array.isArray(regions)
     ? regions
