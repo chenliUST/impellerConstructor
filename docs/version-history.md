@@ -271,6 +271,24 @@ docs/evidence/2026-07-08-impeller-v1-1-1-viewer-preset-parameter-overhaul-eviden
 - Moves V1.1 frontend parameter visibility and order to preset-owned `editable_parameters`.
 - Raises the RR UltraFan CTi fan review sampling density enough for bounded STEP export fit validation without changing its shape parameters.
 
+### V1.1.2 - Canonical NURBS Parameterization
+
+- Keeps the V1.1 blade-to-blade S-Q-H surface-family constructor but adds a canonical NURBS input layer.
+- Separates universal construction parameters from preset seeds and derived frontend handles.
+- Defines active blade span through root/tip offset policy instead of implying that `h = 0` is the raw hub support surface.
+- Reclassifies leading and trailing edges as NURBS cap curves with rounded-cap intent and measured continuity, not semicircle primitives.
+- Requires all five active V1.1 presets to translate into `canonical_nurbs_parameterization`.
+- Adds a planned frontend `Parameter views` tab for generated-model multi-view annotations of resolved canonical parameters.
+
+Evidence and spec:
+
+```text
+docs/superpowers/specs/2026-07-10-impeller-v1-1-2-canonical-nurbs-parameterization-spec.md
+docs/evidence/2026-07-10-impeller-v1-1-2-semantic-change-log.md
+docs/evidence/2026-07-10-impeller-v1-1-2-insight-log.md
+docs/evidence/2026-07-10-impeller-v1-1-2-canonical-nurbs-parameterization-evidence.md
+```
+
 ## How To Run A Specific Version
 
 In Python tests or scripts:
