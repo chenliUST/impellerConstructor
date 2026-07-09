@@ -1,0 +1,13 @@
+{
+  "contract_id": "blade_to_blade_loop_surface_family_graph",
+  "mode": "topology_first_blade_to_blade_5_loop_surface_family_graph",
+  "coverage_status": "complete_topology_first_blade_to_blade_5_loop_surface_family_graph",
+  "cad_export_scope": "all_v1_1_blade_to_blade_surface_family_cad_surfaces",
+  "mesh_strategy": "v1_1_1_all_surface_uv_grid_mesh",
+  "supported_geometry_statuses": [
+    "topology_first_blade_to_blade_5_loop_surface_family_graph"
+  ],
+  "supported_mesh_strategies": [
+    "v1_1_1_all_surface_uv_grid_mesh"
+  ]
+}

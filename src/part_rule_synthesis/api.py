@@ -24,6 +24,8 @@ class InstantiateRequest(BaseModel):
     parameters: dict[str, float | int] = Field(default_factory=dict)
     profile_overrides: dict[str, Any] | None = None
     curve_overrides: dict[str, Any] | None = None
+    section_loop_overrides: dict[str, Any] | None = None
+    blade_to_blade_loop_family_overrides: dict[str, Any] | None = None
     transition_overrides: dict[str, Any] | None = None
     geometry_stage: str = "full"
 
@@ -95,6 +97,8 @@ def create_app(root: Path | None = None) -> FastAPI:
                 request.parameters,
                 profile_overrides=request.profile_overrides,
                 curve_overrides=request.curve_overrides,
+                section_loop_overrides=request.section_loop_overrides,
+                blade_to_blade_loop_family_overrides=request.blade_to_blade_loop_family_overrides,
                 transition_overrides=request.transition_overrides,
                 geometry_stage=request.geometry_stage,
             )

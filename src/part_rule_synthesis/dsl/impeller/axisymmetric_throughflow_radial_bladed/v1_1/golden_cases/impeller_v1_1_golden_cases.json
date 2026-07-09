@@ -1,0 +1,65 @@
+{
+  "registry_id": "impeller_v1_1_golden_cases",
+  "version": "1.1",
+  "cases": [
+    {
+      "case_id": "v11_open_default",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_1",
+      "description": "Default open radial impeller with blade-to-blade five-loop surface-family defaults and open tip-dome attachment semantics."
+    },
+    {
+      "case_id": "v11_closed_default",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_1",
+      "description": "Default closed radial impeller with blade-to-blade five-loop surface-family defaults and closed shroud attachment semantics."
+    },
+    {
+      "case_id": "v11_open_thick_blade_contract",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_1",
+      "parameter_overrides": {
+        "blade_thickness_mm": 48.0
+      },
+      "description": "Open loop-family variation for thicker-blade contract inspection."
+    },
+    {
+      "case_id": "v11_closed_large_bore",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_1",
+      "parameter_overrides": {
+        "mounting_bore_radius_mm": 52.0
+      },
+      "description": "Closed loop-family variation for axisymmetric support-profile review."
+    },
+    {
+      "case_id": "v11_open_lower_blade_count",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_1",
+      "parameter_overrides": {
+        "blade_count": 8
+      },
+      "description": "Open loop-family variation for main and splitter blade population accounting."
+    },
+    {
+      "case_id": "v11_closed_shroud_contract_visibility",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_1",
+      "description": "Closed loop-family case focused on shroud attachment defaults and topology identity."
+    },
+    {
+      "case_id": "v11_negative_missing_loop_family",
+      "category": "negative",
+      "preset_id": "radial_open_reference_v1_1",
+      "expected_status": "FAIL",
+      "description": "Synthetic regression slot for missing blade-to-blade loop-family defaults."
+    },
+    {
+      "case_id": "v11_negative_synthetic_shared_boundary",
+      "category": "negative",
+      "preset_id": "radial_open_reference_v1_1",
+      "expected_status": "FAIL",
+      "description": "Synthetic regression slot for loop-family graphs that do not preserve shared boundaries."
+    }
+  ]
+}

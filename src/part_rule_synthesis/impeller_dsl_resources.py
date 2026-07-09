@@ -10,11 +10,15 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 ONTOLOGY_BASE = PACKAGE_ROOT / "ontology" / "impeller"
 DSL_BASE = PACKAGE_ROOT / "dsl" / "impeller" / "axisymmetric_throughflow_radial_bladed"
 DEFAULT_DSL_VERSION = "v0_2"
-DESIGN_SPACE_DSL_VERSIONS = {"0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "0.91"}
-EDGE_FAMILY_DSL_VERSIONS = {"0.7", "0.8", "0.9", "0.91"}
-RESEARCH_REGISTRY_IDS_BY_DSL_VERSION = {
-    "0.9": ("impeller_v0_9_kernel_capabilities", "impeller_v0_9_golden_cases"),
-    "0.91": ("impeller_v0_91_kernel_capabilities", "impeller_v0_91_golden_cases"),
+DESIGN_SPACE_DSL_VERSIONS = {"0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "0.91", "1.0"}
+EDGE_FAMILY_DSL_VERSIONS = {"0.7", "0.8", "0.9", "0.91", "1.0"}
+RESEARCH_REGISTRY_IDS_BY_DSL_VERSION: dict[str, list[tuple[str, str]]] = {
+    "0.9": [("impeller_v0_9_kernel_capabilities", "impeller_v0_9_golden_cases")],
+    "0.91": [("impeller_v0_91_kernel_capabilities", "impeller_v0_91_golden_cases")],
+    "1.0": [
+        ("impeller_v1_0_kernel_capabilities", "impeller_v1_0_golden_cases"),
+        ("impeller_v1_0_3_kernel_capabilities", "impeller_v1_0_3_golden_cases"),
+    ],
 }
 SUPPORTED_V07_DEFAULT_TREATMENTS = {"none", "chamfer", "fillet"}
 V07_TRANSITION_RADIUS_PARAMETERS = {
@@ -217,19 +221,21 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
 
 
 def _validate_research_registries(bundle: ImpellerDslBundle, dsl_version: str) -> None:
-    matrix_id, registry_id = RESEARCH_REGISTRY_IDS_BY_DSL_VERSION[dsl_version]
-    if matrix_id not in bundle.capability_matrices:
-        raise ValueError(f"impeller v{dsl_version} missing kernel capability matrix")
-    if registry_id not in bundle.golden_case_registries:
-        raise ValueError(f"impeller v{dsl_version} missing golden case registry")
     allowed_status = {"supported", "partial", "research_grade", "unsupported"}
-    matrix = bundle.capability_matrices[matrix_id]
-    for entry in matrix.get("capabilities", []):
-        if entry.get("status") not in allowed_status:
-            raise ValueError(f"impeller v{dsl_version} capability has invalid status: {entry!r}")
-    registry = bundle.golden_case_registries[registry_id]
-    if not (6 <= len(registry.get("cases", [])) <= 10):
-        raise ValueError(f"impeller v{dsl_version} golden case registry must contain 6-10 cases")
+    for matrix_id, registry_id in RESEARCH_REGISTRY_IDS_BY_DSL_VERSION[dsl_version]:
+        if matrix_id not in bundle.capability_matrices:
+            raise ValueError(f"impeller v{dsl_version} missing kernel capability matrix {matrix_id}")
+        if registry_id not in bundle.golden_case_registries:
+            raise ValueError(f"impeller v{dsl_version} missing golden case registry {registry_id}")
+        matrix = bundle.capability_matrices[matrix_id]
+        for entry in matrix.get("capabilities", []):
+            if entry.get("status") not in allowed_status:
+                raise ValueError(f"impeller v{dsl_version} capability has invalid status: {entry!r}")
+        registry = bundle.golden_case_registries[registry_id]
+        if not (6 <= len(registry.get("cases", [])) <= 10):
+            raise ValueError(
+                f"impeller v{dsl_version} golden case registry {registry_id} must contain 6-10 cases"
+            )
 
 
 def _validate_v07_edge_family_contracts(bundle: ImpellerDslBundle) -> None:

@@ -123,6 +123,40 @@ def test_v09_validation_passes_double_sided_root_transition_graph():
     assert report["transition_validation_summary"]["transition_surface_count"] == 2
 
 
+def test_v10_4_root_patch_ids_preserve_double_sided_root_topology_compatibility():
+    report = build_geometry_validation_report(
+        transition_policies=_default_policies(),
+        surface_graph={
+            "surfaces": [
+                {
+                    "id": "blade_0_root_annular_surface_pressure_root_patch",
+                    "face_family": "blade_root",
+                    "display": {
+                        "inspection_class": "root_to_hub_blend",
+                        "visible_by_default": True,
+                        "aggregate_surface": False,
+                    },
+                },
+                {
+                    "id": "blade_0_root_annular_surface_suction_root_patch",
+                    "face_family": "blade_root",
+                    "display": {
+                        "inspection_class": "root_to_hub_blend",
+                        "visible_by_default": True,
+                        "aggregate_surface": False,
+                    },
+                },
+            ],
+        },
+    )
+
+    assert report["geometry_validation_status"] == "PASS"
+    assert not any(
+        failure["reason"] == "missing_double_sided_root_transition_surface"
+        for failure in report["blocking_failures"]
+    )
+
+
 def test_v09_validation_fails_inverted_concave_fillet():
     inverted = _valid_root_transition(
         "blade_0_pressure_root_transition_surface",

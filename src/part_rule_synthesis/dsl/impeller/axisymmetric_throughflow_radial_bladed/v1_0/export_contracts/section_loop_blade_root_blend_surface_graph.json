@@ -1,0 +1,33 @@
+{
+  "contract_id": "section_loop_blade_root_blend_surface_graph",
+  "contract_version": "1.0.3",
+  "mode": "topology_first_section_loop_blade_root_blend_surface_graph",
+  "default_view": "cad_review_360",
+  "step_exactness": "validated_bounded_unsewn_review_brep_step",
+  "current_step_exactness": "sampled_bounded_unsewn_review_brep_step",
+  "target_step_exactness": "surface_graph_trimmed_brep_step",
+  "bounded_brep_status": "bounded_faces_unsewn",
+  "implementation_status": "surface_graph_builder_available",
+  "current_cad_exports": "bounded_unsewn_review_surfaces",
+  "current_coverage_status": "sampled_surface_graph_available",
+  "current_cad_export_scope": "review_grade_v1_0_3_sampled_surfaces",
+  "current_geometry_generation_status": "PASS",
+  "target_contract_status": "future_target_metadata",
+  "coverage_status": "complete_topology_first_section_loop_blade_root_blend_surface_graph",
+  "cad_export_scope": "all_topology_first_section_loop_blade_root_blend_surface_graph_cad_surfaces",
+  "unsupported_surface_policy": "fail_export",
+  "mesh_strategy": "section_loop_shared_edge_review_grade_quad_mesh",
+  "requires": [
+    "topology_first_section_loop_blade_root_blend_surface_graph",
+    "section_loop_blade_faces",
+    "segmented_root_blend_surfaces",
+    "open_tip_dome_surfaces",
+    "native_hub_bore_bevel_faces",
+    "shared_edge_topology_graph",
+    "section_loop_shared_edge_review_grade_quad_mesh",
+    "bounded_faces",
+    "complete_surface_graph_coverage",
+    "finite_bounding_box",
+    "occt_reimport_check_when_available"
+  ]
+}

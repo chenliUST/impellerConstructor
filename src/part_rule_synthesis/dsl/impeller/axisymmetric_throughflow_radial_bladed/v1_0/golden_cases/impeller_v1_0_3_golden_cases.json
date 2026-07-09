@@ -1,0 +1,66 @@
+{
+  "registry_id": "impeller_v1_0_3_golden_cases",
+  "version": "1.0.3",
+  "cases": [
+    {
+      "case_id": "v10_3_open_section_loop_default",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_0",
+      "description": "Default open radial impeller with V1.0.3 section-loop blade, root blend, tip dome, hub, bore, and bevel faces."
+    },
+    {
+      "case_id": "v10_3_closed_historical_default",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_0",
+      "description": "Closed radial impeller remains on historical V1.0.2 closed-tip topology until a closed V1.0.3 spec exists."
+    },
+    {
+      "case_id": "v10_3_open_root_blend_inspection",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_0",
+      "parameter_overrides": {
+        "root_fillet_radius_mm": 36.0
+      },
+      "description": "Open section-loop impeller variation for inspecting root blend surface graph continuity."
+    },
+    {
+      "case_id": "v10_3_closed_large_bore_bevel",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_0",
+      "parameter_overrides": {
+        "mounting_bore_radius_mm": 52.0,
+        "hub_chamfer_radius_mm": 28.0
+      },
+      "description": "Closed historical impeller with large bore and hub bevels for axisymmetric profile validation."
+    },
+    {
+      "case_id": "v10_3_open_main_splitter_pairs",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_0",
+      "parameter_overrides": {
+        "blade_count": 8
+      },
+      "description": "Open section-loop impeller using four main and four splitter blades for topology identity accounting."
+    },
+    {
+      "case_id": "v10_3_closed_root_face_visibility",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_0",
+      "description": "Closed historical impeller case focused on root annular face visibility and blade-to-hub topology."
+    },
+    {
+      "case_id": "v10_3_negative_missing_root_blend_loop",
+      "category": "negative",
+      "preset_id": "radial_open_reference_v1_0",
+      "expected_status": "FAIL",
+      "description": "Synthetic regression slot for missing V1.0.3 root blend section loop."
+    },
+    {
+      "case_id": "v10_3_negative_synthetic_section_loop_edge",
+      "category": "negative",
+      "preset_id": "radial_open_reference_v1_0",
+      "expected_status": "FAIL",
+      "description": "Synthetic regression slot for section-loop graphs that rely on synthetic shared edges."
+    }
+  ]
+}

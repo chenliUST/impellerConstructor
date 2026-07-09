@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 import math
 from typing import Any
 
 from part_rule_synthesis.impeller_surface_graph_export import triangulate_surface_graph
+from part_rule_synthesis.impeller_v11_constants import MESH_STRATEGY as V11_ALL_SURFACE_MESH_STRATEGY
 
 
 def build_surface_mesh_manifest(
@@ -48,7 +50,31 @@ def _mesh_for_surface_graph(surface_graph: dict[str, Any], view_id: str) -> dict
         from part_rule_synthesis.impeller_transition_mesh import build_transition_aware_mesh
 
         return build_transition_aware_mesh(surface_graph, view_id=view_id)
+    if surface_graph.get("mesh_strategy") == V11_ALL_SURFACE_MESH_STRATEGY:
+        return triangulate_surface_graph(_v11_all_surface_mesh_graph(surface_graph), view_id="cad_review_360")
     return triangulate_surface_graph(surface_graph, view_id=view_id)
+
+
+def _v11_all_surface_mesh_graph(surface_graph: dict[str, Any]) -> dict[str, Any]:
+    graph = copy.deepcopy(surface_graph)
+    graph["surfaces"] = [
+        surface
+        for surface in graph.get("surfaces", [])
+        if isinstance(surface, dict) and _is_v11_manifest_mesh_surface(surface)
+    ]
+    return graph
+
+
+def _is_v11_manifest_mesh_surface(surface: dict[str, Any]) -> bool:
+    display = surface.get("display", {})
+    surface_flags = surface.get("surface_flags", {})
+    if surface.get("role") == "open_tip_reference":
+        return False
+    if surface.get("reference_only") or display.get("reference_only") or surface_flags.get("reference_only"):
+        return False
+    if display.get("visible_by_default") is False:
+        return False
+    return True
 
 
 def build_transition_regions(

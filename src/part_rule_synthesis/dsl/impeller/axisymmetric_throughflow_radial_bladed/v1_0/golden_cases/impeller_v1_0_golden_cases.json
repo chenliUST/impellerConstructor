@@ -1,0 +1,66 @@
+{
+  "registry_id": "impeller_v1_0_golden_cases",
+  "version": "1.0",
+  "cases": [
+    {
+      "case_id": "v10_open_default",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_0",
+      "description": "Default open radial impeller with native pressure, suction, leading, trailing, tip, root, hub, bore, and bevel faces."
+    },
+    {
+      "case_id": "v10_closed_default",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_0",
+      "description": "Default closed radial impeller with native blade, shroud, hub, bore, and bevel face topology."
+    },
+    {
+      "case_id": "v10_open_thick_blade_inspection",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_0",
+      "parameter_overrides": {
+        "blade_thickness_mm": 110.0
+      },
+      "description": "Open impeller with thicker blades for inspecting native edge and root face construction."
+    },
+    {
+      "case_id": "v10_closed_large_bore_bevel",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_0",
+      "parameter_overrides": {
+        "mounting_bore_radius_mm": 52.0,
+        "hub_chamfer_radius_mm": 28.0
+      },
+      "description": "Closed impeller with large bore and hub bevels for axisymmetric profile validation."
+    },
+    {
+      "case_id": "v10_open_six_blade_count",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v1_0",
+      "parameter_overrides": {
+        "blade_count": 6
+      },
+      "description": "Open impeller blade-count variation for topology identity and shared-edge accounting."
+    },
+    {
+      "case_id": "v10_closed_root_face_visibility",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v1_0",
+      "description": "Closed impeller case focused on root annular face visibility and blade-to-hub topology."
+    },
+    {
+      "case_id": "v10_negative_missing_native_root_face",
+      "category": "negative",
+      "preset_id": "radial_open_reference_v1_0",
+      "expected_status": "FAIL",
+      "description": "Synthetic regression slot for missing native root annular blade face."
+    },
+    {
+      "case_id": "v10_negative_synthetic_shared_edge",
+      "category": "negative",
+      "preset_id": "radial_open_reference_v1_0",
+      "expected_status": "FAIL",
+      "description": "Synthetic regression slot for topology graphs that rely on synthetic shared edges."
+    }
+  ]
+}
