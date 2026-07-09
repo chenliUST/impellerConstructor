@@ -1032,7 +1032,7 @@ def _geometry_validity_metadata(
 
 def _surface_graph_validity(surface_graph: dict[str, Any]) -> dict[str, Any]:
     status = "PASS" if surface_graph.get("surface_graph_status") == "PASS" else "FAIL"
-    if surface_graph.get("geometry_patch_version") in {"1.1.0", "1.1.1"}:
+    if surface_graph.get("geometry_patch_version") in {"1.1.0", "1.1.1", "1.1.2"}:
         failures = copy.deepcopy(surface_graph.get("transition_failures", []))
         check_name = "v1_1_surface_family_graph"
     elif surface_graph.get("geometry_patch_version") in {"1.0.3", "1.0.4"}:
@@ -1129,6 +1129,10 @@ def _v10_surface_graph_attachment_defaults(
         resolved_defaults = copy.deepcopy(
             context.get("resolved_blade_to_blade_loop_family_defaults", {})
         )
+        if "canonical_nurbs_parameterization" in context:
+            resolved_defaults["canonical_nurbs_parameterization"] = copy.deepcopy(
+                context["canonical_nurbs_parameterization"]
+            )
         return {
             "geometry_patch_version": str(context.get("geometry_patch_version", "1.1.0")),
             "resolved_blade_to_blade_loop_family_defaults": resolved_defaults,

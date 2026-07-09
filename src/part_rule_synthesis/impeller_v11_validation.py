@@ -3,9 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from part_rule_synthesis.impeller_v11_constants import GEOMETRY_PATCH_VERSION
-
-
 PASS = "PASS"
 VALIDATION_STAGE = "v1_1_validation"
 _SOURCE_KERNEL = "v1_1_blade_to_blade_surface_family_kernel"
@@ -20,11 +17,18 @@ _TIP_ROLES = {"open_tip_dome", "closed_shroud_attachment"}
 
 
 def validate_v11_surface_graph(surface_graph: dict[str, Any]) -> list[dict[str, Any]]:
-    if surface_graph.get("geometry_patch_version") != GEOMETRY_PATCH_VERSION:
+    if surface_graph.get("geometry_patch_version") not in {"1.1.0", "1.1.1", "1.1.2"}:
         return []
 
     failures: list[dict[str, Any]] = []
     surfaces = [surface for surface in surface_graph.get("surfaces", []) if isinstance(surface, Mapping)]
+
+    if surface_graph.get("geometry_patch_version") == "1.1.2":
+        canonical = surface_graph.get("canonical_nurbs_parameterization")
+        if not isinstance(canonical, dict):
+            failures.append(_failure("v1_1_2_canonical_payload_missing"))
+        elif canonical.get("canonical_payload_version") != "1.1.2":
+            failures.append(_failure("v1_1_2_canonical_payload_missing"))
 
     roles = {str(surface.get("role") or "") for surface in surfaces}
     if not _REQUIRED_ROLES.issubset(roles):

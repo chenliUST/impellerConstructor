@@ -28,7 +28,10 @@ def _v11_graph() -> dict[str, Any]:
     return build_v11_surface_graph(
         runtime["parameters"],
         runtime["facets"],
-        runtime["resolved_blade_to_blade_loop_family_defaults"],
+        {
+            **runtime["resolved_blade_to_blade_loop_family_defaults"],
+            "canonical_nurbs_parameterization": runtime["canonical_nurbs_parameterization"],
+        },
     )
 
 
@@ -73,7 +76,7 @@ def test_v11_service_smoke_generates_validated_open_manifest(tmp_path: Path):
     manifest = run.manifest
 
     assert manifest["geometry_version"] == "1.1"
-    assert manifest["geometry_patch_version"] == "1.1.1"
+    assert manifest["geometry_patch_version"] == "1.1.2"
     assert manifest["geometry_validation_status"] == "PASS"
     assert (
         manifest["transition_geometry_status"]
@@ -218,7 +221,10 @@ def test_v11_closed_material_domain_failure_blocks_geometry_validation():
     graph = build_v11_surface_graph(
         runtime["parameters"],
         runtime["facets"],
-        runtime["resolved_blade_to_blade_loop_family_defaults"],
+        {
+            **runtime["resolved_blade_to_blade_loop_family_defaults"],
+            "canonical_nurbs_parameterization": runtime["canonical_nurbs_parameterization"],
+        },
     )
     _surface(graph, "blade_0_pressure_surface")["v1_1_span_domain_quality"]["status"] = "FAIL"
     _surface(graph, "blade_0_pressure_surface")["v1_1_span_domain_quality"]["material_domain_status"] = "FAIL"
@@ -236,7 +242,10 @@ def test_v11_helper_reference_surfaces_can_skip_wireframe_and_uv_contracts():
     wireframe_graph = build_v11_surface_graph(
         runtime["parameters"],
         runtime["facets"],
-        runtime["resolved_blade_to_blade_loop_family_defaults"],
+        {
+            **runtime["resolved_blade_to_blade_loop_family_defaults"],
+            "canonical_nurbs_parameterization": runtime["canonical_nurbs_parameterization"],
+        },
     )
     _surface(wireframe_graph, "hub_support_surface").pop("wireframe")
 
@@ -252,7 +261,10 @@ def test_v11_helper_reference_surfaces_can_skip_wireframe_and_uv_contracts():
     uv_grid_graph = build_v11_surface_graph(
         runtime["parameters"],
         runtime["facets"],
-        runtime["resolved_blade_to_blade_loop_family_defaults"],
+        {
+            **runtime["resolved_blade_to_blade_loop_family_defaults"],
+            "canonical_nurbs_parameterization": runtime["canonical_nurbs_parameterization"],
+        },
     )
     _surface(uv_grid_graph, "tip_reference_surface")["uv_grid"] = []
 

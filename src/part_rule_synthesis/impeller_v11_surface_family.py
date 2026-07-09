@@ -69,6 +69,7 @@ def build_v11_surface_graph(
     del profile_defaults
     resolved_overrides = overrides or {}
     resolved_defaults = _merge_v11_profile_overrides(defaults, profile_overrides or {})
+    canonical = resolved_defaults.get("canonical_nurbs_parameterization")
     loop_family = build_v11_blade_to_blade_loop_family(
         parameters,
         resolved_defaults,
@@ -98,6 +99,13 @@ def build_v11_surface_graph(
         "mesh_strategy": MESH_STRATEGY,
         "source_kernel": SOURCE_KERNEL,
         "source_math_policy": "blade_to_blade_5_loop_shared_boundary_surface_family",
+        "math_parameterization": (
+            canonical.get("math_parameterization")
+            if isinstance(canonical, dict)
+            else "v1_1_2_canonical_nurbs_parameterization"
+        ),
+        "canonical_nurbs_parameterization": copy.deepcopy(canonical) if isinstance(canonical, dict) else {},
+        "canonical_metrics": copy.deepcopy(canonical.get("metrics", {})) if isinstance(canonical, dict) else {},
         "surface_graph_status": status,
         "surfaces": surfaces,
         "edges": [],
