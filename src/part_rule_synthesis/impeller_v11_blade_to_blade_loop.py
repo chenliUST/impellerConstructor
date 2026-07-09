@@ -466,15 +466,17 @@ def _loop_segments_s_q(
         end_second_diff=_second_diff(pressure_points[-3], pressure_points[-2], pressure_points[-1]),
         roundness=float(values["trailing_edge_cap_roundness"]),
     )
+    leading_target_sagitta = _cap_target_sagitta_mm(pressure_points[0], suction_points[0], ratio=0.5)
+    trailing_target_sagitta = _cap_target_sagitta_mm(suction_points[-1], pressure_points[-1], ratio=0.5)
     leading_sagitta = _cap_sagitta_mm(
-        pressure_points[0],
-        suction_points[0],
-        float(values["streamwise_metric_scale_mm"]),
+        leading_points,
+        streamwise_metric_scale_mm=float(values["streamwise_metric_scale_mm"]),
+        cap_direction=-1.0,
     )
     trailing_sagitta = _cap_sagitta_mm(
-        suction_points[-1],
-        pressure_points[-1],
-        float(values["streamwise_metric_scale_mm"]),
+        trailing_points,
+        streamwise_metric_scale_mm=float(values["streamwise_metric_scale_mm"]),
+        cap_direction=1.0,
     )
     segments = {
         "pressure_side": {
@@ -488,7 +490,7 @@ def _loop_segments_s_q(
                 "kind": "nurbs_cap_curve",
                 "coordinate_system": "s_q_mm",
                 "sagitta_policy": {"mode": "local_thickness_ratio", "ratio": 0.5},
-                "target_sagitta_mm": _round(leading_sagitta),
+                "target_sagitta_mm": _round(leading_target_sagitta),
                 "resolved_sagitta_mm": _round(leading_sagitta),
                 "continuity_goal": "C2",
             },
@@ -504,7 +506,7 @@ def _loop_segments_s_q(
                 "kind": "nurbs_cap_curve",
                 "coordinate_system": "s_q_mm",
                 "sagitta_policy": {"mode": "local_thickness_ratio", "ratio": 0.5},
-                "target_sagitta_mm": _round(trailing_sagitta),
+                "target_sagitta_mm": _round(trailing_target_sagitta),
                 "resolved_sagitta_mm": _round(trailing_sagitta),
                 "continuity_goal": "C2",
             },
@@ -520,6 +522,14 @@ def _loop_segments_s_q(
         },
         overrides=segment_control_point_overrides,
     )
+    for segment_name, cap_direction in (("leading_edge", -1.0), ("trailing_edge", 1.0)):
+        segments[segment_name]["canonical_curve"]["resolved_sagitta_mm"] = _round(
+            _cap_sagitta_mm(
+                segments[segment_name]["points_s_q"],
+                streamwise_metric_scale_mm=float(values["streamwise_metric_scale_mm"]),
+                cap_direction=cap_direction,
+            )
+        )
     return segments
 
 
@@ -541,13 +551,11 @@ def _sample_side_points(
     for index in range(sample_count):
         s_norm = index / max(sample_count - 1, 1)
         s = _lerp(s0, s1, s_norm)
-        if isinstance(skeleton_field, Mapping) and isinstance(thickness_field, Mapping):
-            skeleton_surface = _normalized_surface_degree_payload(dict(skeleton_field))
-            thickness_surface = _normalized_surface_degree_payload(dict(thickness_field))
-            skeleton_sample = evaluate_nurbs_surface(skeleton_surface, s_norm, h)
-            thickness_sample = evaluate_nurbs_surface(thickness_surface, s_norm, h)
-            camber_q = float(skeleton_sample[2])
-            local_thickness = max(1.0e-9, float(thickness_sample[2]))
+        canonical_camber_q = _sample_surface_q(skeleton_field, s_norm, h)
+        canonical_thickness = _sample_surface_q(thickness_field, s_norm, h)
+        if canonical_camber_q is not None and canonical_thickness is not None:
+            camber_q = canonical_camber_q
+            local_thickness = max(1.0e-9, canonical_thickness)
         else:
             camber_q = _camber_q(
                 s_norm,
@@ -694,33 +702,15 @@ def _resolved_active_span_offsets(values: Mapping[str, Any]) -> tuple[float, flo
 
 
 def _minimum_span_length(values: Mapping[str, Any]) -> float:
-    hub_profile = values["hub_profile_rz_mm"]
-    tip_profile = values["tip_or_shroud_profile_rz_mm"]
-    intervals = [values["main_streamwise_interval_s"]]
-    if int(values.get("splitter_blade_count", 0)) > 0:
-        intervals.append(values["splitter_streamwise_interval_s"])
-    sample_count = 33
-    minimum = math.inf
-    for interval in intervals:
-        span_lengths = []
-        s0, s1 = interval
-        for index in range(sample_count):
-            s = _lerp(s0, s1, index / max(sample_count - 1, 1))
-            hub_r, hub_z = _profile_sample(hub_profile, s)
-            tip_r, tip_z = _profile_sample(tip_profile, s)
-            span_lengths.append(math.hypot(tip_r - hub_r, tip_z - hub_z))
-        if span_lengths:
-            minimum = min(minimum, sum(span_lengths) / len(span_lengths))
-    if not math.isfinite(minimum):
-        return 0.0
-    return minimum
+    return float(_pointwise_span_metrics(values)["pointwise_support_span_min_mm"])
 
 
 def _active_span_policy_metrics(values: Mapping[str, Any]) -> dict[str, Any]:
     root_offset, tip_offset = _resolved_active_span_offsets(values)
+    pointwise = _pointwise_span_metrics(values)
     status = (
         "PASS"
-        if root_offset >= 0.0 and tip_offset >= 0.0 and root_offset + tip_offset < 0.9 * _minimum_span_length(values)
+        if root_offset >= 0.0 and tip_offset >= 0.0 and pointwise["pointwise_usable_span_min_mm"] > 0.0
         else "FAIL"
     )
     return {
@@ -728,13 +718,81 @@ def _active_span_policy_metrics(values: Mapping[str, Any]) -> dict[str, Any]:
         "resolved_root_offset_max_mm": _round(root_offset),
         "resolved_tip_offset_min_mm": _round(tip_offset),
         "resolved_tip_offset_max_mm": _round(tip_offset),
+        "pointwise_support_span_min_mm": _round(pointwise["pointwise_support_span_min_mm"]),
+        "pointwise_support_span_max_mm": _round(pointwise["pointwise_support_span_max_mm"]),
+        "pointwise_usable_span_min_mm": _round(pointwise["pointwise_usable_span_min_mm"]),
+        "pointwise_usable_span_max_mm": _round(pointwise["pointwise_usable_span_max_mm"]),
         "offset_feasibility_status": status,
     }
 
 
-def _cap_sagitta_mm(start: Point2, end: Point2, streamwise_metric_scale_mm: float) -> float:
-    del streamwise_metric_scale_mm
-    return 0.5 * abs(float(end[1]) - float(start[1]))
+def _pointwise_span_metrics(values: Mapping[str, Any]) -> dict[str, float]:
+    hub_profile = values["hub_profile_rz_mm"]
+    tip_profile = values["tip_or_shroud_profile_rz_mm"]
+    root_offset, tip_offset = _resolved_active_span_offsets(values)
+    intervals = [values["main_streamwise_interval_s"]]
+    if int(values.get("splitter_blade_count", 0)) > 0:
+        intervals.append(values["splitter_streamwise_interval_s"])
+    support_spans: list[float] = []
+    usable_spans: list[float] = []
+    sample_count = 65
+    for interval in intervals:
+        s0, s1 = interval
+        for index in range(sample_count):
+            s = _lerp(s0, s1, index / max(sample_count - 1, 1))
+            hub_r, hub_z = _profile_sample(hub_profile, s)
+            tip_r, tip_z = _profile_sample(tip_profile, s)
+            support_span = math.hypot(tip_r - hub_r, tip_z - hub_z)
+            support_spans.append(support_span)
+            usable_spans.append(support_span - root_offset - tip_offset)
+    if not support_spans:
+        return {
+            "pointwise_support_span_min_mm": 0.0,
+            "pointwise_support_span_max_mm": 0.0,
+            "pointwise_usable_span_min_mm": -(root_offset + tip_offset),
+            "pointwise_usable_span_max_mm": -(root_offset + tip_offset),
+        }
+    return {
+        "pointwise_support_span_min_mm": min(support_spans),
+        "pointwise_support_span_max_mm": max(support_spans),
+        "pointwise_usable_span_min_mm": min(usable_spans),
+        "pointwise_usable_span_max_mm": max(usable_spans),
+    }
+
+
+def _cap_target_sagitta_mm(start: Point2, end: Point2, *, ratio: float) -> float:
+    return max(0.0, float(ratio)) * abs(float(end[1]) - float(start[1]))
+
+
+def _cap_sagitta_mm(points: list[Point2], *, streamwise_metric_scale_mm: float, cap_direction: float) -> float:
+    if not points:
+        return 0.0
+    metric_scale = max(float(streamwise_metric_scale_mm), 1.0e-9)
+    anchor_s = 0.5 * (float(points[0][0]) + float(points[-1][0]))
+    if cap_direction < 0.0:
+        sagitta_s = anchor_s - min(float(point[0]) for point in points)
+    else:
+        sagitta_s = max(float(point[0]) for point in points) - anchor_s
+    return max(0.0, sagitta_s) * metric_scale
+
+
+def _sample_surface_q(surface: Any, u: float, v: float) -> float | None:
+    if not isinstance(surface, Mapping):
+        return None
+    try:
+        normalized = _normalized_surface_degree_payload(dict(surface))
+        sample = evaluate_nurbs_surface(normalized, u, v)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    if not isinstance(sample, list) or len(sample) < 3:
+        return None
+    try:
+        value = float(sample[2])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
 
 
 def _normalized_surface_degree_payload(surface: dict[str, Any]) -> dict[str, Any]:
