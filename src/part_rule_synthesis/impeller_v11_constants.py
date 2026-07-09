@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 GEOMETRY_VERSION = "1.1"
-GEOMETRY_PATCH_VERSION = "1.1.1"
+GEOMETRY_PATCH_VERSION = "1.1.2"
+MATH_PARAMETERIZATION = "v1_1_2_canonical_nurbs_parameterization"
 TRANSITION_GEOMETRY_STATUS = "topology_first_blade_to_blade_5_loop_surface_family_graph"
 MESH_STRATEGY = "v1_1_1_all_surface_uv_grid_mesh"
 SOURCE_KERNEL = "v1_1_blade_to_blade_surface_family_kernel"

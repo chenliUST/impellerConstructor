@@ -32,8 +32,10 @@ def test_v111_open_reference_uses_eight_main_and_eight_splitters():
     defaults = runtime["resolved_blade_to_blade_loop_family_defaults"]
 
     assert runtime["geometry_version"] == "1.1"
-    assert runtime["geometry_patch_version"] == "1.1.1"
+    assert runtime["geometry_patch_version"] == "1.1.2"
+    assert runtime["math_parameterization"] == "v1_1_2_canonical_nurbs_parameterization"
     assert runtime["source_kernel"] == SOURCE_KERNEL
+    assert "canonical_nurbs_parameterization" in runtime
     assert runtime["mesh_strategy"] == "v1_1_1_all_surface_uv_grid_mesh"
     assert runtime["parameters"]["blade_count"]["default"] == 16
     assert defaults["main_blade_count"] == 8
@@ -54,7 +56,9 @@ def test_v111_closed_reference_uses_twelve_full_blades_no_splitters():
     runtime = compile_impeller_runtime_preset("radial_closed_reference_v1_1")
     defaults = runtime["resolved_blade_to_blade_loop_family_defaults"]
 
-    assert runtime["geometry_patch_version"] == "1.1.1"
+    assert runtime["geometry_patch_version"] == "1.1.2"
+    assert runtime["math_parameterization"] == "v1_1_2_canonical_nurbs_parameterization"
+    assert "canonical_nurbs_parameterization" in runtime
     assert runtime["facets"]["shroud_topology"] == "closed"
     assert runtime["parameters"]["blade_count"]["default"] == 12
     assert defaults["main_blade_count"] == 12
@@ -73,7 +77,9 @@ def test_v111_public_presets_use_v11_surface_family_language():
         defaults = runtime["resolved_blade_to_blade_loop_family_defaults"]
 
         assert runtime["geometry_version"] == "1.1"
-        assert runtime["geometry_patch_version"] == "1.1.1"
+        assert runtime["geometry_patch_version"] == "1.1.2"
+        assert runtime["math_parameterization"] == "v1_1_2_canonical_nurbs_parameterization"
+        assert "canonical_nurbs_parameterization" in runtime
         assert (
             runtime["transition_geometry_status"]
             == "topology_first_blade_to_blade_5_loop_surface_family_graph"
@@ -90,7 +96,9 @@ def test_v111_rr_ultrafan_preset_uses_export_stable_dense_sampling():
     runtime = compile_impeller_runtime_preset("rr_ultrafan_cti_fan_v1_1")
     defaults = runtime["resolved_blade_to_blade_loop_family_defaults"]
 
-    assert runtime["geometry_patch_version"] == "1.1.1"
+    assert runtime["geometry_patch_version"] == "1.1.2"
+    assert runtime["math_parameterization"] == "v1_1_2_canonical_nurbs_parameterization"
+    assert "canonical_nurbs_parameterization" in runtime
     assert defaults["side_sample_count"] >= 81
     assert defaults["surface_span_sample_count"] >= 13
     assert defaults["edge_cap_sample_count"] >= 33
