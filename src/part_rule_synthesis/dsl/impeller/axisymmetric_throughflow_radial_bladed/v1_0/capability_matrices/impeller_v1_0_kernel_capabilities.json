@@ -1,0 +1,42 @@
+{
+  "matrix_id": "impeller_v1_0_kernel_capabilities",
+  "version": "1.0",
+  "status_values": ["supported", "partial", "research_grade", "unsupported"],
+  "capabilities": [
+    {
+      "id": "surface_graph_generation",
+      "status": "supported",
+      "claim": "Generates named surface_graph surfaces with stable ids and role metadata for open and closed radial reference impellers."
+    },
+    {
+      "id": "native_blade_face_network",
+      "status": "supported",
+      "claim": "V1.0 models pressure, suction, leading-edge, trailing-edge, tip, and root faces as native blade topology faces."
+    },
+    {
+      "id": "native_hub_bore_bevel_faces",
+      "status": "supported",
+      "claim": "Hub outer shell, top/bottom faces, mounting bore, and bevel faces are generated as named axisymmetric topology faces."
+    },
+    {
+      "id": "topology_first_shared_edge_quad_patch_mesh",
+      "status": "partial",
+      "claim": "V1.0 declares shared-edge quad patch mesh output for review-grade inspection of native topology faces."
+    },
+    {
+      "id": "bounded_review_brep_step",
+      "status": "research_grade",
+      "claim": "STEP export writes bounded unsewn review faces from surface_graph samples; it is not an industrial exact sewn B-Rep solid."
+    },
+    {
+      "id": "solver_ready_cfd",
+      "status": "unsupported",
+      "claim": "V1.0 does not produce solver-ready CFD volume meshes."
+    },
+    {
+      "id": "automatic_expert_rule_patching",
+      "status": "unsupported",
+      "claim": "Expert feedback can be linked to surfaces, rules, and cases, but is not automatically converted into constructor rule patches."
+    }
+  ]
+}

@@ -82,7 +82,7 @@ def test_write_bounded_brep_step_exports_annular_plane_without_unbounded_marker(
     assert manifest["source"] == "surface_graph"
     assert manifest["view"] == "cad_review_360"
     assert manifest["solid_name"] == "impeller"
-    assert manifest["export_exactness"] == BOUNDED_STEP_EXACTNESS
+    assert manifest["export_exactness"] == DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS
     assert manifest["target_exactness"] == BOUNDED_STEP_EXACTNESS
     assert manifest["bounded_face_count"] == 1
     assert manifest["sewing_status"] == "not_attempted"
@@ -95,6 +95,58 @@ def test_write_bounded_brep_step_exports_annular_plane_without_unbounded_marker(
     assert "ADVANCED_FACE" in text
     assert "PLANE" in text
     assert "TRIANGULATED_FACE_SET" not in text
+
+
+def test_write_bounded_brep_step_exports_complete_mixed_surface_graph(tmp_path: Path):
+    step_path = tmp_path / "complete_surface_graph.step"
+    surface_graph = {
+        "surfaces": [
+            _annular_surface(),
+            _cylindrical_surface(),
+            _freeform_surface(),
+        ],
+        "edges": [],
+    }
+
+    manifest = write_bounded_brep_step(step_path, "impeller", surface_graph)
+    text = step_path.read_text(encoding="utf-8", errors="ignore")
+
+    assert manifest["export_exactness"] == DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS
+    assert manifest["target_exactness"] == BOUNDED_STEP_EXACTNESS
+    assert manifest["coverage_status"] == "complete_surface_graph_cad_surfaces"
+    assert manifest["cad_export_scope"] == "all_surface_graph_cad_surfaces"
+    assert manifest["unsupported_surface_policy"] == "fail_export"
+    assert manifest["total_surface_count"] == 3
+    assert manifest["bounded_face_count"] == 3
+    assert manifest["reimport_face_count"] == 3
+    assert manifest["supported_surface_count"] == 3
+    assert manifest["unsupported_surface_count"] == 0
+    assert manifest["included_surface_ids"] == [
+        "inner_hub_bottom_face",
+        "mounting_bore_cylinder",
+        "blade_0_pressure_surface",
+    ]
+    assert manifest["excluded_surface_ids"] == []
+    assert manifest["surface_kind_counts"] == {
+        "annular_plane_surface": 1,
+        "cylindrical_surface": 1,
+        "nurbs_surface": 1,
+    }
+    assert manifest["cad_surface_type_counts"] == {
+        "annular_plane": 1,
+        "cylinder": 1,
+        "bspline_surface": 1,
+    }
+    assert [region["face_index"] for region in manifest["face_regions"]] == [0, 1, 2]
+    assert manifest["face_regions"][2]["fit_max_error_mm"] <= 1.0
+    assert manifest["face_regions"][2]["fit_rms_error_mm"] <= 0.25
+    assert {"name": "complete_surface_coverage", "status": "PASS"} in manifest["validation_checks"]
+    assert {"name": "reimport_face_count_matches_manifest", "status": "PASS"} in manifest["validation_checks"]
+    assert "ADVANCED_FACE" in text
+    assert "B_SPLINE_SURFACE" in text
+    assert "CYLINDRICAL_SURFACE" in text
+    assert "TRIANGULATED_FACE_SET" not in text
+    assert bounded_step_contains_no_unbounded_plane_marker(step_path) is True
 
 
 def test_write_bounded_brep_step_reimported_bounds_stay_near_outer_radius(tmp_path: Path):
@@ -145,14 +197,54 @@ def test_bounded_step_marker_check_rejects_huge_plane_marker_forms(tmp_path: Pat
     assert bounded_step_contains_no_unbounded_plane_marker(step_path) is False
 
 
-def test_write_bounded_brep_step_rejects_unsupported_surface_kind(tmp_path: Path):
-    surface = _annular_surface(kind="nurbs_revolve_surface")
+def test_write_bounded_brep_step_rejects_freeform_surface_without_uv_grid(tmp_path: Path):
+    surface = _freeform_surface()
+    del surface["uv_grid"]
 
     with pytest.raises(
         ValueError,
-        match="unsupported bounded brep surface kind: nurbs_revolve_surface",
+        match="blade_0_pressure_surface missing rectangular uv_grid",
     ):
         write_bounded_brep_step(tmp_path / "unsupported.step", "impeller", _surface_graph(surface))
+
+
+def test_bspline_grid_guard_rejects_collapsed_rows_before_occt():
+    from part_rule_synthesis.impeller_bounded_brep_export import validate_bspline_grid_for_occt
+
+    collapsed_grid = [
+        [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]],
+        [[2.0, 2.0, 3.0], [2.0, 3.0, 3.0], [2.0, 4.0, 3.0]],
+        [[3.0, 2.0, 3.0], [3.0, 3.0, 3.0], [3.0, 4.0, 3.0]],
+    ]
+
+    with pytest.raises(ValueError, match="collapsed row"):
+        validate_bspline_grid_for_occt(collapsed_grid, "collapsed_corner")
+
+
+def test_bspline_grid_guard_rejects_collapsed_columns_before_occt():
+    from part_rule_synthesis.impeller_bounded_brep_export import validate_bspline_grid_for_occt
+
+    collapsed_grid = [
+        [[1.0, 2.0, 3.0], [2.0, 2.0, 3.0], [3.0, 2.0, 3.0]],
+        [[1.0, 2.0, 3.0], [2.0, 3.0, 3.0], [3.0, 4.0, 3.0]],
+        [[1.0, 2.0, 3.0], [2.0, 4.0, 3.0], [3.0, 6.0, 3.0]],
+    ]
+
+    with pytest.raises(ValueError, match="collapsed column"):
+        validate_bspline_grid_for_occt(collapsed_grid, "collapsed_corner")
+
+
+def test_bspline_grid_guard_rejects_rank_deficient_line_grid_before_occt():
+    from part_rule_synthesis.impeller_bounded_brep_export import validate_bspline_grid_for_occt
+
+    line_grid = [
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+        [[2.0, 0.0, 0.0], [3.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+    ]
+
+    with pytest.raises(ValueError, match="rank-deficient"):
+        validate_bspline_grid_for_occt(line_grid, "line_grid")
 
 
 def test_write_bounded_brep_step_rejects_empty_surface_graph(tmp_path: Path):
@@ -209,6 +301,25 @@ def test_write_bounded_brep_step_marks_large_reimport_bbox_diagnostic(tmp_path: 
     assert {"name": "finite_reimport_bbox", "status": "FAIL"} in manifest["validation_checks"]
 
 
+def test_write_bounded_brep_step_rejects_transition_resolved_validation_failures(
+    tmp_path: Path,
+    monkeypatch,
+):
+    large_bbox = _bbox(x_span_mm=FINITE_REIMPORT_BBOX_MAX_SPAN_MM, y_span_mm=100.0, z_span_mm=0.0)
+    surface_graph = {
+        **_surface_graph(_annular_surface()),
+        "transition_geometry_status": "resolved_trimmed_surface_graph",
+    }
+
+    monkeypatch.setattr(
+        "part_rule_synthesis.impeller_bounded_brep_export.reimport_step_bbox",
+        lambda _path: large_bbox,
+    )
+
+    with pytest.raises(RuntimeError, match="finite_reimport_bbox"):
+        write_bounded_brep_step(tmp_path / "transition_large.step", "impeller", surface_graph)
+
+
 def _annular_surface(**overrides):
     surface = {
         "id": "inner_hub_bottom_face",
@@ -218,6 +329,50 @@ def _annular_surface(**overrides):
         "inner_radius_mm": 20.0,
         "outer_radius_mm": 50.0,
         "z_mm": 3.0,
+    }
+    surface.update(overrides)
+    return surface
+
+
+def _cylindrical_surface(**overrides):
+    surface = {
+        "id": "mounting_bore_cylinder",
+        "kind": "cylindrical_surface",
+        "feature_id": "hub",
+        "role": "mounting_bore",
+        "radius_mm": 12.0,
+        "z_min_mm": 0.0,
+        "z_max_mm": 30.0,
+        "cad_surface": {
+            "surface_type": "cylinder",
+            "radius_mm": 12.0,
+            "z_min_mm": 0.0,
+            "z_max_mm": 30.0,
+        },
+    }
+    surface.update(overrides)
+    return surface
+
+
+def _freeform_surface(**overrides):
+    uv_grid = []
+    for u_index in range(4):
+        row = []
+        for v_index in range(4):
+            x = 20.0 + u_index * 8.0
+            y = -12.0 + v_index * 8.0
+            z = 2.0 + 0.1 * u_index * v_index
+            row.append([x, y, z])
+        uv_grid.append(row)
+    surface = {
+        "id": "blade_0_pressure_surface",
+        "kind": "nurbs_surface",
+        "feature_id": "blade_0",
+        "role": "blade_pressure",
+        "uv_grid": uv_grid,
+        "cad_surface": {
+            "surface_type": "bspline_surface",
+        },
     }
     surface.update(overrides)
     return surface

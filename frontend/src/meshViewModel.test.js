@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { meshQualitySummary, meshViewModes } from "./meshViewModel.js";
+import { meshInspectionSummary, meshQualitySummary, meshViewModes } from "./meshViewModel.js";
 
 describe("mesh view model", () => {
   test("meshViewModes includes surface mesh inspection", () => {
@@ -22,5 +22,39 @@ describe("mesh view model", () => {
       maxArea: 4,
       maxAspectRatio: 8.5,
     });
+  });
+
+  test("meshInspectionSummary surfaces mesh type and transition coverage", () => {
+    const summary = meshInspectionSummary({
+      mesh_type: "transition_aware_surface_mesh",
+      triangle_count: 120,
+      degenerate_triangle_count: 1,
+      quality_metrics: { max_aspect_ratio: 8.5 },
+      transition_regions: [
+        { surface_graph_id: "root", triangle_count: 24 },
+        { surface_graph_id: "tip", triangle_count: 16 },
+      ],
+    });
+
+    assert.deepEqual(summary, {
+      meshType: "transition_aware_surface_mesh",
+      triangleCount: 120,
+      degenerateTriangleCount: 1,
+      minArea: 0,
+      maxArea: 0,
+      maxAspectRatio: 8.5,
+      transitionRegionCount: 2,
+      transitionTriangleCount: 40,
+      hasTransitionRegions: true,
+    });
+  });
+
+  test("meshInspectionSummary makes absent transition regions explicit", () => {
+    const summary = meshInspectionSummary({ mesh_type: "surface_triangles", triangle_count: 12 });
+
+    assert.equal(summary.meshType, "surface_triangles");
+    assert.equal(summary.transitionRegionCount, 0);
+    assert.equal(summary.transitionTriangleCount, 0);
+    assert.equal(summary.hasTransitionRegions, false);
   });
 });

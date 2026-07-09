@@ -10,6 +10,16 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 ONTOLOGY_BASE = PACKAGE_ROOT / "ontology" / "impeller"
 DSL_BASE = PACKAGE_ROOT / "dsl" / "impeller" / "axisymmetric_throughflow_radial_bladed"
 DEFAULT_DSL_VERSION = "v0_2"
+DESIGN_SPACE_DSL_VERSIONS = {"0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "0.91", "1.0"}
+EDGE_FAMILY_DSL_VERSIONS = {"0.7", "0.8", "0.9", "0.91", "1.0"}
+RESEARCH_REGISTRY_IDS_BY_DSL_VERSION: dict[str, list[tuple[str, str]]] = {
+    "0.9": [("impeller_v0_9_kernel_capabilities", "impeller_v0_9_golden_cases")],
+    "0.91": [("impeller_v0_91_kernel_capabilities", "impeller_v0_91_golden_cases")],
+    "1.0": [
+        ("impeller_v1_0_kernel_capabilities", "impeller_v1_0_golden_cases"),
+        ("impeller_v1_0_3_kernel_capabilities", "impeller_v1_0_3_golden_cases"),
+    ],
+}
 SUPPORTED_V07_DEFAULT_TREATMENTS = {"none", "chamfer", "fillet"}
 V07_TRANSITION_RADIUS_PARAMETERS = {
     "leading_edge_radius_mm",
@@ -38,6 +48,8 @@ class ImpellerDslBundle:
     simulation_view_refs: dict[str, str] = field(default_factory=dict)
     export_contracts: dict[str, dict[str, Any]] = field(default_factory=dict)
     export_contract_refs: dict[str, str] = field(default_factory=dict)
+    capability_matrices: dict[str, dict[str, Any]] = field(default_factory=dict)
+    golden_case_registries: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslBundle:
@@ -60,6 +72,16 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
         _load_export_contracts(dsl_root / "export_contracts")
         if (dsl_root / "export_contracts").exists()
         else ({}, {})
+    )
+    capability_matrices = (
+        _load_json_directory_by_id(dsl_root / "capability_matrices", "matrix_id")
+        if (dsl_root / "capability_matrices").exists()
+        else {}
+    )
+    golden_case_registries = (
+        _load_json_directory_by_id(dsl_root / "golden_cases", "registry_id")
+        if (dsl_root / "golden_cases").exists()
+        else {}
     )
     shape_controls = _read_json(dsl_root / "shape_controls" / "default_shape_controls.json")
     if "policies" not in shape_controls:
@@ -93,6 +115,8 @@ def load_impeller_dsl_bundle(version: str = DEFAULT_DSL_VERSION) -> ImpellerDslB
         simulation_view_refs=simulation_view_refs,
         export_contracts=export_contracts,
         export_contract_refs=export_contract_refs,
+        capability_matrices=capability_matrices,
+        golden_case_registries=golden_case_registries,
     )
     _validate_bundle(bundle)
     return bundle
@@ -168,7 +192,8 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
         raise ValueError("impeller DSL schema constructor family mismatch")
     if bundle.schema["dsl_version"] in {"0.2", "0.3"} and bundle.shape_control_schema["default_stage"] != 1:
         raise ValueError("impeller v0.2/v0.3 shape control must default to stage 1")
-    if bundle.schema["dsl_version"] in {"0.4", "0.5", "0.6", "0.7"} and "design_space" not in bundle.shape_controls:
+    dsl_version = str(bundle.schema["dsl_version"])
+    if dsl_version in DESIGN_SPACE_DSL_VERSIONS and "design_space" not in bundle.shape_controls:
         raise ValueError("impeller v0.4+ shape controls must include design_space")
     if "hub_meridional_profile" not in bundle.shape_controls["target_entities"]:
         raise ValueError("default shape controls must include hub_meridional_profile")
@@ -189,8 +214,28 @@ def _validate_bundle(bundle: ImpellerDslBundle) -> None:
             raise ValueError(f"preset id mismatch: {preset_id}")
         if preset["constructor_id"] not in bundle.constructors:
             raise ValueError(f"preset {preset_id} references unknown constructor")
-    if bundle.schema["dsl_version"] == "0.7":
+    if dsl_version in EDGE_FAMILY_DSL_VERSIONS:
         _validate_v07_edge_family_contracts(bundle)
+    if dsl_version in RESEARCH_REGISTRY_IDS_BY_DSL_VERSION:
+        _validate_research_registries(bundle, dsl_version)
+
+
+def _validate_research_registries(bundle: ImpellerDslBundle, dsl_version: str) -> None:
+    allowed_status = {"supported", "partial", "research_grade", "unsupported"}
+    for matrix_id, registry_id in RESEARCH_REGISTRY_IDS_BY_DSL_VERSION[dsl_version]:
+        if matrix_id not in bundle.capability_matrices:
+            raise ValueError(f"impeller v{dsl_version} missing kernel capability matrix {matrix_id}")
+        if registry_id not in bundle.golden_case_registries:
+            raise ValueError(f"impeller v{dsl_version} missing golden case registry {registry_id}")
+        matrix = bundle.capability_matrices[matrix_id]
+        for entry in matrix.get("capabilities", []):
+            if entry.get("status") not in allowed_status:
+                raise ValueError(f"impeller v{dsl_version} capability has invalid status: {entry!r}")
+        registry = bundle.golden_case_registries[registry_id]
+        if not (6 <= len(registry.get("cases", [])) <= 10):
+            raise ValueError(
+                f"impeller v{dsl_version} golden case registry {registry_id} must contain 6-10 cases"
+            )
 
 
 def _validate_v07_edge_family_contracts(bundle: ImpellerDslBundle) -> None:

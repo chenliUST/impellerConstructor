@@ -1,24 +1,29 @@
 from __future__ import annotations
 
+import copy
 import math
 from typing import Any
 
 from part_rule_synthesis.impeller_surface_graph_export import triangulate_surface_graph
+from part_rule_synthesis.impeller_v11_constants import MESH_STRATEGY as V11_ALL_SURFACE_MESH_STRATEGY
 
 
 def build_surface_mesh_manifest(
     surface_graph: dict[str, Any],
     view_id: str = "cfd_full_360",
 ) -> dict[str, Any]:
-    triangulation = triangulate_surface_graph(surface_graph, view_id=view_id)
+    triangulation = _mesh_for_surface_graph(surface_graph, view_id)
     triangles = triangulation["triangles"]
     areas = [_triangle_area(triangle["points"]) for triangle in triangles]
     aspect_ratios = [_triangle_aspect_ratio(triangle["points"]) for triangle in triangles]
+    transition_regions = triangulation.get("transition_regions")
+    if transition_regions is None:
+        transition_regions = build_transition_regions(surface_graph, triangulation["triangle_regions"])
 
     return {
-        "source": "surface_graph",
+        "source": triangulation.get("source", "surface_graph"),
         "view": view_id,
-        "mesh_type": "surface_triangles",
+        "mesh_type": triangulation.get("mesh_type", "surface_triangles"),
         "triangle_count": triangulation["triangle_count"],
         "degenerate_triangle_count": triangulation["skipped_triangle_count"],
         "quality_metrics": {
@@ -36,8 +41,40 @@ def build_surface_mesh_manifest(
             }
             for region in triangulation["triangle_regions"]
         ],
-        "transition_regions": build_transition_regions(surface_graph, triangulation["triangle_regions"]),
+        "transition_regions": transition_regions,
     }
+
+
+def _mesh_for_surface_graph(surface_graph: dict[str, Any], view_id: str) -> dict[str, Any]:
+    if surface_graph.get("transition_geometry_status") == "resolved_trimmed_surface_graph":
+        from part_rule_synthesis.impeller_transition_mesh import build_transition_aware_mesh
+
+        return build_transition_aware_mesh(surface_graph, view_id=view_id)
+    if surface_graph.get("mesh_strategy") == V11_ALL_SURFACE_MESH_STRATEGY:
+        return triangulate_surface_graph(_v11_all_surface_mesh_graph(surface_graph), view_id="cad_review_360")
+    return triangulate_surface_graph(surface_graph, view_id=view_id)
+
+
+def _v11_all_surface_mesh_graph(surface_graph: dict[str, Any]) -> dict[str, Any]:
+    graph = copy.deepcopy(surface_graph)
+    graph["surfaces"] = [
+        surface
+        for surface in graph.get("surfaces", [])
+        if isinstance(surface, dict) and _is_v11_manifest_mesh_surface(surface)
+    ]
+    return graph
+
+
+def _is_v11_manifest_mesh_surface(surface: dict[str, Any]) -> bool:
+    display = surface.get("display", {})
+    surface_flags = surface.get("surface_flags", {})
+    if surface.get("role") == "open_tip_reference":
+        return False
+    if surface.get("reference_only") or display.get("reference_only") or surface_flags.get("reference_only"):
+        return False
+    if display.get("visible_by_default") is False:
+        return False
+    return True
 
 
 def build_transition_regions(

@@ -1,0 +1,23 @@
+{
+  "dsl_version": "1.1",
+  "supersedes": "../v1_0/schema.json",
+  "slice_id": "axisymmetric_throughflow_radial_bladed_impeller_v1_1",
+  "constructor_family": "AxisymmetricThroughflowRadialBladedImpeller",
+  "patch_naming_policy": "group_and_instance",
+  "description": "V1.1 topology-first impeller rules using blade-to-blade loop surface-family construction.",
+  "required_sections": [
+    "classification",
+    "coordinate_system",
+    "design_space",
+    "main_dimensions",
+    "primary_flow_path",
+    "support_surfaces",
+    "blade_surface_model",
+    "surface_graph_contract",
+    "feature_graph_contract",
+    "simulation_views",
+    "export_contracts",
+    "display_policy",
+    "validation"
+  ]
+}

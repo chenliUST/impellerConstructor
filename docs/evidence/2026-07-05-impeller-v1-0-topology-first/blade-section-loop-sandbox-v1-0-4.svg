@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="760" viewBox="0 0 1320 760">
+  <defs>
+    <style>
+      .page { fill: #f8fafc; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 8; }
+      .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 14px Arial, sans-serif; fill: #475569; }
+      .label { font: 700 15px Arial, sans-serif; fill: #111827; }
+      .small { font: 12px Arial, sans-serif; fill: #475569; }
+      .axis { stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 6 6; }
+      .curve { fill: none; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+      .pressure { stroke: #ef4444; }
+      .suction { stroke: #2563eb; }
+      .leading { stroke: #22c55e; }
+      .trailing { stroke: #f59e0b; }
+      .poly { fill: none; stroke: #334155; stroke-width: 1.5; stroke-dasharray: 6 5; vector-effect: non-scaling-stroke; }
+      .pt { fill: #ffffff; stroke: #111827; stroke-width: 2; vector-effect: non-scaling-stroke; }
+      .pt-main { r: 4.5; }
+      .pt-splitter { r: 4; }
+      .legend-text { font: 13px Arial, sans-serif; fill: #111827; }
+      .note { font: 13px Arial, sans-serif; fill: #334155; }
+      .table-head { font: 700 13px Arial, sans-serif; fill: #111827; }
+      .table-cell { font: 12px Consolas, monospace; fill: #334155; }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1320" height="760"/>
+
+  <text class="title" x="36" y="42">V1.0.4 blade section loop sandbox - main blade and splitter blade</text>
+  <text class="subtitle" x="36" y="68">Local chord-thickness coordinates, mm. Main blade target thickness: 40-50 mm; splitter target thickness: about 32 mm.</text>
+
+  <g id="legend" transform="translate(36 98)">
+    <line class="curve pressure" x1="0" y1="0" x2="42" y2="0"/>
+    <text class="legend-text" x="52" y="5">pressure side</text>
+    <line class="curve suction" x1="178" y1="0" x2="220" y2="0"/>
+    <text class="legend-text" x="230" y="5">suction side</text>
+    <line class="curve leading" x1="355" y1="0" x2="397" y2="0"/>
+    <text class="legend-text" x="407" y="5">leading edge</text>
+    <line class="curve trailing" x1="540" y1="0" x2="582" y2="0"/>
+    <text class="legend-text" x="592" y="5">trailing edge</text>
+    <line class="poly" x1="720" y1="0" x2="762" y2="0"/>
+    <circle class="pt" cx="741" cy="0" r="4"/>
+    <text class="legend-text" x="775" y="5">control polygon / control points</text>
+  </g>
+
+  <rect class="panel" x="34" y="128" width="780" height="280"/>
+  <text class="label" x="56" y="158">Main blade section loop</text>
+  <text class="small" x="56" y="180">Chord approx. 220 mm. Max local thickness approx. 48 mm.</text>
+  <line class="axis" x1="76" y1="282" x2="758" y2="282"/>
+  <line class="axis" x1="180" y1="150" x2="180" y2="388"/>
+  <text class="small" x="706" y="300">+chord</text>
+  <text class="small" x="186" y="152">+thickness</text>
+
+  <g id="main-loop" transform="translate(180 282) scale(2.45 -2.45)">
+    <path class="curve pressure" d="M 220 -14 C 155 -24, 55 -23, 0 -20"/>
+    <path class="curve leading" d="M 0 -20 C -22 -17, -26 17, 0 20"/>
+    <path class="curve suction" d="M 0 20 C 55 25, 160 24, 220 14"/>
+    <path class="curve trailing" d="M 220 14 C 250 10, 250 -10, 220 -14"/>
+
+    <polyline class="poly" points="220,-14 155,-24 55,-23 0,-20"/>
+    <polyline class="poly" points="0,-20 -22,-17 -26,17 0,20"/>
+    <polyline class="poly" points="0,20 55,25 160,24 220,14"/>
+    <polyline class="poly" points="220,14 250,10 250,-10 220,-14"/>
+
+    <circle class="pt pt-main" cx="220" cy="-14"/>
+    <circle class="pt pt-main" cx="155" cy="-24"/>
+    <circle class="pt pt-main" cx="55" cy="-23"/>
+    <circle class="pt pt-main" cx="0" cy="-20"/>
+    <circle class="pt pt-main" cx="-22" cy="-17"/>
+    <circle class="pt pt-main" cx="-26" cy="17"/>
+    <circle class="pt pt-main" cx="0" cy="20"/>
+    <circle class="pt pt-main" cx="55" cy="25"/>
+    <circle class="pt pt-main" cx="160" cy="24"/>
+    <circle class="pt pt-main" cx="220" cy="14"/>
+    <circle class="pt pt-main" cx="250" cy="10"/>
+    <circle class="pt pt-main" cx="250" cy="-10"/>
+  </g>
+
+  <rect class="panel" x="34" y="438" width="780" height="250"/>
+  <text class="label" x="56" y="468">Splitter blade section loop</text>
+  <text class="small" x="56" y="490">Chord approx. 132 mm, about 60% of main blade. Max local thickness approx. 36 mm.</text>
+  <line class="axis" x1="76" y1="585" x2="758" y2="585"/>
+  <line class="axis" x1="180" y1="470" x2="180" y2="670"/>
+  <text class="small" x="706" y="604">+chord</text>
+  <text class="small" x="186" y="472">+thickness</text>
+
+  <g id="splitter-loop" transform="translate(180 585) scale(3.45 -3.45)">
+    <path class="curve pressure" d="M 132 -10 C 95 -17, 35 -18, 0 -16"/>
+    <path class="curve leading" d="M 0 -16 C -16 -13, -19 13, 0 16"/>
+    <path class="curve suction" d="M 0 16 C 35 19, 95 18, 132 10"/>
+    <path class="curve trailing" d="M 132 10 C 153 8, 153 -8, 132 -10"/>
+
+    <polyline class="poly" points="132,-10 95,-17 35,-18 0,-16"/>
+    <polyline class="poly" points="0,-16 -16,-13 -19,13 0,16"/>
+    <polyline class="poly" points="0,16 35,19 95,18 132,10"/>
+    <polyline class="poly" points="132,10 153,8 153,-8 132,-10"/>
+
+    <circle class="pt pt-splitter" cx="132" cy="-10"/>
+    <circle class="pt pt-splitter" cx="95" cy="-17"/>
+    <circle class="pt pt-splitter" cx="35" cy="-18"/>
+    <circle class="pt pt-splitter" cx="0" cy="-16"/>
+    <circle class="pt pt-splitter" cx="-16" cy="-13"/>
+    <circle class="pt pt-splitter" cx="-19" cy="13"/>
+    <circle class="pt pt-splitter" cx="0" cy="16"/>
+    <circle class="pt pt-splitter" cx="35" cy="19"/>
+    <circle class="pt pt-splitter" cx="95" cy="18"/>
+    <circle class="pt pt-splitter" cx="132" cy="10"/>
+    <circle class="pt pt-splitter" cx="153" cy="8"/>
+    <circle class="pt pt-splitter" cx="153" cy="-8"/>
+  </g>
+
+  <rect class="panel" x="846" y="128" width="438" height="560"/>
+  <text class="label" x="870" y="158">Proposed loop construction</text>
+  <text class="note" x="870" y="188">Preset-level blade count:</text>
+  <text class="table-cell" x="890" y="213">main_blade_count = 6</text>
+  <text class="table-cell" x="890" y="233">splitter_blade_count = 6</text>
+  <text class="table-cell" x="890" y="253">average_blade_thickness_mm = 40</text>
+
+  <text class="note" x="870" y="292">Main blade cubic Bezier segments:</text>
+  <text class="table-head" x="890" y="320">pressure</text>
+  <text class="table-cell" x="970" y="320">[220,-14] [155,-24] [55,-23] [0,-20]</text>
+  <text class="table-head" x="890" y="344">leading</text>
+  <text class="table-cell" x="970" y="344">[0,-20] [-22,-17] [-26,17] [0,20]</text>
+  <text class="table-head" x="890" y="368">suction</text>
+  <text class="table-cell" x="970" y="368">[0,20] [55,25] [160,24] [220,14]</text>
+  <text class="table-head" x="890" y="392">trailing</text>
+  <text class="table-cell" x="970" y="392">[220,14] [250,10] [250,-10] [220,-14]</text>
+
+  <text class="note" x="870" y="438">Splitter cubic Bezier segments:</text>
+  <text class="table-head" x="890" y="466">pressure</text>
+  <text class="table-cell" x="970" y="466">[132,-10] [95,-17] [35,-18] [0,-16]</text>
+  <text class="table-head" x="890" y="490">leading</text>
+  <text class="table-cell" x="970" y="490">[0,-16] [-16,-13] [-19,13] [0,16]</text>
+  <text class="table-head" x="890" y="514">suction</text>
+  <text class="table-cell" x="970" y="514">[0,16] [35,19] [95,18] [132,10]</text>
+  <text class="table-head" x="890" y="538">trailing</text>
+  <text class="table-cell" x="970" y="538">[132,10] [153,8] [153,-8] [132,-10]</text>
+
+  <text class="note" x="870" y="584">Interpretation:</text>
+  <text class="small" x="890" y="610">The four colored curves form one closed section loop.</text>
+  <text class="small" x="890" y="632">Pressure and suction are flatter; leading/trailing caps</text>
+  <text class="small" x="890" y="654">are rounded and intentionally more curved.</text>
+</svg>

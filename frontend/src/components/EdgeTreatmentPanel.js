@@ -1,17 +1,35 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import { edgeTreatmentRows, effectiveTransitionRow, updateTransitionRow } from "../edgeTreatmentModel.js";
+import {
+  edgeTreatmentRows,
+  effectiveTransitionRow,
+  transitionRuntimeSummary,
+  updateTransitionRow,
+} from "../edgeTreatmentModel.js?v=1.1.5";
 
 const h = React.createElement;
 const treatments = ["none", "chamfer", "fillet"];
 
 export function EdgeTreatmentPanel({ manifest, overrides = {}, onChange }) {
   const rows = useMemo(() => edgeTreatmentRows(manifest), [manifest]);
+  const runtime = useMemo(() => transitionRuntimeSummary(manifest), [manifest]);
 
   return h(
     "section",
     { className: "panel-section edge-treatment-panel" },
     h("div", { className: "section-title" }, "Edge treatments"),
+    runtime.available
+      ? h("dl", { className: "transition-runtime-grid" }, [
+          h("dt", { key: "status-label" }, "Status"),
+          h("dd", { key: "status-value" }, runtime.status || "unknown"),
+          h("dt", { key: "surfaces-label" }, "Surfaces"),
+          h("dd", { key: "surfaces-value" }, String(runtime.surfaceCount)),
+          h("dt", { key: "unsupported-label" }, "Unsupported"),
+          h("dd", { key: "unsupported-value" }, String(runtime.unsupportedCount)),
+          h("dt", { key: "failures-label" }, "Failures"),
+          h("dd", { key: "failures-value" }, String(runtime.failureCount)),
+        ])
+      : null,
     rows.length
       ? h(
           "div",

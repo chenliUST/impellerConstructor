@@ -7,6 +7,7 @@ from typing import Any
 
 SUPPORTED_TREATMENTS = {"none", "chamfer", "fillet"}
 SUPPORTED_OVERRIDE_KEYS = {"enabled", "treatment", "radius_mm"}
+SUPPORTED_CONTINUITIES = {"G0", "G1", "G2"}
 
 
 class TransitionPolicyError(ValueError):
@@ -26,6 +27,7 @@ def resolve_transition_policies(
             raise TransitionPolicyError(f"edge family {edge_family_id} must be an object")
         policy_id = f"{edge_family_id}.default"
         treatment = _validate_treatment(policy_id, edge_family.get("default_treatment"))
+        continuity = _validate_continuity(policy_id, edge_family.get("default_continuity"), treatment)
         radius_parameter = edge_family.get("default_radius_parameter")
         if not isinstance(radius_parameter, str):
             raise TransitionPolicyError(f"edge family {edge_family_id} default_radius_parameter must be a string")
@@ -38,6 +40,7 @@ def resolve_transition_policies(
             policy_id=policy_id,
             edge_family=edge_family_id,
             treatment=treatment,
+            continuity=continuity,
             radius_mm=radius_mm,
             maps_to_parameters=[radius_parameter],
             overrides=[],
@@ -89,6 +92,7 @@ def _policy(
     policy_id: str,
     edge_family: str,
     treatment: str,
+    continuity: str | None,
     radius_mm: float,
     maps_to_parameters: list[str],
     overrides: list[str],
@@ -99,7 +103,8 @@ def _policy(
         "enabled": True,
         "treatment": treatment,
         "radius_mm": radius_mm,
-        "continuity": "G1" if treatment == "fillet" else "G0",
+        "requested_continuity": continuity,
+        "continuity": _continuity_for_treatment(treatment, continuity),
         "applies_to": "all_pattern_instances",
         "maps_to_parameters": maps_to_parameters,
         "overrides": overrides,
@@ -110,7 +115,7 @@ def _policy(
 
 def _apply_treatment(policy: dict[str, Any], enabled_overridden: bool = False) -> None:
     treatment = policy["treatment"]
-    policy["continuity"] = "G1" if treatment == "fillet" else "G0"
+    policy["continuity"] = _continuity_for_treatment(treatment, policy.get("requested_continuity"))
     if treatment == "none":
         policy["enabled"] = False
         policy["radius_mm"] = 0.0
@@ -129,6 +134,26 @@ def _validate_treatment(policy_id: str, treatment: Any) -> str:
     if treatment not in SUPPORTED_TREATMENTS:
         raise TransitionPolicyError(f"unsupported transition treatment for {policy_id}: {treatment}")
     return str(treatment)
+
+
+def _validate_continuity(policy_id: str, continuity: Any, treatment: str) -> str | None:
+    if continuity is None:
+        return None
+    if continuity not in SUPPORTED_CONTINUITIES:
+        raise TransitionPolicyError(f"unsupported transition continuity for {policy_id}: {continuity}")
+    if treatment == "chamfer" and continuity != "G0":
+        raise TransitionPolicyError(f"chamfer transition continuity for {policy_id} must be G0")
+    if treatment == "none" and continuity != "G0":
+        raise TransitionPolicyError(f"disabled transition continuity for {policy_id} must be G0")
+    return str(continuity)
+
+
+def _continuity_for_treatment(treatment: str, requested_continuity: str | None) -> str:
+    if treatment == "none":
+        return "G0"
+    if treatment == "chamfer":
+        return "G0"
+    return requested_continuity or "G1"
 
 
 def _validate_enabled(policy_id: str, enabled: Any) -> bool:

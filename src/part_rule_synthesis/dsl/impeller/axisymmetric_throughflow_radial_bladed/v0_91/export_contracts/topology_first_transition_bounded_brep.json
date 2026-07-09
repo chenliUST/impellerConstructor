@@ -1,0 +1,24 @@
+{
+  "contract_id": "topology_first_transition_bounded_brep",
+  "contract_version": "0.91",
+  "mode": "topology_first_transition_bounded_brep",
+  "default_view": "cad_review_360",
+  "step_exactness": "validated_bounded_unsewn_review_brep_step",
+  "target_step_exactness": "surface_graph_trimmed_brep_step",
+  "bounded_brep_status": "bounded_faces_unsewn",
+  "coverage_status": "complete_topology_first_validated_transition_graph",
+  "cad_export_scope": "all_topology_first_validated_transition_graph_cad_surfaces",
+  "unsupported_surface_policy": "fail_export",
+  "mesh_strategy": "shared_node_transition_patch_mesh",
+  "requires": [
+    "topology_first_validated_transition_graph",
+    "double_sided_root_transition_surfaces",
+    "trim_exclusion_regions",
+    "transition_validation_report",
+    "shared_node_transition_patch_mesh",
+    "bounded_faces",
+    "complete_surface_graph_coverage",
+    "finite_bounding_box",
+    "occt_reimport_check_when_available"
+  ]
+}

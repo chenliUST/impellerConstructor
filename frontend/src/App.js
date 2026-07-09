@@ -1,27 +1,30 @@
 import React, { useMemo, useState } from "react";
 
-import { instantiateImpeller, modelExportUrl, synthesizeImpeller } from "./apiClient.js";
+import { instantiateImpeller, modelExportUrl, synthesizeImpeller } from "./apiClient.js?v=1.1.5";
 import {
   apiDefault,
+  curveControlsForPreset,
+  editorVisibilityForPreset,
   exportFilename,
   exportFileOptions,
   overridesAfterParameterChange,
   presets,
   selectedPreset,
-} from "./appModel.js";
-import { buildTransitionOverridePayload } from "./edgeTreatmentModel.js";
-import { viewModeOptions } from "./simulationViewModel.js";
-import { defaultVisibleLayers } from "./workspaceModel.js";
-import { BladeCurveEditor } from "./components/BladeCurveEditor.js";
-import { CfdManifestPanel } from "./components/CfdManifestPanel.js";
-import { EdgeTreatmentPanel } from "./components/EdgeTreatmentPanel.js";
-import { GenerationStagePanel } from "./components/GenerationStagePanel.js";
-import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js";
-import { ManifestPanel } from "./components/ManifestPanel.js";
-import { ModelViewer } from "./components/ModelViewer.js";
-import { ParameterPanel } from "./components/ParameterPanel.js";
-import { ProfileCurveEditor } from "./components/ProfileCurveEditor.js";
-import { PresetList } from "./components/PresetList.js";
+} from "./appModel.js?v=1.1.5";
+import { buildTransitionOverridePayload } from "./edgeTreatmentModel.js?v=1.1.5";
+import { viewModeOptions } from "./simulationViewModel.js?v=1.1.5";
+import { defaultVisibleLayers } from "./workspaceModel.js?v=1.1.5";
+import { BladeCurveEditor } from "./components/BladeCurveEditor.js?v=1.1.5";
+import { CfdManifestPanel } from "./components/CfdManifestPanel.js?v=1.1.5";
+import { CurveControlPanel } from "./components/CurveControlPanel.js?v=1.1.5";
+import { EdgeTreatmentPanel } from "./components/EdgeTreatmentPanel.js?v=1.1.5";
+import { GenerationStagePanel } from "./components/GenerationStagePanel.js?v=1.1.5";
+import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js?v=1.1.5";
+import { ManifestPanel } from "./components/ManifestPanel.js?v=1.1.5";
+import { ModelViewer } from "./components/ModelViewer.js?v=1.1.5";
+import { ParameterPanel } from "./components/ParameterPanel.js?v=1.1.5";
+import { ProfileCurveEditor } from "./components/ProfileCurveEditor.js?v=1.1.5";
+import { PresetList } from "./components/PresetList.js?v=1.1.5";
 
 const h = React.createElement;
 
@@ -36,11 +39,15 @@ export function App() {
   const [stlUrl, setStlUrl] = useState("");
   const [viewMode, setViewMode] = useState("combined");
   const [simulationViewMode, setSimulationViewMode] = useState("cad_review_360");
+  const [meshOverlayMode, setMeshOverlayMode] = useState("triangle_edges");
   const [selectedPatch, setSelectedPatch] = useState(null);
   const [autoRotate, setAutoRotate] = useState(false);
   const [visibleLayers, setVisibleLayers] = useState(defaultVisibleLayers);
   const [profileOverrides, setProfileOverrides] = useState(() => clonePresetValue(firstPreset.profileOverrides));
   const [curveOverrides, setCurveOverrides] = useState(() => clonePresetValue(firstPreset.curveOverrides));
+  const [curveControlOverrides, setCurveControlOverrides] = useState(null);
+  const [sectionLoopOverrides, setSectionLoopOverrides] = useState(null);
+  const [bladeToBladeLoopFamilyOverrides, setBladeToBladeLoopFamilyOverrides] = useState({});
   const [transitionOverrides, setTransitionOverrides] = useState({});
   const [geometryStage, setGeometryStage] = useState("edge_closures");
   const [loading, setLoading] = useState(false);
@@ -68,6 +75,19 @@ export function App() {
     }));
   }, [activePreset, apiBase, manifest]);
   const simulationModes = viewModeOptions();
+  const editorVisibility = useMemo(() => editorVisibilityForPreset(activePreset), [activePreset]);
+  const activeCurveControls = useMemo(
+    () =>
+      mergePlainObjects(
+        mergePlainObjects(curveControlsForPreset(activePreset), curveControlOverrides),
+        bladeToBladeLoopFamilyOverrides,
+      ),
+    [activePreset, bladeToBladeLoopFamilyOverrides, curveControlOverrides],
+  );
+  const instantiateCurveOverrides = useMemo(
+    () => mergePlainObjects(curveOverrides, curveControlOverrides),
+    [curveOverrides, curveControlOverrides],
+  );
 
   async function generateModel() {
     setLoading(true);
@@ -83,9 +103,11 @@ export function App() {
         currentEngineId,
         parameters,
         profileOverrides,
-        curveOverrides,
+        instantiateCurveOverrides,
         geometryStage,
         buildTransitionOverridePayload(transitionOverrides),
+        sectionLoopOverrides,
+        bladeToBladeLoopFamilyOverrides,
       );
       setManifest(run.manifest);
       setStlUrl(modelExportUrl(apiBase, run.run_id, "stl"));
@@ -107,6 +129,9 @@ export function App() {
     setSelectedPatch(null);
     setProfileOverrides(clonePresetValue(preset.profileOverrides));
     setCurveOverrides(clonePresetValue(preset.curveOverrides));
+    setCurveControlOverrides(null);
+    setSectionLoopOverrides(null);
+    setBladeToBladeLoopFamilyOverrides({});
     setTransitionOverrides({});
     setGeometryStage("edge_closures");
   }
@@ -119,6 +144,9 @@ export function App() {
     }
     if (nextOverrides.curveOverrides !== curveOverrides) {
       setCurveOverrides(nextOverrides.curveOverrides);
+      setCurveControlOverrides(null);
+      setSectionLoopOverrides(null);
+      setBladeToBladeLoopFamilyOverrides({});
     }
   }
 
@@ -130,6 +158,14 @@ export function App() {
 
   function updateLayer(layerId, visible) {
     setVisibleLayers((current) => ({ ...current, [layerId]: visible }));
+  }
+
+  function handleCurveControlChange(payload) {
+    setCurveControlOverrides((current) => mergePlainObjects(current, payload?.curve_overrides || {}));
+    setSectionLoopOverrides((current) => mergePlainObjects(current, payload?.section_loop_overrides || {}));
+    setBladeToBladeLoopFamilyOverrides((current) =>
+      mergePlainObjects(current, payload?.blade_to_blade_loop_family_overrides || {}),
+    );
   }
 
   return h(
@@ -157,6 +193,7 @@ export function App() {
         onSelect: choosePreset,
       }),
       h(ParameterPanel, {
+        activePreset,
         parameters,
         onChange: updateParameter,
         onGenerate: generateModel,
@@ -165,6 +202,9 @@ export function App() {
           setFacets({ ...activePreset.facets });
           setProfileOverrides(clonePresetValue(activePreset.profileOverrides));
           setCurveOverrides(clonePresetValue(activePreset.curveOverrides));
+          setCurveControlOverrides(null);
+          setSectionLoopOverrides(null);
+          setBladeToBladeLoopFamilyOverrides({});
           setTransitionOverrides({});
           setGeometryStage("edge_closures");
         },
@@ -174,23 +214,35 @@ export function App() {
         geometryStage,
         onChange: setGeometryStage,
       }),
-      h(EdgeTreatmentPanel, {
-        manifest,
-        overrides: transitionOverrides,
-        onChange: setTransitionOverrides,
-      }),
-      h(ProfileCurveEditor, {
-        manifest,
-        profileOverrides,
-        onProfileOverridesChange: setProfileOverrides,
-        onResetProfileOverrides: () => setProfileOverrides(null),
-      }),
-      h(BladeCurveEditor, {
-        parameters,
-        curveOverrides,
-        onCurveOverridesChange: setCurveOverrides,
-        onResetCurveOverrides: () => setCurveOverrides(null),
-      }),
+      editorVisibility.edgeTreatmentPanel
+        ? h(EdgeTreatmentPanel, {
+            manifest,
+            overrides: transitionOverrides,
+            onChange: setTransitionOverrides,
+          })
+        : null,
+      editorVisibility.profileCurveEditor
+        ? h(ProfileCurveEditor, {
+            manifest,
+            profileOverrides,
+            onProfileOverridesChange: setProfileOverrides,
+            onResetProfileOverrides: () => setProfileOverrides(null),
+          })
+        : null,
+      editorVisibility.bladeCurveEditor
+        ? h(BladeCurveEditor, {
+            parameters,
+            curveOverrides,
+            onCurveOverridesChange: setCurveOverrides,
+            onResetCurveOverrides: () => setCurveOverrides(null),
+          })
+        : null,
+      editorVisibility.curveControlPanel
+        ? h(CurveControlPanel, {
+            curves: activeCurveControls,
+            onChange: handleCurveControlChange,
+          })
+        : null,
       h(GeometryLayerPanel, {
         manifest,
         visibleLayers,
@@ -250,6 +302,8 @@ export function App() {
         viewMode,
         setViewMode,
         simulationViewMode,
+        meshOverlayMode,
+        setMeshOverlayMode,
         selectedPatch,
         manifest,
         autoRotate,
@@ -271,4 +325,29 @@ export function App() {
 
 function clonePresetValue(value) {
   return value ? JSON.parse(JSON.stringify(value)) : null;
+}
+
+function mergePlainObjects(left, right) {
+  if (!left && !right) {
+    return null;
+  }
+  if (!left) {
+    return clonePresetValue(right);
+  }
+  if (!right) {
+    return clonePresetValue(left);
+  }
+  const merged = clonePresetValue(left) || {};
+  for (const [key, value] of Object.entries(right)) {
+    if (isPlainObject(value) && isPlainObject(merged[key])) {
+      merged[key] = mergePlainObjects(merged[key], value);
+    } else {
+      merged[key] = clonePresetValue(value);
+    }
+  }
+  return merged;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

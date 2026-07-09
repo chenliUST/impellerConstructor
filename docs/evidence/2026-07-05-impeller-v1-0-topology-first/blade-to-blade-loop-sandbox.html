@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blade-to-blade loop sandbox</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef3f0;
+      --panel: rgba(255, 255, 255, 0.78);
+      --ink: #17322f;
+      --muted: #5f7470;
+      --grid: rgba(40, 82, 78, 0.18);
+      --axis: rgba(23, 50, 47, 0.56);
+      --pressure: #0b76d1;
+      --suction: #d93682;
+      --leading: #f59e0b;
+      --trailing: #14a36d;
+      --main: #183b8f;
+      --splitter: #9b2f1f;
+      --control: #111827;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(1500px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 20px 0 28px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 720;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      max-width: 880px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid rgba(23, 50, 47, 0.16);
+      background: var(--panel);
+    }
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: #0b76d1;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .panel {
+      min-width: 0;
+      background: var(--panel);
+      border: 1px solid rgba(23, 50, 47, 0.16);
+      box-shadow: 0 12px 32px rgba(23, 50, 47, 0.08);
+    }
+
+    .panel-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px 8px;
+      border-bottom: 1px solid rgba(23, 50, 47, 0.12);
+      font-weight: 700;
+    }
+
+    .panel-title span:last-child {
+      color: var(--muted);
+      font-weight: 560;
+      font-size: 12px;
+    }
+
+    svg {
+      display: block;
+      width: 100%;
+      height: 520px;
+      background: rgba(255, 255, 255, 0.34);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      padding: 10px 12px 12px;
+      color: var(--muted);
+      border-top: 1px solid rgba(23, 50, 47, 0.12);
+    }
+
+    .key {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 18px;
+      height: 3px;
+      display: inline-block;
+      background: currentColor;
+    }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(23, 50, 47, 0.14);
+      color: var(--muted);
+    }
+
+    .note strong { color: var(--ink); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Blade-to-blade loop sandbox</h1>
+        <div class="subtitle">
+          Candidate loop definition in the unwrapped s-q domain. x is streamwise s, y is circumferential q = r * delta theta.
+          The same domain rule is used for main blades and splitters; splitters use a shorter s interval and half-pitch phase.
+        </div>
+      </div>
+      <div class="toolbar" aria-label="display controls">
+        <label><input id="show-main" type="checkbox" checked />Main</label>
+        <label><input id="show-splitter" type="checkbox" checked />Splitter</label>
+        <label><input id="show-controls" type="checkbox" checked />Control points</label>
+        <label><input id="show-passage" type="checkbox" checked />Passage bounds</label>
+      </div>
+    </header>
+
+    <section class="grid" id="plots"></section>
+
+    <div class="note">
+      <strong>Construction intent:</strong>
+      pressure and suction are normal offsets from one S-camber meanline; leading and trailing caps close the loop in the same s-q domain.
+      This sandbox deliberately does not use the current 3D generator, so defects here indicate loop math, while defects only in the model indicate the s-q-h to 3D mapping or loft stage.
+    </div>
+  </main>
+
+  <script>
+    const spanStations = [
+      { id: "hub", label: "Hub station h=0", thicknessScale: 1.00, camberScale: 0.88, qOffset: 0 },
+      { id: "mid", label: "Mid station h=0.5", thicknessScale: 0.92, camberScale: 1.00, qOffset: 6 },
+      { id: "tip", label: "Tip station h=1", thicknessScale: 0.78, camberScale: 1.12, qOffset: 10 },
+    ];
+
+    const bladeSpecs = [
+      {
+        id: "main",
+        label: "Main blade",
+        s0: 0.08,
+        s1: 0.92,
+        chordMm: 430,
+        pitchMm: 270,
+        maxThicknessMm: 42,
+        edgeThicknessMm: 22,
+        camberAmpMm: 44,
+        wrapMm: 116,
+        phaseMm: 0,
+      },
+      {
+        id: "splitter",
+        label: "Splitter blade",
+        s0: 0.40,
+        s1: 0.82,
+        chordMm: 235,
+        pitchMm: 270,
+        maxThicknessMm: 30,
+        edgeThicknessMm: 17,
+        camberAmpMm: 27,
+        wrapMm: 63,
+        phaseMm: 135,
+      },
+    ];
+
+    const colors = {
+      pressure: "#0b76d1",
+      suction: "#d93682",
+      leading: "#f59e0b",
+      trailing: "#14a36d",
+      mean: "#334155",
+      control: "#111827",
+      main: "#183b8f",
+      splitter: "#9b2f1f",
+    };
+
+    function meanPoint(spec, station, u) {
+      const x = spec.chordMm * u;
+      const centered = 2 * u - 1;
+      const sCurve = centered * centered * centered - 0.62 * centered;
+      const q = spec.phaseMm
+        + station.qOffset
+        + spec.wrapMm * (u - 0.5)
+        + spec.camberAmpMm * station.camberScale * sCurve;
+      return { x, q };
+    }
+
+    function meanTangent(spec, station, u) {
+      const centered = 2 * u - 1;
+      return {
+        x: spec.chordMm,
+        q: spec.wrapMm + 2 * spec.camberAmpMm * station.camberScale * (3 * centered * centered - 0.62),
+      };
+    }
+
+    function thicknessAt(spec, station, u) {
+      const crown = Math.sin(Math.PI * u) ** 2;
+      return station.thicknessScale * (spec.edgeThicknessMm + (spec.maxThicknessMm - spec.edgeThicknessMm) * crown);
+    }
+
+    function unit(v) {
+      const len = Math.hypot(v.x, v.q) || 1;
+      return { x: v.x / len, q: v.q / len };
+    }
+
+    function offsetCurves(spec, station, sampleCount = 96) {
+      const pressure = [];
+      const suction = [];
+      const mean = [];
+      for (let i = 0; i < sampleCount; i += 1) {
+        const u = i / (sampleCount - 1);
+        const center = meanPoint(spec, station, u);
+        const tangent = unit(meanTangent(spec, station, u));
+        const normal = { x: -tangent.q, q: tangent.x };
+        const half = thicknessAt(spec, station, u) / 2;
+        mean.push({ ...center, u });
+        pressure.push({ x: center.x + normal.x * half, q: center.q + normal.q * half, u });
+        suction.push({ x: center.x - normal.x * half, q: center.q - normal.q * half, u });
+      }
+      return { pressure, suction, mean };
+    }
+
+    function hermite(a, b, ta, tb, sampleCount = 40) {
+      const points = [];
+      for (let i = 0; i < sampleCount; i += 1) {
+        const t = i / (sampleCount - 1);
+        const h00 = 2 * t ** 3 - 3 * t ** 2 + 1;
+        const h10 = t ** 3 - 2 * t ** 2 + t;
+        const h01 = -2 * t ** 3 + 3 * t ** 2;
+        const h11 = t ** 3 - t ** 2;
+        points.push({
+          x: h00 * a.x + h10 * ta.x + h01 * b.x + h11 * tb.x,
+          q: h00 * a.q + h10 * ta.q + h01 * b.q + h11 * tb.q,
+        });
+      }
+      points[0] = { x: a.x, q: a.q };
+      points[points.length - 1] = { x: b.x, q: b.q };
+      return points;
+    }
+
+    function capCurves(spec, station, curves) {
+      const p0 = curves.pressure[0];
+      const p1 = curves.pressure[1];
+      const s0 = curves.suction[0];
+      const s1 = curves.suction[1];
+      const pn = curves.pressure[curves.pressure.length - 1];
+      const pn1 = curves.pressure[curves.pressure.length - 2];
+      const sn = curves.suction[curves.suction.length - 1];
+      const sn1 = curves.suction[curves.suction.length - 2];
+      const leScale = thicknessAt(spec, station, 0) * 0.86;
+      const teScale = thicknessAt(spec, station, 1) * 0.72;
+      const lead = hermite(
+        p0,
+        s0,
+        scale(unit({ x: p0.x - p1.x, q: p0.q - p1.q }), leScale),
+        scale(unit({ x: s1.x - s0.x, q: s1.q - s0.q }), leScale),
+      );
+      const trail = hermite(
+        sn,
+        pn,
+        scale(unit({ x: sn.x - sn1.x, q: sn.q - sn1.q }), teScale),
+        scale(unit({ x: pn1.x - pn.x, q: pn1.q - pn.q }), teScale),
+      );
+      return { leading: lead, trailing: trail };
+    }
+
+    function scale(v, amount) {
+      return { x: v.x * amount, q: v.q * amount };
+    }
+
+    function loopFor(spec, station) {
+      const curves = offsetCurves(spec, station);
+      const caps = capCurves(spec, station, curves);
+      const pressure = [...curves.pressure].reverse();
+      const suction = curves.suction;
+      const loop = [...pressure, ...caps.leading, ...suction, ...caps.trailing];
+      const controls = controlPointsFor(spec, station);
+      return { ...curves, ...caps, loop, controls };
+    }
+
+    function controlPointsFor(spec, station) {
+      return [0, 0.16, 0.34, 0.5, 0.66, 0.84, 1].map((u) => {
+        const center = meanPoint(spec, station, u);
+        const tangent = unit(meanTangent(spec, station, u));
+        const normal = { x: -tangent.q, q: tangent.x };
+        const half = thicknessAt(spec, station, u) / 2;
+        return {
+          u,
+          mean: center,
+          pressure: { x: center.x + normal.x * half, q: center.q + normal.q * half },
+          suction: { x: center.x - normal.x * half, q: center.q - normal.q * half },
+        };
+      });
+    }
+
+    function globalS(spec, point) {
+      return spec.s0 + (point.x / spec.chordMm) * (spec.s1 - spec.s0);
+    }
+
+    function path(points, toScreen) {
+      return points.map((point, index) => {
+        const p = toScreen(point);
+        return `${index ? "L" : "M"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+      }).join(" ");
+    }
+
+    function buildPanel(station) {
+      const panel = document.createElement("article");
+      panel.className = "panel";
+      panel.innerHTML = `
+        <div class="panel-title"><span>${station.label}</span><span>s-q unwrapped domain</span></div>
+        <svg viewBox="0 0 520 520" role="img" aria-label="${station.label} blade loop plot"></svg>
+        <div class="legend">
+          <span class="key" style="color:${colors.pressure}"><span class="swatch"></span>Pressure side</span>
+          <span class="key" style="color:${colors.suction}"><span class="swatch"></span>Suction side</span>
+          <span class="key" style="color:${colors.leading}"><span class="swatch"></span>Leading cap</span>
+          <span class="key" style="color:${colors.trailing}"><span class="swatch"></span>Trailing cap</span>
+        </div>
+      `;
+      return panel;
+    }
+
+    function draw() {
+      const plots = document.getElementById("plots");
+      plots.innerHTML = "";
+      const showMain = document.getElementById("show-main").checked;
+      const showSplitter = document.getElementById("show-splitter").checked;
+      const showControls = document.getElementById("show-controls").checked;
+      const showPassage = document.getElementById("show-passage").checked;
+
+      spanStations.forEach((station) => {
+        const panel = buildPanel(station);
+        const svg = panel.querySelector("svg");
+        plots.appendChild(panel);
+        drawGrid(svg);
+
+        bladeSpecs.forEach((spec) => {
+          if ((spec.id === "main" && !showMain) || (spec.id === "splitter" && !showSplitter)) return;
+          const data = loopFor(spec, station);
+          const yMin = -180;
+          const yMax = 250;
+          const toScreen = (point) => ({
+            x: 46 + globalS(spec, point) * 430,
+            y: 470 - ((point.q - yMin) / (yMax - yMin)) * 390,
+          });
+
+          if (showPassage) drawPassage(svg, spec, station, toScreen);
+          drawCurve(svg, data.mean, toScreen, colors.mean, "4 5", 1.5, 0.8);
+          drawCurve(svg, data.pressure, toScreen, colors.pressure, "", 3, 1);
+          drawCurve(svg, data.suction, toScreen, colors.suction, "", 3, 1);
+          drawCurve(svg, data.leading, toScreen, colors.leading, "", 4, 1);
+          drawCurve(svg, data.trailing, toScreen, colors.trailing, "", 4, 1);
+          drawCurve(svg, [...data.loop, data.loop[0]], toScreen, spec.id === "main" ? colors.main : colors.splitter, "", 1.2, 0.38, true);
+          drawLabel(svg, spec.label, toScreen(data.mean[Math.floor(data.mean.length * 0.55)]), spec.id === "main" ? colors.main : colors.splitter);
+          if (showControls) drawControls(svg, data.controls, toScreen);
+        });
+      });
+    }
+
+    function drawGrid(svg) {
+      const ns = "http://www.w3.org/2000/svg";
+      for (let i = 0; i <= 10; i += 1) {
+        const x = 46 + i * 43;
+        const line = document.createElementNS(ns, "line");
+        line.setAttribute("x1", x);
+        line.setAttribute("x2", x);
+        line.setAttribute("y1", 80);
+        line.setAttribute("y2", 470);
+        line.setAttribute("stroke", "var(--grid)");
+        svg.appendChild(line);
+        if (i % 2 === 0) drawText(svg, (i / 10).toFixed(1), x - 8, 492, "11px", "var(--muted)");
+      }
+      for (let i = 0; i <= 8; i += 1) {
+        const y = 80 + i * 48.75;
+        const line = document.createElementNS(ns, "line");
+        line.setAttribute("x1", 46);
+        line.setAttribute("x2", 476);
+        line.setAttribute("y1", y);
+        line.setAttribute("y2", y);
+        line.setAttribute("stroke", "var(--grid)");
+        svg.appendChild(line);
+      }
+      const axis = document.createElementNS(ns, "line");
+      axis.setAttribute("x1", 46);
+      axis.setAttribute("x2", 476);
+      axis.setAttribute("y1", 470);
+      axis.setAttribute("y2", 470);
+      axis.setAttribute("stroke", "var(--axis)");
+      svg.appendChild(axis);
+      drawText(svg, "s", 482, 474, "13px", "var(--ink)");
+      drawText(svg, "q = r * delta theta", 50, 72, "12px", "var(--muted)");
+    }
+
+    function drawPassage(svg, spec, station, toScreen) {
+      const ns = "http://www.w3.org/2000/svg";
+      const low = [];
+      const high = [];
+      for (let i = 0; i < 64; i += 1) {
+        const u = i / 63;
+        const center = meanPoint(spec, station, u);
+        low.push({ x: center.x, q: spec.phaseMm - spec.pitchMm / 2 });
+        high.push({ x: center.x, q: spec.phaseMm + spec.pitchMm / 2 });
+      }
+      [low, high].forEach((linePoints) => {
+        const line = document.createElementNS(ns, "path");
+        line.setAttribute("d", path(linePoints, toScreen));
+        line.setAttribute("fill", "none");
+        line.setAttribute("stroke", spec.id === "main" ? colors.main : colors.splitter);
+        line.setAttribute("stroke-width", "1");
+        line.setAttribute("stroke-dasharray", "8 6");
+        line.setAttribute("opacity", "0.25");
+        svg.appendChild(line);
+      });
+    }
+
+    function drawCurve(svg, points, toScreen, color, dash, width, opacity, fill = false) {
+      const ns = "http://www.w3.org/2000/svg";
+      const curve = document.createElementNS(ns, "path");
+      curve.setAttribute("d", path(points, toScreen));
+      curve.setAttribute("fill", fill ? color : "none");
+      curve.setAttribute("stroke", color);
+      curve.setAttribute("stroke-width", width);
+      curve.setAttribute("stroke-linecap", "round");
+      curve.setAttribute("stroke-linejoin", "round");
+      curve.setAttribute("opacity", opacity);
+      if (dash) curve.setAttribute("stroke-dasharray", dash);
+      svg.appendChild(curve);
+    }
+
+    function drawControls(svg, controls, toScreen) {
+      const ns = "http://www.w3.org/2000/svg";
+      const pressure = controls.map((item) => item.pressure);
+      const suction = controls.map((item) => item.suction);
+      drawControlPolyline(svg, pressure, toScreen);
+      drawControlPolyline(svg, suction, toScreen);
+      controls.forEach((item) => {
+        [item.pressure, item.mean, item.suction].forEach((point, index) => {
+          const p = toScreen(point);
+          const circle = document.createElementNS(ns, "circle");
+          circle.setAttribute("cx", p.x);
+          circle.setAttribute("cy", p.y);
+          circle.setAttribute("r", index === 1 ? 3 : 4);
+          circle.setAttribute("fill", index === 1 ? "#ffffff" : "#ff2bd6");
+          circle.setAttribute("stroke", "var(--control)");
+          circle.setAttribute("stroke-width", "1.1");
+          svg.appendChild(circle);
+        });
+      });
+    }
+
+    function drawControlPolyline(svg, points, toScreen) {
+      const ns = "http://www.w3.org/2000/svg";
+      const poly = document.createElementNS(ns, "path");
+      poly.setAttribute("d", path(points, toScreen));
+      poly.setAttribute("fill", "none");
+      poly.setAttribute("stroke", "var(--control)");
+      poly.setAttribute("stroke-width", "1");
+      poly.setAttribute("stroke-dasharray", "3 4");
+      poly.setAttribute("opacity", "0.55");
+      svg.appendChild(poly);
+    }
+
+    function drawLabel(svg, text, at, color) {
+      drawText(svg, text, at.x + 8, at.y - 8, "12px", color, 700);
+    }
+
+    function drawText(svg, text, x, y, size, color, weight = 500) {
+      const ns = "http://www.w3.org/2000/svg";
+      const label = document.createElementNS(ns, "text");
+      label.textContent = text;
+      label.setAttribute("x", x);
+      label.setAttribute("y", y);
+      label.setAttribute("fill", color);
+      label.setAttribute("font-size", size);
+      label.setAttribute("font-weight", weight);
+      label.setAttribute("letter-spacing", "0");
+      svg.appendChild(label);
+    }
+
+    document.querySelectorAll("input").forEach((input) => input.addEventListener("change", draw));
+    draw();
+  </script>
+</body>
+</html>

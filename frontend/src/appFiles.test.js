@@ -10,7 +10,59 @@ describe("frontend application files", () => {
     const html = readFileSync(resolve(root, "index.html"), "utf-8");
 
     assert.match(html, /type="importmap"/);
-    assert.match(html, /src="\/src\/main\.js"/);
+    assert.match(html, /src="\/src\/main\.js(?:\?v=[^"]+)?"/);
+  });
+
+  test("browser entry cache-busts the v1.1 frontend modules", () => {
+    const html = readFileSync(resolve(root, "index.html"), "utf-8");
+    const mainSource = readFileSync(resolve(root, "src/main.js"), "utf-8");
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.5"/);
+    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.5"/);
+    assert.match(appSource, /from "\.\/apiClient\.js\?v=1\.1\.5"/);
+    assert.match(appSource, /from "\.\/appModel\.js\?v=1\.1\.5"/);
+    assert.match(appSource, /from "\.\/workspaceModel\.js\?v=1\.1\.5"/);
+    assert.match(appSource, /from "\.\/components\/ModelViewer\.js\?v=1\.1\.5"/);
+    assert.match(viewerSource, /from "\.\.\/meshOverlayModel\.js\?v=1\.1\.5"/);
+    assert.match(viewerSource, /from "\.\.\/workspaceModel\.js\?v=1\.1\.5"/);
+    assert.match(readFileSync(resolve(root, "src/apiClient.js"), "utf-8"), /from "\.\/appModel\.js\?v=1\.1\.5"/);
+    assert.match(
+      readFileSync(resolve(root, "src/workspaceModel.js"), "utf-8"),
+      /from "\.\/meshOverlayModel\.js\?v=1\.1\.5"/,
+    );
+    assert.match(
+      readFileSync(resolve(root, "src/simulationViewModel.js"), "utf-8"),
+      /from "\.\/meshOverlayModel\.js\?v=1\.1\.5"/,
+    );
+  });
+
+  test("runtime local module imports are cache-busted", () => {
+    const runtimeFiles = [
+      "src/main.js",
+      "src/App.js",
+      "src/apiClient.js",
+      "src/workspaceModel.js",
+      "src/simulationViewModel.js",
+      "src/meshViewModel.js",
+      "src/components/BladeCurveEditor.js",
+      "src/components/CfdManifestPanel.js",
+      "src/components/EdgeTreatmentPanel.js",
+      "src/components/FacetPanel.js",
+      "src/components/GeometryLayerPanel.js",
+      "src/components/ManifestPanel.js",
+      "src/components/MeshInspectionPanel.js",
+      "src/components/ModelViewer.js",
+      "src/components/ParameterPanel.js",
+      "src/components/ProfileCurveEditor.js",
+    ];
+
+    for (const file of runtimeFiles) {
+      const source = readFileSync(resolve(root, file), "utf-8");
+      const bareLocalImports = source.match(/from "\.{1,2}\/[^"]+\.js"/g) || [];
+      assert.deepEqual(bareLocalImports, [], `${file} has unversioned local imports`);
+    }
   });
 
   test("application shell files exist", () => {
@@ -49,13 +101,18 @@ describe("frontend application files", () => {
 
   test("viewer exposes mesh overlay layers for CFD360 mesh inspection", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const panelSource = readFileSync(resolve(root, "src/components/MeshInspectionPanel.js"), "utf-8");
     const overlaySource = readFileSync(resolve(root, "src/meshOverlayModel.js"), "utf-8");
     const workspaceSource = readFileSync(resolve(root, "src/workspaceModel.js"), "utf-8");
 
     assert.match(viewerSource, /meshOverlayMode\s*=\s*"triangle_edges"/);
+    assert.match(appSource, /meshOverlayMode/);
+    assert.match(appSource, /setMeshOverlayMode/);
+    assert.match(appSource, /meshOverlayMode,\s*setMeshOverlayMode,/);
+    assert.match(viewerSource, /meshOverlayOptions/);
     assert.match(viewerSource, /WireframeGeometry/);
-    assert.match(viewerSource, /createSurfaceGraphGroup\(\s*visibleSurfaceGraph,\s*bounds\.center,\s*simulationViewMode,\s*selectedSurfaceIds,\s*meshOverlayMode,\s*manifest,\s*\)/);
+    assert.match(viewerSource, /createSurfaceGraphGroup\(\s*visibleSurfaceGraph,\s*bounds\.center,\s*simulationViewMode,\s*selectedSurfaceIds,\s*activeMeshOverlayMode,\s*manifest,\s*\)/);
     assert.match(viewerSource, /surfaceVisibleInView\(surface,\s*simulationViewMode,\s*manifest\)/);
     assert.doesNotMatch(viewerSource, /surfaceVisibleInView\(surface,\s*simulationViewMode\)/);
     assert.match(viewerSource, /transition_mesh_edges/);
@@ -66,6 +123,25 @@ describe("frontend application files", () => {
     assert.match(overlaySource, /transitionSurfaceIds/);
     assert.match(overlaySource, /isTransitionSurface/);
     assert.match(workspaceSource, /transition_surfaces/);
+  });
+
+  test("viewer renders mesh-only surface graph geometry and bounds", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(viewerSource, /function surfaceMeshPoints/);
+    assert.match(viewerSource, /function surfaceMeshGeometry/);
+    assert.match(viewerSource, /surface\.mesh/);
+    assert.match(viewerSource, /surfaceGraphBounds[\s\S]*surfaceMeshPoints\(surface\.mesh,\s*surface\.uv_grid\s*\|\|\s*\[\]\)/);
+    assert.match(viewerSource, /surfaceMeshGeometry\(surface\.mesh,\s*center,\s*grid\)/);
+    assert.match(viewerSource, /meshPoint\(point,\s*mesh\.vertices,\s*uvGrid\)/);
+    assert.match(viewerSource, /Number\.isInteger\(point\[0]\)[\s\S]*Number\.isInteger\(point\[1]\)[\s\S]*uvGrid\[point\[0]]\?\.\[point\[1]]/);
+  });
+
+  test("viewer keeps STL fallback shaded mesh out of wireframe mode", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(viewerSource, /shaded\.userData\.layer\s*=\s*"shade_surfaces"/);
+    assert.match(viewerSource, /child\.isMesh[\s\S]*showShadedSurfaces[\s\S]*visibleLayers\[child\.userData\.layer\]/);
   });
 
   test("parameter panel uses direct numeric inputs without range sliders", () => {
@@ -102,12 +178,122 @@ describe("frontend application files", () => {
     assert.match(panelSource, /surface_graph_faithful/);
   });
 
+  test("manifest panel exposes v0.9 geometry validation signals", () => {
+    const panelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(panelSource, /geometry_validation_report/);
+    assert.match(panelSource, /geometry_validation_status/);
+    assert.match(panelSource, /blocking_failures/);
+    assert.match(panelSource, /transition_validation_summary/);
+    assert.match(panelSource, /capability_claim_level/);
+  });
+
   test("viewer gives blade boundary construction lines and named boundaries dedicated layers", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 
     assert.match(viewerSource, /blade_boundaries/);
     assert.match(viewerSource, /named_boundary_curve/);
     assert.match(viewerSource, /edge_closure_surface/);
+  });
+
+  test("viewer recognizes native v1.0 topology faces", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(viewerSource, /native_topology_face/);
+    assert.match(viewerSource, /face_family/);
+    assert.match(viewerSource, /shared_edge/);
+    assert.match(viewerSource, /defaultSurfaceOpacity/);
+    assert.match(viewerSource, /createSurfaceUvWireOverlay/);
+    assert.match(viewerSource, /surface\.wireframe/);
+  });
+
+  test("viewer prioritizes v1.0.2 and v1.0.3 transition inspection colors", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(viewerSource, /root_to_hub_native_root_face/);
+    assert.match(viewerSource, /tip_to_shroud_attachment/);
+    assert.match(viewerSource, /root_to_hub_blend/);
+    assert.match(viewerSource, /open_tip_dome/);
+    assert.match(viewerSource, /#ff00cc/);
+    assert.match(viewerSource, /#00e5ff/);
+    assert.match(viewerSource, /#fff200/);
+  });
+
+  test("viewer renders v1.0.3 curve control overlays from manifest data", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(viewerSource, /addCurveControlOverlays/);
+    assert.match(viewerSource, /makeControlPointMarker/);
+    assert.match(viewerSource, /curveControlsFromManifest/);
+    assert.match(viewerSource, /curve_controls/);
+    assert.match(viewerSource, /geometry\?\.curve_controls/);
+  });
+
+  test("viewer treats topology shared-edge diagnostics as mesh overlay", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(viewerSource, /simulationViewMode === "mesh" && meshOverlayMode !== "off"[\s\S]*createSharedEdgeGroup/);
+    assert.match(viewerSource, /line\.userData\.isMeshOverlay\s*=\s*true/);
+    assert.match(viewerSource, /line\.userData\.layer\s*=\s*"mesh_edges"/);
+  });
+
+  test("viewer separates V1.0.4 shade uv mesh controls and diagnostic layers", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const workspaceSource = readFileSync(resolve(root, "src/workspaceModel.js"), "utf-8");
+
+    for (const layer of [
+      "shade_surfaces",
+      "nurbs_uv_wire",
+      "mesh_triangle_wire",
+      "control_curves",
+      "control_points",
+      "shared_edges",
+      "diagnostic_failures",
+    ]) {
+      assert.match(viewerSource + workspaceSource, new RegExp(layer));
+    }
+  });
+
+  test("viewer recognizes V1.1 surface-family graph and hides open tip reference in normal mode", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const simulationSource = readFileSync(resolve(root, "src/simulationViewModel.js"), "utf-8");
+
+    assert.match(viewerSource, /topology_first_blade_to_blade_5_loop_surface_family_graph/);
+    assert.match(viewerSource, /v1_1_loop_family_shared_boundary_uv_mesh/);
+    assert.match(simulationSource, /open_tip_reference/);
+    assert.match(simulationSource, /reference_only/);
+  });
+
+  test("viewer keeps legacy opacity defaults outside V1.1 surface-family graphs", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(viewerSource, /v11ViewerLayers\s*\|\|\s*v11SurfaceFamilyGraph[\s\S]*display\.opacity === undefined \? 0\.62 : display\.opacity/);
+    assert.match(viewerSource, /surface\.role === "open_tip_reference" \|\| surface\.role === "reference_only"[\s\S]*return 0\.3/);
+    assert.match(viewerSource, /if \(isEdgeClosure\)\s*\{\s*return 1\.0;\s*\}/);
+    assert.match(viewerSource, /return 0\.92;\s*\}/);
+  });
+
+  test("manifest panel renders v1.0.2 feasibility and attachment metrics", () => {
+    const manifestSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(manifestSource, /preset_feasibility_status/);
+    assert.match(manifestSource, /continuous_blade_attachment_status/);
+    assert.match(manifestSource, /geometry_patch_version/);
+    assert.match(manifestSource, /attachment_quality/);
+  });
+
+  test("manifest panel labels v1.0.4 and v1.0.3 active graphs separately from v1.0.2 attachment", () => {
+    const manifestSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
+
+    assert.match(manifestSource, /geometry_patch_version === "1\.0\.4"/);
+    assert.match(manifestSource, /V1\.0\.4 measured geometry contract graph/);
+    assert.match(manifestSource, /v1_0_4_continuity_summary/);
+    assert.match(manifestSource, /v1_0_4_angle_quality/);
+    assert.match(manifestSource, /geometry_patch_version === "1\.0\.3"/);
+    assert.match(manifestSource, /V1\.0\.3 section-loop\/root-blend graph/);
+    assert.match(manifestSource, /V1\.0\.2 attachment/);
+    assert.match(manifestSource, /deferred_reason/);
+    assert.match(manifestSource, /surface_graph_status/);
   });
 
   test("application exposes geometry layer controls to the model viewer", () => {
@@ -146,6 +332,7 @@ describe("frontend application files", () => {
       "src/bladeCurveEditorModel.js",
       "src/components/ProfileCurveEditor.js",
       "src/components/BladeCurveEditor.js",
+      "src/components/CurveControlPanel.js",
       "src/components/GenerationStagePanel.js",
       "src/components/EdgeTreatmentPanel.js",
       "src/edgeTreatmentModel.js",
@@ -156,10 +343,21 @@ describe("frontend application files", () => {
 
     assert.match(appSource, /profileOverrides/);
     assert.match(appSource, /curveOverrides/);
+    assert.match(appSource, /CurveControlPanel/);
     assert.match(appSource, /transitionOverrides/);
     assert.match(appSource, /geometryStage/);
     assert.match(appSource, /GenerationStagePanel/);
     assert.match(appSource, /EdgeTreatmentPanel/);
+  });
+
+  test("application gates legacy editors off for V1.1 while keeping profile and curve-control panels", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+
+    assert.match(appSource, /editorVisibilityForPreset/);
+    assert.match(appSource, /editorVisibility\.edgeTreatmentPanel[\s\S]*EdgeTreatmentPanel/);
+    assert.match(appSource, /editorVisibility\.bladeCurveEditor[\s\S]*BladeCurveEditor/);
+    assert.match(appSource, /ProfileCurveEditor/);
+    assert.match(appSource, /CurveControlPanel/);
   });
 
   test("curve editors expose engineering-unit numeric control-point inputs", () => {

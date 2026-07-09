@@ -24,7 +24,7 @@ def write_surface_graph_exports(
     surface_graph: dict[str, Any],
     view_id: str = "cad_review_360",
 ) -> dict[str, dict[str, Any]]:
-    triangulation = triangulate_surface_graph(surface_graph, view_id=view_id)
+    triangulation = _mesh_for_surface_graph(surface_graph, view_id)
     if triangulation["triangle_count"] == 0:
         raise ValueError("surface graph export produced no non-degenerate triangles")
 
@@ -33,14 +33,42 @@ def write_surface_graph_exports(
     step_metadata = _write_step_faces(step_path, triangles)
 
     common = {
-        "source": "surface_graph",
+        "source": triangulation.get("source", "surface_graph"),
         "view": view_id,
+        **({"mesh_type": triangulation["mesh_type"]} if "mesh_type" in triangulation else {}),
+        **(
+            {"mesh_manifoldness_report": triangulation["mesh_manifoldness_report"]}
+            if "mesh_manifoldness_report" in triangulation
+            else {}
+        ),
+        **(
+            {
+                "source_patch_incidence_report": triangulation["source_patch_incidence_report"],
+                "final_mesh_incidence_report": triangulation["final_mesh_incidence_report"],
+                "mesh_closure_report": triangulation["mesh_closure_report"],
+                "mesh_closure_regions": triangulation.get("mesh_closure_regions", []),
+                "singular_corner_cell_count": triangulation.get("singular_corner_cell_count", 0),
+                "singular_corner_cells": triangulation.get("singular_corner_cells", []),
+            }
+            if "source_patch_incidence_report" in triangulation
+            else {}
+        ),
         "surface_count": len(triangulation["included_surface_ids"]),
         "included_surface_ids": triangulation["included_surface_ids"],
         "excluded_surface_ids": triangulation["excluded_surface_ids"],
+        **(
+            {
+                "trimmed_cell_count": triangulation["trimmed_cell_count"],
+                "trimmed_cell_regions": triangulation["trimmed_cell_regions"],
+            }
+            if "trimmed_cell_count" in triangulation
+            else {}
+        ),
         "skipped_triangle_count": triangulation["skipped_triangle_count"],
         "skipped_triangle_reasons": triangulation["skipped_triangle_reasons"],
     }
+    if "transition_regions" in triangulation:
+        common["transition_regions"] = triangulation["transition_regions"]
     return {
         "stl": {
             **common,
@@ -56,6 +84,21 @@ def write_surface_graph_exports(
             "face_regions": triangulation["triangle_regions"],
         },
     }
+
+
+def _mesh_for_surface_graph(surface_graph: dict[str, Any], view_id: str) -> dict[str, Any]:
+    if surface_graph.get("transition_geometry_status") == "topology_first_validated_transition_graph":
+        from part_rule_synthesis.impeller_patch_mesh import build_patch_mesh
+
+        return build_patch_mesh(surface_graph, view_id=view_id)
+    if surface_graph.get("transition_geometry_status") in {
+        "resolved_trimmed_surface_graph",
+        "validated_transition_surface_graph",
+    }:
+        from part_rule_synthesis.impeller_transition_mesh import build_transition_aware_mesh
+
+        return build_transition_aware_mesh(surface_graph, view_id=view_id)
+    return triangulate_surface_graph(surface_graph, view_id=view_id)
 
 
 def triangulate_surface_graph(surface_graph: dict[str, Any], view_id: str = "cad_review_360") -> dict[str, Any]:
@@ -250,15 +293,20 @@ def _deduplicated_indexed_faces(
     triangles: list[dict[str, Any]],
 ) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
     vertices: list[tuple[float, float, float]] = []
-    vertex_index: dict[tuple[float, float, float], int] = {}
+    vertex_index: dict[Any, int] = {}
     faces: list[tuple[int, int, int]] = []
     for triangle in triangles:
         face: list[int] = []
-        for point in triangle["points"]:
-            key = tuple(round(float(coordinate), 6) for coordinate in point)
+        vertex_ids = triangle.get("vertex_ids")
+        for index, point in enumerate(triangle["points"]):
+            key: Any
+            if isinstance(vertex_ids, list) and index < len(vertex_ids):
+                key = ("vertex_id", str(vertex_ids[index]))
+            else:
+                key = ("point", tuple(round(float(coordinate), 6) for coordinate in point))
             if key not in vertex_index:
                 vertex_index[key] = len(vertices) + 1
-                vertices.append(key)
+                vertices.append(tuple(round(float(coordinate), 6) for coordinate in point))
             face.append(vertex_index[key])
         faces.append((face[0], face[1], face[2]))
     return vertices, faces

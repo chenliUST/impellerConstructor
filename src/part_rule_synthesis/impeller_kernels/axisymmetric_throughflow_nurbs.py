@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import asdict
 from typing import Any
 
 from part_rule_synthesis.impeller_cad_payload import (
@@ -8,6 +9,7 @@ from part_rule_synthesis.impeller_cad_payload import (
     cylinder_surface_payload,
     plane_surface_payload,
 )
+from part_rule_synthesis.impeller_transition_geometry import resolve_transition_geometry
 
 
 SURFACE_U_COUNT = 41
@@ -40,6 +42,7 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     profile_defaults: dict[str, Any] | None = None,
     edge_families: dict[str, Any] | None = None,
     transition_policies: dict[str, Any] | None = None,
+    geometry_version: str | None = None,
 ) -> dict[str, Any]:
     params = _normalized_parameters(parameters)
     resolved_facets = _normalized_facets(facets)
@@ -65,6 +68,19 @@ def build_axisymmetric_throughflow_nurbs_geometry(
     construction_lines = _construction_lines(surface_graph, sampled_blades)
     surface_graph, construction_lines = _filter_by_geometry_stage(surface_graph, construction_lines, stage)
     surface_graph = _annotate_transition_edge_metadata(surface_graph, edge_families, transition_policies)
+    transition_resolution = resolve_transition_geometry(
+        surface_graph,
+        transition_policies=transition_policies or {},
+        geometry_version=geometry_version or "",
+    )
+    surface_graph = transition_resolution.surface_graph
+    if transition_resolution.edge_treatment_sites:
+        surface_graph["edge_treatment_sites"] = [
+            asdict(site)
+            for site in transition_resolution.edge_treatment_sites
+        ]
+    if transition_resolution.transition_failures:
+        surface_graph["transition_failures"] = transition_resolution.transition_failures
     validity = _validity_report(
         surface_graph,
         sampled_blades,
@@ -76,6 +92,7 @@ def build_axisymmetric_throughflow_nurbs_geometry(
         material_domain=material_domain,
         transition_policies=transition_policies,
     )
+    _merge_transition_quality_checks(validity, transition_resolution.quality_checks)
     passage_model = {
         "type": "throughflow_bladed_channel",
         "throughflow_bladed_channel": True,
@@ -2540,6 +2557,28 @@ def _validity_report(
         "topology_checks": topology_checks,
         "engineering_checks": engineering_checks,
     }
+
+
+def _merge_transition_quality_checks(
+    validity: dict[str, Any],
+    quality_checks: list[dict[str, Any]],
+) -> None:
+    if not quality_checks:
+        return
+
+    checks = list(validity.get("checks", []))
+    if not checks:
+        checks.extend(validity.get("geometry_checks", []))
+        checks.extend(validity.get("topology_checks", []))
+        checks.extend(validity.get("engineering_checks", []))
+    checks.extend(
+        {
+            **check,
+            "name": check.get("name", check.get("check_id", "")),
+        }
+        for check in quality_checks
+    )
+    validity["checks"] = checks
 
 
 def _requires_capped_hub(material_domain: dict[str, Any] | None) -> bool:

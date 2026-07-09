@@ -1,0 +1,75 @@
+{
+  "registry_id": "impeller_v0_9_golden_cases",
+  "version": "0.9",
+  "cases": [
+    {
+      "case_id": "v09_open_default",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v0_9",
+      "description": "Default open radial impeller with enabled fillet/chamfer transitions."
+    },
+    {
+      "case_id": "v09_closed_default",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v0_9",
+      "description": "Default closed radial impeller with hood/shroud transition surfaces."
+    },
+    {
+      "case_id": "v09_open_chamfer_root",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v0_9",
+      "transition_overrides": {
+        "blade_root_to_hub.default": {
+          "enabled": true,
+          "treatment": "chamfer",
+          "radius_mm": 6.0
+        }
+      },
+      "description": "Open impeller with chamfer root transitions."
+    },
+    {
+      "case_id": "v09_open_disabled_edges",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v0_9",
+      "transition_overrides": {
+        "blade_leading_edge.default": {"enabled": false, "treatment": "none", "radius_mm": 0.0},
+        "blade_trailing_edge.default": {"enabled": false, "treatment": "none", "radius_mm": 0.0},
+        "blade_tip_or_shroud.default": {"enabled": false, "treatment": "none", "radius_mm": 0.0}
+      },
+      "description": "Open impeller with optional blade edge transitions disabled."
+    },
+    {
+      "case_id": "v09_closed_chamfer_hood",
+      "category": "golden",
+      "preset_id": "radial_closed_reference_v0_9",
+      "transition_overrides": {
+        "hood_inlet_lip.default": {"enabled": true, "treatment": "chamfer", "radius_mm": 4.0},
+        "hood_outlet_lip.default": {"enabled": true, "treatment": "chamfer", "radius_mm": 4.0}
+      },
+      "description": "Closed impeller with hood lip chamfer transitions."
+    },
+    {
+      "case_id": "v09_open_high_blade_count",
+      "category": "golden",
+      "preset_id": "radial_open_reference_v0_9",
+      "parameter_overrides": {
+        "blade_count": 18
+      },
+      "description": "Open impeller count variation for topology and region accounting."
+    },
+    {
+      "case_id": "v09_negative_inverted_fillet",
+      "category": "negative",
+      "preset_id": "radial_open_reference_v0_9",
+      "expected_status": "FAIL",
+      "description": "Synthetic regression slot for inverted or concave transition validation."
+    },
+    {
+      "case_id": "v09_negative_untrimmed_transition",
+      "category": "negative",
+      "preset_id": "radial_open_reference_v0_9",
+      "expected_status": "FAIL",
+      "description": "Synthetic regression slot for transition surfaces that do not trim adjacent main faces."
+    }
+  ]
+}

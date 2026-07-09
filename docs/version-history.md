@@ -2,7 +2,7 @@
 
 This repository keeps previous impeller DSL versions in source control and in versioned resource folders. The goal is to preserve the research trail: observed loss, revised semantics, new DSL contracts, and implementation behavior should remain auditable.
 
-Current latest baseline: `v0_7`. V0.6 remains the support-face B-Rep and mesh-inspection line; V0.7 is the bounded B-Rep transition-policy, OBJ mesh artifact, mesh overlay, and OCCT reimport bounding-box line.
+Current latest development line: `v1_1`. V1.1 is the blade-to-blade loop surface-family constructor line. V1.0 is preserved as the topology-first native face constructor line. V0.9/V0.91 remain the transition-validity research baselines.
 
 ## Git Milestones
 
@@ -15,6 +15,8 @@ Current latest baseline: `v0_7`. V0.6 remains the support-face B-Rep and mesh-in
 | v0.5 export contract | local implementation | Surface-graph-faithful STL/STEP export contract with region provenance. |
 | v0.6 B-Rep evidence line | local implementation | Graph-derived unsewn NURBS/analytic B-Rep support-face STEP export, CFD surface mesh inspection manifest, Model Output artifacts, and explicit fillet/blend controls. |
 | v0.7 bounded transition line | current branch | Bounded B-Rep face export, edge-family transition policies, OBJ mesh artifacts, mesh overlay inspection, and OCCT reimport bounding-box gate. |
+| v1.0 topology-first constructor | current worktree | Native named blade edge, root, hub, bore, and bevel faces with shared-edge topology identity and V1.0 validation gates. |
+| v1.1 blade-to-blade surface family | current worktree | Five span-station blade-to-blade loop family, main/splitter passage-bisector semantics, half-thickness edge caps, explicit V1.1 hub solid review faces, and shared-boundary UV mesh contracts. |
 
 Version tags:
 
@@ -191,6 +193,83 @@ Known boundary:
 - Bounded faces are unsewn and partially scoped to supported annular face families.
 - OBJ and STL remain sampled mesh review artifacts, not manufacturing CAD.
 - V0.7 does not claim sewn-solid certification, solver-ready CFD volume meshes, production meshing adapters, or manufacturing validation.
+
+## V1.0 Topology-First Closed NURBS Impeller Constructor
+
+Location:
+
+```text
+src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v1_0
+```
+
+Primary preset ids:
+
+```text
+radial_open_reference_v1_0
+radial_closed_reference_v1_0
+```
+
+Purpose:
+
+- Replace post-generated edge treatments with native named blade, root, hub, bore, and bevel faces.
+- Generate pressure, suction, leading-edge, trailing-edge, tip, and root faces as first-class topology faces.
+- Generate hub bottom, mounting bore, and bevel/chamfer faces directly from the hub profile.
+- Add shared-edge topology identity with zero synthetic shared edges for the V1.0 sampled review graph.
+- Route the first two frontend throughflow presets to V1.0.
+
+Known boundary:
+
+- V1.0 remains sampled review-grade geometry.
+- Exact sewn OCCT B-Rep solids, production meshing, and solver-ready CFD remain future integration work.
+
+## V1.1 Blade-To-Blade Loop Surface-Family Constructor
+
+Location:
+
+```text
+src/part_rule_synthesis/dsl/impeller/axisymmetric_throughflow_radial_bladed/v1_1
+```
+
+Primary preset ids:
+
+```text
+radial_open_reference_v1_1
+radial_closed_reference_v1_1
+radial_open_high_twist_thin_reference_v1_1
+```
+
+Purpose:
+
+- Replace V1.0.4 local section-loop semantics with an unwrapped blade-to-blade domain `D_h = (s, q, h)`.
+- Generate five span-station loop families at `h = 0.00, 0.25, 0.50, 0.75, 1.00`.
+- Generate pressure, suction, leading-edge, trailing-edge, root attachment, and tip/shroud attachment surfaces from shared loop boundaries.
+- Position splitter blades by the adjacent main-blade passage bisector rather than by an independently reset local camber curve.
+- Define leading/trailing edge caps in physical `s_mm-q_mm` space with default sagitta equal to half local blade thickness.
+- Emit explicit hub support/material review faces, including annulus, bottom, outer wall, and mounting bore surfaces.
+- Keep frontend edits routed through `profile_overrides` for meridional profiles and `blade_to_blade_loop_family_overrides` for loop-family controls.
+
+Known boundary:
+
+- V1.1 remains sampled review-grade geometry.
+- It does not yet claim exact sewn OCCT solids, certified manufacturing CAD, solver-ready CFD volume meshes, or automatic expert-rule patching.
+- The V1.1 ontology slice is currently encoded through DSL schema, constructor classification/material-domain contracts, export contracts, and capability matrices; there is no separate `src/part_rule_synthesis/ontology/impeller/v1_1` resource folder yet.
+
+Evidence:
+
+```text
+docs/evidence/2026-07-08-impeller-v1-1-milestone-summary.md
+docs/evidence/2026-07-08-impeller-v1-1-preset-hub-solid-display-evidence.md
+docs/evidence/2026-07-08-impeller-v1-1-1-viewer-preset-parameter-overhaul-evidence.md
+```
+
+### V1.1.1 - Viewer, Preset, And Parameter Overhaul
+
+- Clarifies shaded/wireframe/combined viewer semantics.
+- Makes CFD360 mesh inspection use all visible sampled surfaces instead of only transition regions.
+- Narrows the active V1.1 catalog to five representative presets: open throughflow, closed throughflow, NASA Stage 37 stator ring, RR UltraFan CTi fan, and public rocket turbopump inducer.
+- Adds zero-splitter closed preset support.
+- Moves V1.1 frontend parameter visibility and order to preset-owned `editable_parameters`.
+- Raises the RR UltraFan CTi fan review sampling density enough for bounded STEP export fit validation without changing its shape parameters.
 
 ## How To Run A Specific Version
 

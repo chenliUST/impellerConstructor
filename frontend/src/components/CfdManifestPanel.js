@@ -1,7 +1,7 @@
 import React from "react";
 
-import { cfdPatchGroups, cfdPatchInstances } from "../simulationViewModel.js";
-import { MeshInspectionPanel } from "./MeshInspectionPanel.js";
+import { cfdPatchGroups, cfdPatchInstances } from "../simulationViewModel.js?v=1.1.5";
+import { MeshInspectionPanel } from "./MeshInspectionPanel.js?v=1.1.5";
 
 const h = React.createElement;
 

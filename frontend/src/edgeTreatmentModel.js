@@ -29,6 +29,35 @@ export function edgeTreatmentRows(manifest) {
     );
 }
 
+export function transitionRuntimeSummary(manifest = {}) {
+  const meshManifest = manifest?.simulation_manifests?.cfd_surface_mesh || {};
+  const surfaceGraph = manifest?.geometry?.surface_graph || {};
+  const transitionRegions = Array.isArray(meshManifest.transition_regions)
+    ? meshManifest.transition_regions
+    : Object.values(meshManifest.transition_regions || {});
+  const status = manifest?.transition_geometry_status || surfaceGraph.transition_geometry_status || "";
+  const surfaceCount = numberOrFallback(
+    manifest?.transition_surface_count ?? surfaceGraph.transition_surface_count,
+    transitionRegions.length,
+  );
+  const unsupportedCount = numberOrFallback(manifest?.unsupported_transition_count, 0);
+  const failureCount = numberOrFallback(manifest?.transition_failure_count, 0);
+
+  return {
+    status,
+    surfaceCount,
+    unsupportedCount,
+    failureCount,
+    available:
+      Boolean(status) ||
+      Object.hasOwn(manifest || {}, "transition_surface_count") ||
+      Object.hasOwn(surfaceGraph || {}, "transition_surface_count") ||
+      transitionRegions.length > 0 ||
+      Object.hasOwn(manifest || {}, "unsupported_transition_count") ||
+      Object.hasOwn(manifest || {}, "transition_failure_count"),
+  };
+}
+
 export function updateTransitionRow(currentOverrides, policyId, patch, baseRow = null) {
   const next = { ...(currentOverrides || {}) };
   const row = { ...(next[policyId] || {}) };
@@ -134,4 +163,9 @@ function fallbackRadiusMm(baseRow) {
 function positiveRadius(radiusMm) {
   const radius = Number(radiusMm);
   return Number.isFinite(radius) && radius > 0;
+}
+
+function numberOrFallback(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }

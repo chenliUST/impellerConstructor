@@ -1,6 +1,6 @@
 import React from "react";
 
-import { geometryStats, layerSchema } from "../workspaceModel.js";
+import { geometryStats, layerSchema } from "../workspaceModel.js?v=1.1.5";
 
 const h = React.createElement;
 

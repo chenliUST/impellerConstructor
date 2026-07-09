@@ -36,6 +36,26 @@ def test_write_surface_graph_obj_reports_transition_regions(tmp_path: Path):
     ]
 
 
+def test_write_surface_graph_obj_uses_transition_aware_mesh_for_resolved_graph(tmp_path: Path):
+    obj_path = tmp_path / "impeller.obj"
+
+    manifest = write_surface_graph_obj(
+        obj_path,
+        "impeller",
+        {
+            **_transition_surface_graph(),
+            "transition_geometry_status": "resolved_trimmed_surface_graph",
+        },
+        view_id="feature_debug",
+    )
+
+    assert manifest["mesh_type"] == "transition_aware_surface_mesh"
+    assert manifest["source"] == "transition_resolved_surface_graph"
+    assert manifest["transition_regions"][0]["edge_treatment_site_id"] == "blade_0.root_to_hub"
+    assert manifest["transition_regions"][0]["quality"]["max_aspect_ratio"] > 0
+    assert "g blade_0_root_transition_surface" in obj_path.read_text(encoding="utf-8")
+
+
 def test_write_surface_graph_obj_reports_edge_derived_transition_regions_once(tmp_path: Path):
     obj_path = tmp_path / "impeller.obj"
 
@@ -91,8 +111,11 @@ def _transition_surface_graph() -> dict:
                 "id": "blade_0_root_transition_surface",
                 "feature_id": "blade_00.root_transition",
                 "role": "blade_root_fillet",
+                "edge_treatment_site_id": "blade_0.root_to_hub",
                 "edge_family": "blade_root_to_hub",
                 "transition_policy_id": "blade_root_to_hub.default",
+                "treatment": "fillet",
+                "radius_mm": 8.0,
                 "uv_grid": [
                     [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
                     [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],

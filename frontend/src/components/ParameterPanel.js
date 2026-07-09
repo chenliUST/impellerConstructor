@@ -1,14 +1,15 @@
 import React from "react";
 
-import { parameterGroups, parameterSchema } from "../appModel.js";
+import { parameterGroups, parameterSchemaForPreset } from "../appModel.js?v=1.1.5";
 
 const h = React.createElement;
 
-export function ParameterPanel({ parameters, onChange, onGenerate, onReset, loading }) {
+export function ParameterPanel({ activePreset, parameters, onChange, onGenerate, onReset, loading }) {
+  const visibleParameterSchema = parameterSchemaForPreset(activePreset);
   const groupedParameters = parameterGroups
     .map((group) => ({
       ...group,
-      entries: Object.entries(parameterSchema).filter(([, spec]) => spec.group === group.id),
+      entries: Object.entries(visibleParameterSchema).filter(([, spec]) => spec.group === group.id),
     }))
     .filter((group) => group.entries.length > 0);
 

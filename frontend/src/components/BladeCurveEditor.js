@@ -8,7 +8,7 @@ import {
   screenToCurvePoint,
   updateCurvePoint,
   validateCurveOverrides,
-} from "../bladeCurveEditorModel.js";
+} from "../bladeCurveEditorModel.js?v=1.1.5";
 
 const h = React.createElement;
 const viewport = { width: 420, height: 128 };

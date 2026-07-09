@@ -1,0 +1,42 @@
+{
+  "matrix_id": "impeller_v1_0_3_kernel_capabilities",
+  "version": "1.0.3",
+  "status_values": ["supported", "partial", "research_grade", "unsupported"],
+  "capabilities": [
+    {
+      "id": "surface_graph_generation",
+      "status": "partial",
+      "claim": "V1.0.3 generates a review-grade open section-loop surface graph with blade faces, segmented root blends, and open tip domes."
+    },
+    {
+      "id": "section_loop_blade_face_network",
+      "status": "partial",
+      "claim": "Section-loop blade pressure, suction, leading-edge, trailing-edge, root-blend, and open tip-dome surfaces are emitted as sampled review-grade topology faces."
+    },
+    {
+      "id": "native_hub_bore_bevel_faces",
+      "status": "partial",
+      "claim": "V1.0.3 emits a sampled hub support surface for root projection; full native hub, bore, and bevel analytic face coverage remains partial."
+    },
+    {
+      "id": "section_loop_shared_edge_quad_mesh",
+      "status": "partial",
+      "claim": "V1.0.3 emits review-grade quad mesh metadata and UV wireframes for section-loop blade, root, tip, and support surfaces."
+    },
+    {
+      "id": "bounded_review_brep_step",
+      "status": "partial",
+      "claim": "V1.0.3 bounded STEP export is generated from sampled surface graph faces as unsewn review B-Rep surfaces."
+    },
+    {
+      "id": "solver_ready_cfd",
+      "status": "unsupported",
+      "claim": "V1.0.3 does not produce solver-ready CFD volume meshes."
+    },
+    {
+      "id": "automatic_expert_rule_patching",
+      "status": "unsupported",
+      "claim": "Expert feedback can be linked to surfaces, rules, and cases, but is not automatically converted into constructor rule patches."
+    }
+  ]
+}
