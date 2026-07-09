@@ -32,6 +32,8 @@ The files in this directory must remain available for future review so the proje
   Explicit semantic changes introduced by V1.0.
 - `test-transcript-summary.md`
   Commands and pass/fail counts recorded during V1.0 implementation.
+- `blade-to-blade-loop-sandbox.html`
+  Standalone 2D blade-to-blade loop sandbox used during V1.1 construction-rule discussion.
 
 ## Worktree Policy
 
