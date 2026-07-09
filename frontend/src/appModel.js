@@ -68,6 +68,11 @@ export function curveControlsForPreset(presetRef) {
   return clonePlainObject(preset?.curveControls || v10SectionLoopCurveControls());
 }
 
+export function canonicalParameterizationForPreset(presetRef) {
+  const preset = resolvePresetReference(presetRef);
+  return clonePlainObject(preset?.canonicalNurbsParameterization || {});
+}
+
 export function editorVisibilityForPreset(presetRef) {
   const preset = resolvePresetReference(presetRef);
   const presetId = String(preset?.presetId || preset?.id || "");
@@ -297,6 +302,48 @@ function v111Metadata() {
     geometryVersion: "1.1",
     geometryPatchVersion: "1.1.1",
     transitionGeometryStatus: v111TransitionGeometryStatus,
+  };
+}
+
+function v112CanonicalFromPreset({ parameters, profileOverrides, loopFamilyDefaults }) {
+  const hub = profileOverrides?.hub_profile?.control_points || [];
+  const tip = profileOverrides?.tip_or_shroud_profile?.control_points || [];
+  return {
+    canonical_payload_version: "1.1.2",
+    math_parameterization: "v1_1_2_canonical_nurbs_parameterization",
+    canonical_input_source: "translated_from_legacy_v1_1",
+    support_profiles: {
+      hub_profile: profile(hub),
+      tip_or_shroud_profile: profile(tip),
+    },
+    active_span_policy: {
+      root_offset: {
+        mode: "thickness_ratio",
+        resolved_constant_mm: loopFamilyDefaults.root_attachment_lift_mm || parameters.root_fillet_radius_mm || 0,
+      },
+      tip_offset: {
+        mode: "closed_shroud_thickness_ratio_or_open_zero",
+        resolved_constant_mm: loopFamilyDefaults.shroud_blade_inset_mm || 0,
+      },
+    },
+    blade_population: { ...loopFamilyDefaults },
+    section_loop_family: {
+      mode: "skeleton_thickness_caps",
+      span_stations_h: loopFamilyDefaults.span_stations_h || [0, 0.25, 0.5, 0.75, 1],
+    },
+  };
+}
+
+function withV112CanonicalPreset(preset) {
+  return {
+    ...preset,
+    geometryPatchVersion: "1.1.2",
+    metadata: {
+      ...v111Metadata(),
+      geometryPatchVersion: "1.1.2",
+      mathParameterization: "v1_1_2_canonical_nurbs_parameterization",
+    },
+    canonicalNurbsParameterization: v112CanonicalFromPreset(preset),
   };
 }
 
@@ -603,7 +650,7 @@ export const presets = [
       [[0, 2.5], [0.45, 2.1], [1, 1.2]],
     ),
   },
-].sort((left, right) => presetDisplayRank(left) - presetDisplayRank(right));
+].map(withV112CanonicalPreset).sort((left, right) => presetDisplayRank(left) - presetDisplayRank(right));
 
 function presetDisplayRank(preset) {
   const preferredOrder = {

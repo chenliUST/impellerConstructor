@@ -42,7 +42,7 @@ describe("impeller frontend model", () => {
     }
   });
 
-  test("v1.1.1 frontend catalog contains exactly five representative presets", () => {
+  test("v1.1.2 frontend catalog contains exactly five representative presets", () => {
     assert.deepEqual(
       presets.map((preset) => preset.id),
       [
@@ -63,10 +63,10 @@ describe("impeller frontend model", () => {
         "public_rocket_turbopump_inducer_v1_1",
       ],
     );
-    assert.ok(presets.every((preset) => preset.geometryPatchVersion === "1.1.1"));
+    assert.ok(presets.every((preset) => preset.geometryPatchVersion === "1.1.2"));
   });
 
-  test("v1.1.1 parameter panel schema follows preset editableParameters", () => {
+  test("v1.1.2 parameter panel schema follows preset editableParameters", () => {
     const open = presets[0];
     const closed = presets[1];
     const nasaStage37 = "public-nasa-stage37-stator-ring";
@@ -99,7 +99,7 @@ describe("impeller frontend model", () => {
     assert.ok(hiddenParameterIdsForPreset(open).includes("leading_edge_radius_mm"));
   });
 
-  test("v1.1.1 frontend open and closed population defaults match backend contract", () => {
+  test("v1.1.2 frontend open and closed population defaults match backend contract", () => {
     const open = presets[0];
     const closed = presets[1];
 
@@ -111,7 +111,7 @@ describe("impeller frontend model", () => {
     assert.equal(closed.loopFamilyDefaults.splitter_blade_count, 0);
   });
 
-  test("v1.1.1 closed preset sends the closed shroud material-domain profiles", () => {
+  test("v1.1.2 closed preset sends the closed shroud material-domain profiles", () => {
     const closed = presets.find((preset) => preset.id === "axisymmetric-nurbs-closed-throughflow");
 
     assert.deepEqual(closed.profileOverrides.hub_profile.control_points, [
@@ -250,9 +250,9 @@ describe("impeller frontend model", () => {
     assert.equal("blade_to_blade_loop_family_overrides" in payload, false);
   });
 
-  test("first UI preset advertises active v1.1.1 geometry contract", () => {
+  test("first UI preset advertises active v1.1.2 geometry contract", () => {
     assert.equal(presets[0].presetId, "radial_open_reference_v1_1");
-    assert.equal(presets[0].geometryPatchVersion, "1.1.1");
+    assert.equal(presets[0].geometryPatchVersion, "1.1.2");
     assert.match(presets[0].name, /v1\.1/);
     assert.equal(
       presets[0].metadata.transitionGeometryStatus,
@@ -260,7 +260,14 @@ describe("impeller frontend model", () => {
     );
   });
 
-  test("curve-owned values are not duplicated as scalar controls for v1.1.1 open preset", () => {
+  test("v1.1.2 frontend presets expose canonical parameterization defaults", () => {
+    const open = presets[0];
+    assert.equal(open.geometryPatchVersion, "1.1.2");
+    assert.equal(open.canonicalNurbsParameterization.canonical_payload_version, "1.1.2");
+    assert.equal(open.canonicalNurbsParameterization.blade_population.main_blade_count, 8);
+  });
+
+  test("curve-owned values are not duplicated as scalar controls for v1.1.2 open preset", () => {
     const hidden = hiddenParameterIdsForPreset("radial_open_reference_v1_1");
 
     assert.ok(hidden.includes("root_fillet_radius_mm"));
