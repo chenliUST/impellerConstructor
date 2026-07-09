@@ -26,28 +26,33 @@ AxisymmetricThroughflowRadialBladedImpeller
 
 Current focus:
 
-- radial open impeller preset `radial_open_reference_v0_7`
-- radial closed impeller preset `radial_closed_reference_v0_7`
-- sampled surface graph generation
-- surface-graph-faithful STL exports for external CAD review
-- OBJ mesh artifacts with transition-region provenance for external visual review
-- generated STEP files as bounded, unsewn B-Rep faces for supported V0.7 surface-graph regions
-- edge-family transition policy metadata carried through generated geometry, OBJ exports, and CFD surface mesh manifests
+- radial open impeller preset `radial_open_reference_v1_1`
+- radial closed impeller preset `radial_closed_reference_v1_1`
+- high-twist thin inspection preset `radial_open_high_twist_thin_reference_v1_1`
+- V1.1 blade-to-blade five-loop surface-family construction
+- main/splitter passage-bisector semantics
+- half-thickness leading/trailing edge cap semantics in physical `s_mm-q_mm`
+- explicit sampled hub support/material review faces, including mounting bore and bottom thickness
+- sampled surface graph generation and shared-boundary UV mesh review
+- historical V0.7 bounded B-Rep, OBJ mesh, transition policy, and CFD surface mesh manifest paths retained as lineage evidence
 - surface/feature graph identity
 - full-360 CFD patch-group manifest and CFD surface mesh inspection manifest
 - schema-only FEA solid view
-- frontend CAD review, CFD full-360, mesh inspection, mesh overlay inspection, feature-debug views, export options, and edge-treatment controls
+- frontend CAD review, CFD full-360, mesh inspection, mesh overlay inspection, feature-debug views, export options, profile controls, and V1.1 blade-to-blade loop-family controls
 
-V0.7 advances the boundary from V0.6 support-face B-Rep evidence to bounded face
-export with transition-policy provenance. Manufacturing certification, sewn-solid
-validation, and CFD volume meshing remain outside this prototype.
+V1.1 advances the current geometry-construction boundary from local section-loop and post-transition repair toward a blade-to-blade loop-family surface graph. V0.7 remains the strongest bounded B-Rep export evidence line. Manufacturing certification, sewn-solid validation, and CFD volume meshing remain outside this prototype.
 
 ## Claims The Repository Can Make
 
 The current code can claim:
 
 - deterministic runtime compilation from versioned JSON DSL resources
-- deterministic sampled impeller surface graph for the v0.7 open and closed presets
+- deterministic sampled impeller surface graph for the V1.1 open, closed, and high-twist thin reference presets
+- V1.1 blade-to-blade loop-family construction in `(s, q, h)` with `q = r * delta_theta`
+- V1.1 main and splitter blade populations, including splitter passage-bisector positioning metrics
+- V1.1 leading/trailing edge caps with half-local-thickness sagitta in physical `s_mm-q_mm`
+- V1.1 root, open-tip, and closed-shroud attachment ribbons derived from actual blade loop boundaries
+- V1.1 explicit sampled hub material review faces, including mounting bore and bottom thickness
 - stable surface ids, feature ids, named boundary curves, and CFD patch group names for the tested presets
 - campaign signatures that freeze topology-level optimization shape
 - generated binary STL files derived from `manifest.geometry.surface_graph.surfaces[*].uv_grid`
@@ -60,6 +65,7 @@ The current code can claim:
 - documented evidence that v0.4 CadQuery exports can differ from the frontend surface graph, and v0.5 corrects the source-of-truth split
 - documented V0.6 implementation evidence for NURBS/analytic B-Rep support-face export, mesh inspection, and explicit fillet/blend controls
 - documented V0.7 implementation evidence for bounded face export with transition-policy provenance through geometry, OBJ, and mesh manifests
+- documented V1.1 implementation evidence for blade-to-blade construction logic, DSL resources, DSL-embedded ontology slice, half-thickness edge caps, splitter passage-bisector positioning, and V1.1 validation gates
 
 ## Claims The Repository Cannot Make Yet
 
@@ -70,6 +76,7 @@ The current code cannot yet claim:
 - watertight OCCT sewing or healing
 - sewn solid certification
 - exact variable-radius industrial CAD fillets or chamfers across all parameter values
+- exact analytic V1.1 blade/root/tip surfaces beyond the current sampled review-grade graph
 - universal CAD repair/import quality across the full parameter space
 - CFD mesh-quality view backed by an external production-grade mesher
 - mesher-ready CFD volume domain
