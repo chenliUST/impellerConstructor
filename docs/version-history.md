@@ -278,7 +278,10 @@ docs/evidence/2026-07-08-impeller-v1-1-1-viewer-preset-parameter-overhaul-eviden
 - Defines active blade span through root/tip offset policy instead of implying that `h = 0` is the raw hub support surface.
 - Reclassifies leading and trailing edges as NURBS cap curves with rounded-cap intent and measured continuity, not semicircle primitives.
 - Requires all five active V1.1 presets to translate into `canonical_nurbs_parameterization`.
-- Adds a planned frontend `Parameter views` tab for generated-model multi-view annotations of resolved canonical parameters.
+- Adds a frontend `Parameter views` tab for generated-model multi-view annotations of resolved canonical parameters.
+- Surfaces canonical payload and metrics in runtime, surface graph, service manifest, and frontend preset defaults.
+- Uses pointwise active-span feasibility as the canonical diagnostic rule.
+- Scales bounded BREP fit tolerance by sampled grid resolution for large review-grade twisted surfaces while preserving finite-grid validation.
 
 Evidence and spec:
 
