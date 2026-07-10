@@ -72,6 +72,27 @@ export function selectedProjectionFailureKey(annotationsByView, viewIds, project
   return failures.length ? JSON.stringify(failures) : "";
 }
 
+export function projectionContextSignature(manifest, annotationsByView, viewIds) {
+  const views = [...new Set((viewIds || []).map(String))].sort().map((viewId) => {
+    const annotations = (annotationsByView?.[viewId] || [])
+      .map((annotation) => [
+        String(annotation.id),
+        Boolean(annotation.selected),
+        canonicalProjectionValue(annotation.anchor),
+      ])
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    return [viewId, annotations];
+  });
+  return JSON.stringify({ generationId: manifest?.generation_id ?? null, views });
+}
+
+export function projectionFailureNotificationKey(failureKey, contextSignature, projectionEpoch) {
+  if (!failureKey) {
+    return "";
+  }
+  return JSON.stringify([Number(projectionEpoch) || 0, String(contextSignature), String(failureKey)]);
+}
+
 export function orthographicCameraFrame(bounds, viewId, aspect) {
   const radius = Math.max(Number(bounds.radius) || 1, 1);
   const distance = radius * 4;
@@ -165,4 +186,19 @@ function finiteDimension(value) {
 function coordinateInsideViewport(coordinate, start, size, canvasSize) {
   const end = start + size;
   return coordinate >= start && (coordinate < end || (end === canvasSize && coordinate === end));
+}
+
+function canonicalProjectionValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalProjectionValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalProjectionValue(value[key])]),
+    );
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    return String(value);
+  }
+  return value === undefined ? "__undefined__" : value;
 }

@@ -65,8 +65,26 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /annotationsByView\[viewId\]/);
     assert.match(source, /const projectionReady\s*=/);
     assert.match(source, /const projectionFailureKey\s*=\s*projectionReady/);
-    assert.match(source, /if \(projectionFailureKey\)/);
-    assert.match(source, /\[onProjectionError,\s*projectionFailureKey\]/);
+    assert.match(source, /projectionContextSignature\(manifest,\s*annotationsByView,\s*geometricViews\)/);
+    assert.match(source, /projectionFailureNotificationKey\(\s*projectionFailureKey,\s*projectionContextKey,\s*projectionEpoch/);
+    assert.match(source, /if \(projectionNotificationKey\)/);
+    assert.match(source, /\[onProjectionError,\s*projectionNotificationKey\]/);
+  });
+
+  test("increments the projection epoch only after scene refs and initial camera framing are installed", () => {
+    const source = readFileSync(scenePath, "utf-8");
+    const sceneInstallIndex = source.indexOf("scene.add(group);");
+    const refsIndex = source.indexOf("groupRef.current = group;");
+    const initialFrameIndex = source.indexOf("resize();");
+    const installedContextIndex = source.indexOf("installedSceneRef.current = { manifest, surfaceGraph };");
+    const epochIndex = source.indexOf("setProjectionEpoch((epoch) => epoch + 1);");
+
+    assert.match(source, /const \[projectionEpoch, setProjectionEpoch\] = useState\(0\)/);
+    assert.ok(sceneInstallIndex >= 0 && sceneInstallIndex < refsIndex);
+    assert.ok(refsIndex < initialFrameIndex);
+    assert.ok(initialFrameIndex < installedContextIndex);
+    assert.ok(installedContextIndex < epochIndex);
+    assert.match(source, /key:\s*`\$\{viewId\}:\$\{projectionEpoch\}`/);
   });
 
   test("reapplies selection and visibility after manifest-driven scene rebuilds", () => {

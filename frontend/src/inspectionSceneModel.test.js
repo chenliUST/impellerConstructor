@@ -6,6 +6,8 @@ import * as inspectionSceneModel from "./inspectionSceneModel.js";
 const {
   inspectionViewportRects,
   orthographicCameraFrame,
+  projectionContextSignature,
+  projectionFailureNotificationKey,
   resolveInspectionAnchor,
   selectedProjectionFailureKey,
   viewportAtPointer,
@@ -210,5 +212,64 @@ describe("inspection scene model", () => {
       selectedProjectionFailureKey(annotationsByView, ["3d", "top"], projectAnchorForView),
       '[["3d","alpha"],["top","zeta"]]',
     );
+  });
+
+  test("projection notification keys distinguish the same failure across generation ids", () => {
+    assert.equal(typeof projectionContextSignature, "function");
+    assert.equal(typeof projectionFailureNotificationKey, "function");
+    const annotations = {
+      "3d": [{ id: "same-surface", selected: true, anchor: { kind: "surface", surfaceId: "same" } }],
+    };
+    const contextA = projectionContextSignature({ generation_id: "generation-a" }, annotations, ["3d"]);
+    const contextB = projectionContextSignature({ generation_id: "generation-b" }, annotations, ["3d"]);
+
+    assert.notEqual(contextA, contextB);
+    assert.notEqual(
+      projectionFailureNotificationKey('[["3d","same-surface"]]', contextA, 4),
+      projectionFailureNotificationKey('[["3d","same-surface"]]', contextB, 4),
+    );
+  });
+
+  test("projection notification keys distinguish changed selection and anchor context", () => {
+    assert.equal(typeof projectionContextSignature, "function");
+    assert.equal(typeof projectionFailureNotificationKey, "function");
+    const manifest = { generation_id: "generation-a" };
+    const selectedContext = projectionContextSignature(
+      manifest,
+      { "3d": [{ id: "same", selected: true, anchor: { kind: "surface", surfaceId: "surface-a" } }] },
+      ["3d"],
+    );
+    const changedContext = projectionContextSignature(
+      manifest,
+      { "3d": [{ id: "same", selected: true, anchor: { kind: "surface", surfaceId: "surface-b" } }] },
+      ["3d"],
+    );
+
+    assert.notEqual(selectedContext, changedContext);
+    assert.notEqual(
+      projectionFailureNotificationKey('[["3d","same"]]', selectedContext, 4),
+      projectionFailureNotificationKey('[["3d","same"]]', changedContext, 4),
+    );
+  });
+
+  test("stable projection context and epoch produce a stable notification key", () => {
+    assert.equal(typeof projectionContextSignature, "function");
+    assert.equal(typeof projectionFailureNotificationKey, "function");
+    const manifest = { generation_id: "generation-a" };
+    const firstContext = projectionContextSignature(
+      manifest,
+      { "3d": [{ id: "same", selected: true, anchor: { kind: "surface", surfaceId: "surface-a" } }] },
+      ["3d"],
+    );
+    const equivalentContext = projectionContextSignature(
+      manifest,
+      { "3d": [{ id: "same", selected: true, anchor: { surfaceId: "surface-a", kind: "surface" } }] },
+      ["3d"],
+    );
+    const stableKey = projectionFailureNotificationKey('[["3d","same"]]', firstContext, 4);
+
+    assert.equal(firstContext, equivalentContext);
+    assert.equal(stableKey, projectionFailureNotificationKey('[["3d","same"]]', equivalentContext, 4));
+    assert.notEqual(stableKey, projectionFailureNotificationKey('[["3d","same"]]', equivalentContext, 5));
   });
 });

@@ -5,6 +5,8 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   inspectionViewportRects,
   orthographicCameraFrame,
+  projectionContextSignature,
+  projectionFailureNotificationKey,
   resolveInspectionAnchor,
   selectedProjectionFailureKey,
   viewportAtPointer,
@@ -38,10 +40,12 @@ export function InspectionScene({
   const rectsRef = useRef({});
   const sizeRef = useRef({ width: 0, height: 0 });
   const resizeRef = useRef(null);
+  const installedSceneRef = useRef(null);
   const layoutRef = useRef(layout);
   const onSelectSurfaceRef = useRef(onSelectSurface);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [surfaceCount, setSurfaceCount] = useState(0);
+  const [projectionEpoch, setProjectionEpoch] = useState(0);
   const [projectionVersion, setProjectionVersion] = useState(0);
 
   layoutRef.current = layout;
@@ -173,6 +177,8 @@ export function InspectionScene({
     const observer = new ResizeObserver(resize);
     observer.observe(container);
     resize();
+    installedSceneRef.current = { manifest, surfaceGraph };
+    setProjectionEpoch((epoch) => epoch + 1);
 
     const setActiveControl = (activeViewId) => {
       Object.entries(controls).forEach(([viewId, control]) => {
@@ -255,6 +261,7 @@ export function InspectionScene({
       controlsRef.current = null;
       boundsRef.current = null;
       resizeRef.current = null;
+      installedSceneRef.current = null;
     };
   }, [manifest, surfaceGraph]);
 
@@ -316,16 +323,29 @@ export function InspectionScene({
     return (anchor) => projectInspectionAnchor(anchor, manifest, surfaceGraph, camera, bounds, rect);
   };
   const projectionReady =
-    viewportSize.width > 0 && viewportSize.height > 0 && Boolean(camerasRef.current && boundsRef.current);
+    viewportSize.width > 0 &&
+    viewportSize.height > 0 &&
+    projectionEpoch > 0 &&
+    installedSceneRef.current?.manifest === manifest &&
+    installedSceneRef.current?.surfaceGraph === surfaceGraph &&
+    Boolean(camerasRef.current && boundsRef.current);
   const projectionFailureKey = projectionReady
     ? selectedProjectionFailureKey(annotationsByView, geometricViews, projectionForView)
     : "";
+  const projectionContextKey = projectionContextSignature(manifest, annotationsByView, geometricViews);
+  const projectionNotificationKey = projectionReady
+    ? projectionFailureNotificationKey(
+        projectionFailureKey,
+        projectionContextKey,
+        projectionEpoch,
+      )
+    : "";
 
   useEffect(() => {
-    if (projectionFailureKey) {
+    if (projectionNotificationKey) {
       onProjectionError?.("parameter_inspection_projection_failed");
     }
-  }, [onProjectionError, projectionFailureKey]);
+  }, [onProjectionError, projectionNotificationKey]);
 
   return h(
     "div",
@@ -333,6 +353,7 @@ export function InspectionScene({
       className: "inspection-scene",
       style: { position: "relative", width: "100%", height: "100%", minWidth: 0, minHeight: 0 },
       "data-layout": layout,
+      "data-projection-epoch": projectionEpoch,
       "data-projection-version": projectionVersion,
     },
     h("div", {
@@ -352,7 +373,7 @@ export function InspectionScene({
         "svg",
         {
           className: `inspection-annotation-viewport inspection-annotation-${viewId}`,
-          key: viewId,
+          key: `${viewId}:${projectionEpoch}`,
           viewBox: `0 0 ${rect.width} ${rect.height}`,
           width: rect.width,
           height: rect.height,
