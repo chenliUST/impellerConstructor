@@ -133,7 +133,16 @@ def validate_parameter_inspection_contract(
             for parameter in contract["parameters"]
         ):
             failures.append({"reason": "parameter_inspection_contract_unsupported"})
-        failures.extend(_validate_engineering_parameters(contract["parameters"]))
+        measurement_failures = _validate_engineering_parameters(contract["parameters"])
+        if not measurement_failures and not _engineering_parameters_match_source_geometry(
+            surface_graph,
+            contract["parameters"],
+            span_stations,
+            section_loops,
+            surface_graph.get("canonical_nurbs_parameterization", {}).get("support_profiles", {}),
+        ):
+            failures.append({"reason": "parameter_inspection_contract_unsupported"})
+        failures.extend(measurement_failures)
     return failures
 
 
@@ -457,6 +466,7 @@ def _dimension_definition_is_well_formed(definition: Any) -> bool:
         return (
             _coordinate_vector(definition.get("reference_direction"))
             and _coordinate_vector(definition.get("measured_direction"))
+            and len(definition["reference_direction"]) == len(definition["measured_direction"])
             and _vector_norm(definition["reference_direction"]) > 1.0e-9
             and _vector_norm(definition["measured_direction"]) > 1.0e-9
         )
@@ -492,12 +502,229 @@ def _selection_scope_is_valid(
             return False
     segment_id = scope.get("section_segment_id")
     if segment_id is not None:
-        if loop_id is None or not any(
-            segment.get("section_segment_id") == segment_id
-            for segment in section_loops[loop_id].get("segment_references", {}).values()
+        if loop_id is None:
+            return False
+        segment = next(
+            (
+                record
+                for record in section_loops[loop_id].get("segment_references", {}).values()
+                if record.get("section_segment_id") == segment_id
+            ),
+            None,
+        )
+        if segment is None:
+            return False
+        source_control_point_id = scope.get("source_control_point_id")
+        if source_control_point_id is not None and not any(
+            record.get("control_point_id") == source_control_point_id
+            for record in segment.get("control_points", [])
         ):
             return False
     return True
+
+
+def _engineering_parameters_match_source_geometry(
+    surface_graph: Mapping[str, Any],
+    parameters: Sequence[Mapping[str, Any]],
+    span_stations: Mapping[str, Any],
+    section_loops: Mapping[str, Any],
+    support_profiles: Mapping[str, Any],
+) -> bool:
+    surfaces = {
+        surface.get("id"): surface
+        for surface in surface_graph.get("surfaces", [])
+        if isinstance(surface, Mapping) and _nonempty_string(surface.get("id"))
+    }
+    for parameter in parameters:
+        scope = parameter["selection_scope"]
+        parameter_id = parameter["parameter_id"]
+        source_control_point_id = scope.get("source_control_point_id")
+        if source_control_point_id is not None and not _section_control_matches_source(
+            parameter, scope, section_loops
+        ):
+            return False
+        if "source_profile_control_index" in scope and not _profile_control_matches_source(
+            parameter, scope, support_profiles
+        ):
+            return False
+        if parameter_id.endswith(".profile.degree") and not _profile_curve_matches_source(
+            parameter, scope, support_profiles
+        ):
+            return False
+        if ":pose.station." in parameter_id and not _station_parameter_matches_source(
+            parameter, scope, span_stations, section_loops
+        ):
+            return False
+        if parameter_id.endswith(":thickness") and not _thickness_parameter_matches_source(
+            parameter, scope, section_loops
+        ):
+            return False
+        if ":sagitta" in parameter_id and not _sagitta_parameter_matches_source(
+            parameter, scope, section_loops
+        ):
+            return False
+        if "source_attachment_measurement" in scope and not _attachment_parameter_matches_source(
+            parameter, scope, surfaces
+        ):
+            return False
+    return True
+
+
+def _section_control_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], section_loops: Mapping[str, Any]
+) -> bool:
+    loop = section_loops.get(scope.get("section_loop_id"))
+    if loop is None:
+        return False
+    segment = next(
+        (
+            record
+            for record in loop.get("segment_references", {}).values()
+            if record.get("section_segment_id") == scope.get("section_segment_id")
+        ),
+        None,
+    )
+    record = next(
+        (
+            item
+            for item in (segment or {}).get("control_points", [])
+            if item.get("control_point_id") == scope.get("source_control_point_id")
+        ),
+        None,
+    )
+    if record is None:
+        return False
+    coordinates = record["display_coordinates_s_q_mm"]
+    axis_index = 0 if parameter["parameter_id"].endswith(":s") else 1
+    feature = parameter["feature_geometry"]
+    return (
+        len(feature) == 1
+        and feature[0].get("kind") == "control_point"
+        and feature[0].get("coordinates") == coordinates
+        and parameter["dimension_definition"] == _coordinate_dimension(coordinates, axis_index, "mm")
+        and parameter["resolved_value"] == abs(float(coordinates[axis_index]))
+    )
+
+
+def _profile_control_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], support_profiles: Mapping[str, Any]
+) -> bool:
+    profile = support_profiles.get(scope.get("source_profile_id"))
+    index = scope.get("source_profile_control_index")
+    if not isinstance(index, int) or profile is None or index < 0 or index >= len(profile.get("control_points", [])):
+        return False
+    coordinates = profile["control_points"][index]
+    axis_index = 0 if parameter["parameter_id"].endswith(".r") else 1
+    feature = parameter["feature_geometry"]
+    return (
+        len(feature) == 1
+        and feature[0].get("kind") == "control_point"
+        and feature[0].get("coordinates") == coordinates
+        and parameter["dimension_definition"] == _coordinate_dimension(coordinates, axis_index, "mm")
+        and parameter["resolved_value"] == abs(float(coordinates[axis_index]))
+    )
+
+
+def _profile_curve_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], support_profiles: Mapping[str, Any]
+) -> bool:
+    profile = support_profiles.get(scope.get("source_profile_id"))
+    features = parameter["feature_geometry"]
+    return (
+        profile is not None
+        and len(features) == 1
+        and features[0].get("kind") == "nurbs_curve"
+        and features[0].get("degree") == profile.get("degree")
+        and features[0].get("control_points") == profile.get("control_points")
+    )
+
+
+def _station_parameter_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], span_stations: Mapping[str, Any], section_loops: Mapping[str, Any]
+) -> bool:
+    station = span_stations.get(scope.get("span_station_id"))
+    loop = section_loops.get(scope.get("section_loop_id"))
+    features = parameter["feature_geometry"]
+    return (
+        station is not None
+        and loop is not None
+        and scope.get("source_station_index") == station.get("source_loop_index")
+        and parameter["resolved_value"] == station.get("h")
+        and len(features) == 1
+        and features[0].get("kind") == "local_frame"
+        and features[0].get("origin") == _station_reference_point(loop)
+    )
+
+
+def _thickness_parameter_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], section_loops: Mapping[str, Any]
+) -> bool:
+    loop = section_loops.get(scope.get("section_loop_id"))
+    if loop is None:
+        return False
+    endpoints = _section_thickness_endpoints(loop)
+    features = [feature.get("coordinates") for feature in parameter["feature_geometry"] if feature.get("kind") == "point"]
+    return (
+        features == endpoints
+        and parameter["dimension_definition"].get("measurement_points") == endpoints
+        and parameter["resolved_value"] == _distance(*endpoints)
+    )
+
+
+def _sagitta_parameter_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], section_loops: Mapping[str, Any]
+) -> bool:
+    loop = section_loops.get(scope.get("section_loop_id"))
+    segment = next(
+        (
+            record
+            for record in (loop or {}).get("segment_references", {}).values()
+            if record.get("section_segment_id") == scope.get("section_segment_id")
+        ),
+        None,
+    )
+    if segment is None:
+        return False
+    points = segment["display_points_s_q_mm"]
+    expected = [points[0], points[-1], points[len(points) // 2]]
+    return (
+        parameter["dimension_definition"].get("measurement_points") == expected
+        and parameter["resolved_value"] == _point_line_distance(expected[2], expected[0], expected[1])
+    )
+
+
+def _attachment_parameter_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surfaces: Mapping[str, Mapping[str, Any]]
+) -> bool:
+    surface = surfaces.get(scope.get("source_attachment_surface_id"))
+    points = _attachment_measurement_points(surface, scope.get("source_attachment_measurement")) if surface else None
+    features = [feature.get("coordinates") for feature in parameter["feature_geometry"] if feature.get("kind") == "point"]
+    return (
+        points is not None
+        and features == points
+        and parameter["dimension_definition"].get("measurement_points") == points
+        and parameter["resolved_value"] == _distance(*points)
+    )
+
+
+def _attachment_measurement_points(surface: Mapping[str, Any], measurement: Any) -> list[list[float]] | None:
+    if measurement == "root_width":
+        domain = surface.get("v1_1_root_domain_samples", {})
+        quality = surface.get("v1_1_root_quality", {})
+        scale = quality.get("root_streamwise_metric_scale_mm")
+        if _finite_number(scale):
+            return _metric_s_q_points([domain["hub_outer_loop_s_q"][0], domain["blade_inner_loop_s_q"][0]], float(scale))
+    if measurement == "root_lift":
+        rows = surface.get("uv_grid", [])
+        if rows and rows[0] and rows[-1]:
+            return [copy.deepcopy(rows[0][0]), copy.deepcopy(rows[-1][0])]
+    if measurement == "shroud_width":
+        edges = surface.get("edge_samples", {})
+        return [copy.deepcopy(edges["shroud_reference_loop"][0]), copy.deepcopy(edges["shroud_attachment_loop"][0])]
+    if measurement == "shroud_lift":
+        edges = surface.get("edge_samples", {})
+        return [copy.deepcopy(edges["blade_tip_loop"][0]), copy.deepcopy(edges["shroud_reference_loop"][0])]
+    return None
 
 
 def _coordinate_vector(value: Any) -> bool:
@@ -843,7 +1070,7 @@ def _append_complete_engineering_parameters(
             applicable_views=["meridional", "blade_3d"],
             feature_geometry=[curve],
             dimension_definition=None,
-            selection_scope={"support_profile_id": profile_id},
+            selection_scope={"support_profile_id": profile_id, "source_profile_id": profile_id},
         )
         for index, point in enumerate(profile.get("control_points", [])):
             if not _coordinate_vector(point):
@@ -867,7 +1094,11 @@ def _append_complete_engineering_parameters(
                         }
                     ],
                     dimension_definition=_coordinate_dimension(point, axis_index, "mm"),
-                    selection_scope={"support_profile_id": profile_id},
+                    selection_scope={
+                        "support_profile_id": profile_id,
+                        "source_profile_id": profile_id,
+                        "source_profile_control_index": index,
+                    },
                 )
 
     surface_by_id = {
@@ -930,12 +1161,13 @@ def _append_complete_engineering_parameters(
         loop_id = station["section_loop_id"]
         loop = section_loops[loop_id]
         blade_id = station["blade_instance_id"]
+        station_index = station["source_loop_index"]
         scope = {
             "blade_instance_id": blade_id,
             "span_station_id": station_id,
             "section_loop_id": loop_id,
+            "source_station_index": station_index,
         }
-        station_index = station["source_loop_index"]
         point = _station_reference_point(loop)
         pose_parameter_id = f"blade:{blade_id}:pose.station.{station_index}"
         append(
@@ -961,8 +1193,7 @@ def _append_complete_engineering_parameters(
         )
         for segment_name, segment in loop["segment_references"].items():
             segment_id = segment["section_segment_id"]
-            # The first generated control anchors each section segment's editable coordinate evidence.
-            for index, record in enumerate(segment["control_points"][:1]):
+            for index, record in enumerate(segment["control_points"]):
                 coordinates = record["display_coordinates_s_q_mm"]
                 for axis, axis_index in (("s", 0), ("q", 1)):
                     parameter_id = (
@@ -1143,9 +1374,39 @@ def _append_attachment_measurements(
     scale = quality.get("root_streamwise_metric_scale_mm")
     source = domain.get(source_key, []) if isinstance(domain, Mapping) else []
     target = domain.get(target_key, []) if isinstance(domain, Mapping) else []
-    if _finite_number(scale) and source and target:
+    if attachment == "root" and _finite_number(scale) and source and target:
         width_points = _metric_s_q_points([source[0], target[0]], float(scale))
-        _append_linear_parameter(append, f"{prefix}:width", f"{attachment.title()} attachment width", width_points, scope, "s_q_mm")
+        _append_linear_parameter(
+            append,
+            f"{prefix}:width",
+            f"{attachment.title()} attachment width",
+            width_points,
+            {
+                **scope,
+                "source_attachment_surface_id": surface["id"],
+                "source_attachment_measurement": "root_width",
+            },
+            "s_q_mm",
+        )
+    elif attachment == "shroud":
+        edges = surface.get("edge_samples", {})
+        width_points = [
+            edges.get("shroud_reference_loop", [None])[0],
+            edges.get("shroud_attachment_loop", [None])[0],
+        ]
+        if all(_coordinate_vector(point) for point in width_points):
+            _append_linear_parameter(
+                append,
+                f"{prefix}:width",
+                "Shroud attachment width",
+                width_points,
+                {
+                    **scope,
+                    "source_attachment_surface_id": surface["id"],
+                    "source_attachment_measurement": "shroud_width",
+                },
+                "xyz_mm",
+            )
     if attachment == "root":
         rows = surface.get("uv_grid", [])
         lift_points = [rows[0][0], rows[-1][0]] if rows and rows[0] and rows[-1] else []
@@ -1153,7 +1414,18 @@ def _append_attachment_measurements(
         edges = surface.get("edge_samples", {})
         lift_points = [edges.get("blade_tip_loop", [None])[0], edges.get("shroud_reference_loop", [None])[0]]
     if len(lift_points) == 2 and all(_coordinate_vector(point) for point in lift_points):
-        _append_linear_parameter(append, f"{prefix}:lift", f"{attachment.title()} attachment lift", lift_points, scope, "xyz_mm")
+        _append_linear_parameter(
+            append,
+            f"{prefix}:lift",
+            f"{attachment.title()} attachment lift",
+            lift_points,
+            {
+                **scope,
+                "source_attachment_surface_id": surface["id"],
+                "source_attachment_measurement": f"{attachment}_lift",
+            },
+            "xyz_mm",
+        )
 
 
 def _append_linear_parameter(

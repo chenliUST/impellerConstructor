@@ -350,6 +350,9 @@ class RuleSynthesisService:
             manifest["parameter_inspection_contract_version"] = dsl.get(
                 "parameter_inspection_contract_version", "1.1.3"
             )
+            manifest["parameter_inspection_capabilities"] = copy.deepcopy(
+                dsl.get("parameter_inspection_capabilities", [])
+            )
             manifest["generation_id"] = surface_graph.get("generation_id")
             manifest["parameter_inspection"] = copy.deepcopy(surface_graph.get("parameter_inspection", {}))
             if geometry_metadata.get("geometry_generation_status"):

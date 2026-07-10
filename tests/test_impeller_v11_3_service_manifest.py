@@ -47,6 +47,11 @@ def test_service_manifest_separates_runtime_and_geometry_versions(tmp_path):
         == "1.1.2"
     )
     assert manifest["generation_id"] == manifest["parameter_inspection"]["generation_id"]
+    assert manifest["parameter_inspection_capabilities"] == [
+        "engineering_feature_geometry",
+        "engineering_dimensions",
+        "s_q_blade_synchronized_selection",
+    ]
 
 
 def test_validation_rejects_missing_surface_reference():

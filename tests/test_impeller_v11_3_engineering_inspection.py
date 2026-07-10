@@ -226,3 +226,81 @@ def test_runtime_advertises_additive_engineering_inspection_capabilities():
         "engineering_dimensions",
         "s_q_blade_synchronized_selection",
     ]
+
+
+def test_closed_shroud_width_is_measured_from_closed_attachment_geometry():
+    contract = graph_for("radial_closed_reference_v1_1")["parameter_inspection"]
+    parameter = next(
+        parameter for parameter in contract["parameters"] if ":attachment:shroud:width" in parameter["parameter_id"]
+    )
+
+    assert parameter["selection_scope"]["source_attachment_measurement"] == "shroud_width"
+    assert abs(_measure_dimension(parameter["dimension_definition"]) - parameter["resolved_value"]) <= parameter[
+        "dimension_definition"
+    ]["tolerance"]
+
+
+def test_section_control_parameters_cover_every_generated_control_point():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+
+    expected_ids = set()
+    for station_id, station in contract["span_stations"].items():
+        blade_id = station["blade_instance_id"]
+        loop = contract["section_loops"][station["section_loop_id"]]
+        for segment_name, segment in loop["segment_references"].items():
+            for index in range(len(segment["control_points"])):
+                for axis in ("s", "q"):
+                    expected_ids.add(
+                        f"blade:{blade_id}:station:{station_id}:section:{segment_name}:control:{index}:{axis}"
+                    )
+
+    actual_ids = {
+        parameter["parameter_id"]
+        for parameter in contract["parameters"]
+        if ":section:" in parameter["parameter_id"] and ":control:" in parameter["parameter_id"]
+    }
+    assert actual_ids == expected_ids
+
+
+def test_validator_rejects_self_consistent_records_that_no_longer_match_source_geometry():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    parameter_ids = [
+        next(parameter["parameter_id"] for parameter in contract["parameters"] if ":control:0:s" in parameter["parameter_id"]),
+        "hub.profile.control.0.r",
+        next(parameter["parameter_id"] for parameter in contract["parameters"] if ":pose.station.0" in parameter["parameter_id"]),
+        next(parameter["parameter_id"] for parameter in contract["parameters"] if ":attachment:root:lift" in parameter["parameter_id"]),
+    ]
+
+    for parameter_id in parameter_ids:
+        malformed = deepcopy(contract)
+        parameter = next(item for item in malformed["parameters"] if item["parameter_id"] == parameter_id)
+        if parameter["dimension_definition"] is None:
+            parameter["resolved_value"] = float(parameter["resolved_value"]) + 0.1
+            parameter["feature_geometry"][0]["origin"][0] += 0.1
+        else:
+            definition = parameter["dimension_definition"]
+            if definition["kind"] == "control_coordinate":
+                parameter["feature_geometry"][0]["coordinates"][0] += 1.0
+                definition["measurement_points"][1][0] += 1.0
+                parameter["resolved_value"] = _measure_dimension(definition)
+            else:
+                parameter["feature_geometry"][-1]["coordinates"][0] += 1.0
+                definition["measurement_points"][1][0] += 1.0
+                parameter["resolved_value"] = _measure_dimension(definition)
+
+        assert validate_parameter_inspection_contract(graph, malformed) == [
+            {"reason": "parameter_inspection_contract_unsupported"}
+        ]
+
+
+def test_validator_rejects_angular_dimension_vectors_with_different_dimensions():
+    graph = graph_for()
+    malformed = deepcopy(graph["parameter_inspection"])
+    parameter = next(item for item in malformed["parameters"] if item["parameter_id"] == "blade.angular_pitch")
+    parameter["dimension_definition"]["measured_direction"].append(0.0)
+
+    assert validate_parameter_inspection_contract(graph, malformed) == [
+        {"reason": "parameter_inspection_contract_unsupported"}
+    ]
