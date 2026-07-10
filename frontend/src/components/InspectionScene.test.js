@@ -25,20 +25,22 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /renderer\.render\(scene,\s*cameras\[viewId\]\)/);
   });
 
-  test("builds the surface group once and updates selection materials in place", () => {
+  test("builds one monochrome surface group and updates mesh and contour selection in place", () => {
     const source = readFileSync(scenePath, "utf-8");
 
     assert.equal((source.match(/createSurfaceGraphGroup\(/g) || []).length, 1);
     assert.match(source, /createSurfaceGraphGroup\(\s*surfaceGraph,\s*bounds\.center,\s*"cad_review_360",\s*new Set\(\),\s*"off",\s*manifest,?\s*\)/);
-    assert.match(source, /baselineEmissive/);
-    assert.match(source, /baselineEmissiveIntensity/);
-    assert.match(source, /baselineOpacity/);
+    assert.match(source, /new THREE\.EdgesGeometry\(mesh\.geometry,\s*35\)/);
+    assert.match(source, /isInspectionContour\s*=\s*true/);
+    assert.match(source, /material\.color\.set\(selected \? "#111111" : "#ffffff"\)/);
+    assert.match(source, /child\.material\.color\.set\(selected \? "#ffffff" : "#111111"\)/);
+    assert.match(source, /depthTest:\s*true/);
+    assert.doesNotMatch(source, /new THREE\.WireframeGeometry/);
     assert.match(source, /group\.traverse\(\(child\)/);
     assert.match(source, /selectedSurfaceIds/);
     assert.match(source, /selectedSurfaceIdSet\.has\(child\.userData\.surfaceId\)/);
-    assert.match(source, /material\.emissive\.set\(/);
-    assert.match(source, /material\.emissiveIntensity\s*=/);
-    assert.match(source, /material\.opacity\s*=/);
+    assert.match(source, /material\.transparent\s*=\s*false/);
+    assert.match(source, /material\.opacity\s*=\s*1/);
   });
 
   test("picks only through the pointer viewport and synchronizes active controls", () => {
@@ -72,14 +74,12 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /\[onProjectionError,\s*projectionNotificationKey\]/);
   });
 
-  test("renders authoritative meridional support profiles and control geometry", () => {
+  test("uses parameter clicks instead of colored meridional control overlays", () => {
     const source = readFileSync(scenePath, "utf-8");
 
-    assert.match(source, /renderMeridionalSupportProfiles/);
-    assert.match(source, /parameter_inspection\?\.support_profiles/);
-    assert.match(source, /meridional-support-profile/);
-    assert.match(source, /meridional-support-control/);
-    assert.match(source, /profile\.control_points/);
+    assert.doesNotMatch(source, /renderMeridionalSupportProfiles/);
+    assert.doesNotMatch(source, /meridional-support-profile/);
+    assert.doesNotMatch(source, /meridional-support-control/);
   });
 
   test("documents the complete workspace selection revision and gates overlays until projection is ready", () => {
@@ -111,22 +111,20 @@ describe("InspectionScene source contract", () => {
     const source = readFileSync(scenePath, "utf-8");
     const buildIndex = source.indexOf("const group = createSurfaceGraphGroup(");
     const selectionIndex = source.indexOf("selectedSurfaceIdSet.has(child.userData.surfaceId)");
-    const visibilityIndex = source.indexOf("const { showShadedSurfaces, showSurfaceUvWire, showMeshEdges }");
+    const visibilityIndex = source.indexOf("group.visible = true;");
 
     assert.ok(buildIndex >= 0 && buildIndex < selectionIndex);
     assert.ok(selectionIndex < visibilityIndex);
     assert.match(source, /\}, \[manifest, selectedSurfaceIds, surfaceGraph\]\);/);
-    assert.match(source, /\}, \[manifest, surfaceGraph, viewMode, visibleLayers\]\);/);
+    assert.match(source, /\}, \[manifest, surfaceGraph, visibleLayers\]\);/);
   });
 
   test("applies viewer layer visibility and fully cleans up the scene lifecycle", () => {
     const source = readFileSync(scenePath, "utf-8");
 
-    assert.match(source, /viewerLayerVisibility\(/);
-    assert.match(source, /showShadedSurfaces/);
-    assert.match(source, /showSurfaceUvWire/);
-    assert.match(source, /showMeshEdges/);
-    assert.match(source, /renderer\.setClearColor\("#eef2f0"\)/);
+    assert.doesNotMatch(source, /viewerLayerVisibility\(/);
+    assert.match(source, /group\.visible = true/);
+    assert.match(source, /renderer\.setClearColor\("#f5f5f5"\)/);
     assert.match(source, /camera\.updateMatrixWorld\(\)/);
     assert.match(source, /window\.cancelAnimationFrame\(frameId\)/);
     assert.match(source, /observer\.disconnect\(\)/);
@@ -143,5 +141,8 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /"data-context-created-count":/);
     assert.match(source, /"data-context-live-count":/);
     assert.match(source, /"data-scene-surface-count":/);
+    assert.match(source, /"data-visible-uv-overlay-count":\s*"0"/);
+    assert.match(source, /child\.userData\.isSurfaceUvWire\)\s*\{\s*child\.visible = false/);
+    assert.match(source, /child\.userData\.isInspectionContour/);
   });
 });

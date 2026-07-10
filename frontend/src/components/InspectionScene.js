@@ -13,13 +13,11 @@ import {
   viewportAtPointer,
   visibleGeometricViews,
 } from "../inspectionSceneModel.js?v=1.1.5";
-import { viewerLayerVisibility } from "../meshOverlayModel.js?v=1.1.5";
 import { defaultVisibleLayers } from "../workspaceModel.js?v=1.1.5";
 import { createSurfaceGraphGroup, disposeObject, surfaceGraphBounds } from "./ModelViewer.js?v=1.1.5";
 import { ParameterAnnotationOverlay } from "./ParameterAnnotationOverlay.js?v=1.1.5";
 
 const h = React.createElement;
-const SELECTED_EMISSIVE = "#f97316";
 const EMPTY_SURFACE_GRAPH = { surfaces: [] };
 
 // Task 6 passes JSON.stringify(selection) as the complete workspace selection revision.
@@ -64,7 +62,7 @@ export function InspectionScene({
     }
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#eef2f0");
+    scene.background = new THREE.Color("#f5f5f5");
     const cameras = {
       "3d": new THREE.PerspectiveCamera(45, 1, 0.1, 100000),
       top: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100000),
@@ -75,7 +73,7 @@ export function InspectionScene({
     setRendererStats(inspectionRendererLifecycle.snapshot());
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.setClearColor("#eef2f0");
+    renderer.setClearColor("#f5f5f5");
     renderer.setScissorTest(true);
     renderer.domElement.style.display = "block";
     renderer.domElement.style.width = "100%";
@@ -104,19 +102,38 @@ export function InspectionScene({
       "off",
       manifest,
     );
-    const supportProfileGroup = renderMeridionalSupportProfiles(manifest, bounds.center);
+    const surfaceMeshes = [];
     group.traverse((child) => {
-      if (!child.isMesh) {
+      if (child.isLineSegments && child.userData.isSurfaceUvWire) {
+        child.visible = false;
+      }
+      if (!child.isMesh || !child.userData.surfaceId) {
         return;
       }
+      surfaceMeshes.push(child);
       forEachMaterial(child.material, (material) => {
-        material.userData.baselineEmissive = material.emissive.clone();
-        material.userData.baselineEmissiveIntensity = material.emissiveIntensity;
-        material.userData.baselineOpacity = material.opacity;
+        material.color.set("#ffffff");
+        material.emissive.set("#000000");
+        material.emissiveIntensity = 0;
+        material.opacity = 1;
+        material.transparent = false;
+        material.polygonOffset = true;
+        material.polygonOffsetFactor = 1;
+        material.polygonOffsetUnits = 1;
       });
     });
+    for (const mesh of surfaceMeshes) {
+      const contour = new THREE.LineSegments(
+        new THREE.EdgesGeometry(mesh.geometry, 35),
+        new THREE.LineBasicMaterial({ color: "#111111", depthTest: true, depthWrite: false }),
+      );
+      contour.renderOrder = 1;
+      contour.userData.isInspectionContour = true;
+      contour.userData.surfaceId = mesh.userData.surfaceId;
+      contour.userData.layer = mesh.userData.layer;
+      group.add(contour);
+    }
     scene.add(group);
-    scene.add(supportProfileGroup);
     scene.add(new THREE.HemisphereLight("#ffffff", "#8a928e", 2.4));
     const keyLight = new THREE.DirectionalLight("#ffffff", 2.2);
     keyLight.position.set(1200, -1800, 2200);
@@ -249,10 +266,8 @@ export function InspectionScene({
         }
         renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
         renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
-        supportProfileGroup.visible = viewId === "meridional";
         renderer.render(scene, cameras[viewId]);
       }
-      supportProfileGroup.visible = false;
     };
     animate();
 
@@ -265,9 +280,7 @@ export function InspectionScene({
       Object.values(controls).forEach((control) => control.removeEventListener("change", handleControlsChange));
       Object.values(controls).forEach((control) => control.dispose());
       scene.remove(group);
-      scene.remove(supportProfileGroup);
       disposeObject(group);
-      disposeObject(supportProfileGroup);
       renderer.dispose();
       releaseRendererLifecycle();
       renderer.domElement.remove();
@@ -291,17 +304,15 @@ export function InspectionScene({
     }
     const selectedSurfaceIdSet = new Set(selectedSurfaceIds);
     group.traverse((child) => {
-      if (!child.isMesh) {
-        return;
-      }
       const selected = selectedSurfaceIdSet.has(child.userData.surfaceId);
-      forEachMaterial(child.material, (material) => {
-        material.emissive.set(selected ? SELECTED_EMISSIVE : material.userData.baselineEmissive);
-        material.emissiveIntensity = selected
-          ? Math.max(material.userData.baselineEmissiveIntensity, 0.45)
-          : material.userData.baselineEmissiveIntensity;
-        material.opacity = selected ? 1 : material.userData.baselineOpacity;
-      });
+      if (child.isMesh && child.userData.surfaceId) {
+        forEachMaterial(child.material, (material) => {
+          material.color.set(selected ? "#111111" : "#ffffff");
+        });
+      }
+      if (child.isLineSegments && child.userData.isInspectionContour) {
+        child.material.color.set(selected ? "#ffffff" : "#111111");
+      }
     });
   }, [manifest, selectedSurfaceIds, surfaceGraph]);
 
@@ -310,25 +321,22 @@ export function InspectionScene({
     if (!group) {
       return;
     }
-    const { showShadedSurfaces, showSurfaceUvWire, showMeshEdges } = viewerLayerVisibility({
-      simulationViewMode: "cad_review_360",
-      viewMode,
-      meshOverlayMode: "off",
-      visibleLayers,
-    });
-    group.visible = showShadedSurfaces || showSurfaceUvWire || showMeshEdges;
+    group.visible = true;
     group.traverse((child) => {
       if (child.isMesh && child.userData.layer) {
-        child.visible = showShadedSurfaces && visibleLayers[child.userData.layer] !== false;
+        child.visible = visibleLayers[child.userData.layer] !== false;
       }
-      if (child.isLineSegments && child.userData.isSurfaceUvWire && child.userData.layer) {
-        child.visible = showSurfaceUvWire && visibleLayers[child.userData.layer] !== false;
+      if (child.isLineSegments && child.userData.isSurfaceUvWire) {
+        child.visible = false;
       }
-      if (child.isLineSegments && child.userData.isMeshOverlay && child.userData.layer) {
-        child.visible = showMeshEdges && visibleLayers[child.userData.layer] !== false;
+      if (child.isLineSegments && child.userData.isMeshOverlay) {
+        child.visible = false;
+      }
+      if (child.isLineSegments && child.userData.isInspectionContour) {
+        child.visible = visibleLayers[child.userData.layer] !== false;
       }
     });
-  }, [manifest, surfaceGraph, viewMode, visibleLayers]);
+  }, [manifest, surfaceGraph, visibleLayers]);
 
   const rects = inspectionViewportRects(viewportSize.width, viewportSize.height, layout);
   const geometricViews = visibleGeometricViews(layout);
@@ -389,6 +397,7 @@ export function InspectionScene({
       "data-context-created-count": String(rendererStats.createdContextCount),
       "data-context-live-count": String(rendererStats.liveContextCount),
       "data-scene-surface-count": String(surfaceCount),
+      "data-visible-uv-overlay-count": "0",
     }),
     projectionReady
       ? geometricViews.map((viewId) => {
@@ -465,37 +474,4 @@ function forEachMaterial(material, callback) {
       callback(item);
     }
   }
-}
-
-function renderMeridionalSupportProfiles(manifest, center) {
-  const group = new THREE.Group();
-  group.name = "meridional-support-profiles";
-  group.visible = false;
-  const profiles = manifest?.parameter_inspection?.support_profiles;
-  if (!profiles || typeof profiles !== "object") {
-    return group;
-  }
-  for (const profile of Object.values(profiles)) {
-    const points = profile && Array.isArray(profile.control_points)
-      ? profile.control_points.filter((point) => Array.isArray(point) && point.length >= 2 && point.every(Number.isFinite))
-      : [];
-    if (!points.length) {
-      continue;
-    }
-    const vectors = points.map(([r, z]) => new THREE.Vector3(r - center.x, -center.y, z - center.z));
-    const lineGeometry = new THREE.BufferGeometry().setFromPoints(vectors);
-    const line = new THREE.Line(lineGeometry, new THREE.LineBasicMaterial({ color: "#0f766e" }));
-    line.name = `meridional-support-profile:${profile.id}`;
-    line.userData.inspectionClass = "meridional-support-profile";
-    group.add(line);
-    const controlGeometry = new THREE.BufferGeometry().setFromPoints(vectors);
-    const controls = new THREE.Points(
-      controlGeometry,
-      new THREE.PointsMaterial({ color: "#be123c", size: 8, sizeAttenuation: false }),
-    );
-    controls.name = `meridional-support-control:${profile.id}`;
-    controls.userData.inspectionClass = "meridional-support-control";
-    group.add(controls);
-  }
-  return group;
 }
