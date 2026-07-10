@@ -52,8 +52,8 @@ def validate_parameter_inspection_contract(
     support_profiles = contract.get("support_profiles")
     resolved_dimensions = contract.get("resolved_dimensions")
     continuity_measurements = contract.get("continuity_measurements")
-    parameter_groups = contract.get("parameter_groups")
-    parameters = contract.get("parameters")
+    has_parameter_groups = "parameter_groups" in contract
+    has_parameters = "parameters" in contract
     collections = (
         blade_instances,
         surface_references,
@@ -76,7 +76,11 @@ def validate_parameter_inspection_contract(
         return [{"reason": "parameter_inspection_contract_unsupported"}]
     if not _support_profiles_are_well_formed(support_profiles) or not _dimensions_are_well_formed(resolved_dimensions):
         return [{"reason": "parameter_inspection_contract_unsupported"}]
-    if not _engineering_records_are_well_formed(parameter_groups, parameters):
+    if has_parameter_groups != has_parameters:
+        return [{"reason": "parameter_inspection_contract_unsupported"}]
+    if has_parameter_groups and not _engineering_records_are_well_formed(
+        contract["parameter_groups"], contract["parameters"]
+    ):
         return [{"reason": "parameter_inspection_contract_unsupported"}]
 
     graph_surface_ids = {

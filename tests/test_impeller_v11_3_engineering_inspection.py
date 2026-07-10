@@ -121,3 +121,18 @@ def test_empty_blade_station_list_emits_a_valid_contract_without_root_attachment
         for parameter in contract["parameters"]
     )
     assert validate_parameter_inspection_contract(graph, contract) == []
+
+
+def test_validator_accepts_legacy_contract_without_additive_engineering_records():
+    graph = graph_for()
+    legacy_contract = deepcopy(graph["parameter_inspection"])
+    del legacy_contract["parameter_groups"]
+    del legacy_contract["parameters"]
+
+    assert validate_parameter_inspection_contract(graph, legacy_contract) == []
+
+    malformed_contract = deepcopy(graph["parameter_inspection"])
+    del malformed_contract["parameters"]
+    assert validate_parameter_inspection_contract(graph, malformed_contract) == [
+        {"reason": "parameter_inspection_contract_unsupported"}
+    ]
