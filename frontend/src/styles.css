@@ -1093,6 +1093,187 @@ pre {
   fill: #8e3d1e;
 }
 
+.parameter-inspection-workspace {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid #cbd8d3;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #eef2f0;
+}
+
+.inspection-workspace-status {
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: #f8fbfa;
+}
+
+.inspection-workspace-toolbar {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #cbd8d3;
+  background: #ffffff;
+  z-index: 5;
+}
+
+.inspection-tab-list {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.inspection-tab-list button,
+.inspection-maximize {
+  border: 1px solid #cbd4cf;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #26332e;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.inspection-tab-list button {
+  min-height: 30px;
+  padding: 4px 9px;
+}
+
+.inspection-tab-list button.selected {
+  border-color: #b4512a;
+  background: #fff4ee;
+  color: #8e3d1e;
+}
+
+.inspection-annotation-control {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: #52635e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inspection-annotation-control select {
+  min-height: 30px;
+  border: 1px solid #cbd4cf;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #26332e;
+}
+
+.inspection-error-banner {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid #d6a892;
+  background: #fff4ee;
+  color: #8e3d1e;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.inspection-workspace-content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.inspection-workspace-full {
+  min-height: 420px;
+}
+
+.inspection-workspace-quad {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  min-height: 520px;
+}
+
+.inspection-quad-scene {
+  grid-column: 1 / 3;
+  grid-row: 1 / 3;
+  min-width: 0;
+  min-height: 0;
+}
+
+.inspection-quad-pane {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.inspection-quad-pane-3d {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.inspection-quad-pane-meridional {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.inspection-quad-pane-s_q {
+  grid-column: 1;
+  grid-row: 2;
+  background: #f8fbfa;
+  pointer-events: auto;
+}
+
+.inspection-quad-pane-top {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.inspection-maximize {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  min-height: 28px;
+  padding: 3px 7px;
+  background: rgba(255, 255, 255, 0.94);
+  pointer-events: auto;
+}
+
+.inspection-section-loop-pane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.inspection-section-loop-pane .section-loop-inspection-view,
+.inspection-section-loop-pane .section-loop-inspection-svg {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.inspection-section-annotations {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: minmax(340px, 420px) minmax(420px, 1fr);
@@ -1124,5 +1305,49 @@ pre {
 
   .viewer-shell {
     min-height: 540px;
+  }
+
+  .inspection-workspace-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .inspection-workspace-quad {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, auto);
+    overflow: auto;
+  }
+
+  .inspection-quad-pane,
+  .inspection-quad-scene {
+    aspect-ratio: 4 / 3;
+  }
+
+  .inspection-quad-scene {
+    grid-column: 1;
+    grid-row: 1 / 5;
+  }
+
+  .inspection-quad-pane-3d,
+  .inspection-quad-pane-meridional,
+  .inspection-quad-pane-s_q,
+  .inspection-quad-pane-top {
+    grid-column: 1;
+  }
+
+  .inspection-quad-pane-3d {
+    grid-row: 1;
+  }
+
+  .inspection-quad-pane-meridional {
+    grid-row: 2;
+  }
+
+  .inspection-quad-pane-s_q {
+    grid-row: 3;
+  }
+
+  .inspection-quad-pane-top {
+    grid-row: 4;
   }
 }

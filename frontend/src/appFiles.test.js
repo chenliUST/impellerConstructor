@@ -25,6 +25,7 @@ describe("frontend application files", () => {
     assert.match(appSource, /from "\.\/appModel\.js\?v=1\.1\.5"/);
     assert.match(appSource, /from "\.\/workspaceModel\.js\?v=1\.1\.5"/);
     assert.match(appSource, /from "\.\/components\/ModelViewer\.js\?v=1\.1\.5"/);
+    assert.match(appSource, /from "\.\/components\/ParameterInspectionWorkspace\.js\?v=1\.1\.5"/);
     assert.match(viewerSource, /from "\.\.\/meshOverlayModel\.js\?v=1\.1\.5"/);
     assert.match(viewerSource, /from "\.\.\/workspaceModel\.js\?v=1\.1\.5"/);
     assert.match(readFileSync(resolve(root, "src/apiClient.js"), "utf-8"), /from "\.\/appModel\.js\?v=1\.1\.5"/);
@@ -55,6 +56,7 @@ describe("frontend application files", () => {
       "src/components/MeshInspectionPanel.js",
       "src/components/ModelViewer.js",
       "src/components/ParameterPanel.js",
+      "src/components/ParameterInspectionWorkspace.js",
       "src/components/ProfileCurveEditor.js",
     ];
 
@@ -78,6 +80,7 @@ describe("frontend application files", () => {
       "src/components/CfdManifestPanel.js",
       "src/components/MeshInspectionPanel.js",
       "src/components/ModelViewer.js",
+      "src/components/ParameterInspectionWorkspace.js",
       "src/components/ManifestPanel.js",
       "src/meshOverlayModel.js",
       "src/meshViewModel.js",
@@ -405,5 +408,14 @@ describe("frontend application files", () => {
     assert.equal(existsSync(resolve(root, "src/parameterInspectionModel.js")), true);
     assert.doesNotMatch(appSource, /Parameter views/);
     assert.match(simulationSource, /parameter_inspection/);
+  });
+
+  test("application routes parameter inspection through the integrated workspace", () => {
+    const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
+
+    assert.match(appSource, /simulationViewMode === "parameter_inspection"/);
+    assert.match(appSource, /h\(ParameterInspectionWorkspace/);
+    assert.match(appSource, /h\(ModelViewer/);
+    assert.doesNotMatch(appSource, /ParameterViewsPanel/);
   });
 });

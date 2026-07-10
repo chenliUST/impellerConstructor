@@ -23,6 +23,7 @@ import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js?v=1.1.5";
 import { ManifestPanel } from "./components/ManifestPanel.js?v=1.1.5";
 import { ModelViewer } from "./components/ModelViewer.js?v=1.1.5";
 import { ParameterPanel } from "./components/ParameterPanel.js?v=1.1.5";
+import { ParameterInspectionWorkspace } from "./components/ParameterInspectionWorkspace.js?v=1.1.5";
 import { ProfileCurveEditor } from "./components/ProfileCurveEditor.js?v=1.1.5";
 import { PresetList } from "./components/PresetList.js?v=1.1.5";
 
@@ -281,6 +282,7 @@ export function App() {
                   key: mode.id,
                   className: simulationViewMode === mode.id ? "selected" : "",
                   type: "button",
+                  "data-testid": `simulation-mode-${mode.id}`,
                   onClick: () => setSimulationViewMode(mode.id),
                 },
                 mode.label,
@@ -289,27 +291,33 @@ export function App() {
           ),
           h(
             "button",
-            { className: "primary-action", onClick: generateModel, disabled: loading },
+            { className: "primary-action", onClick: generateModel, disabled: loading, "data-testid": "generate-model" },
             loading ? "Generating..." : "Generate",
           ),
         ),
       ),
       error ? h("div", { className: "error-banner" }, error) : null,
-      h(ModelViewer, {
-        stlUrl,
-        surfaceGraph: manifest?.geometry?.surface_graph || null,
-        constructionLines: manifest?.geometry?.construction_lines || {},
-        viewMode,
-        setViewMode,
-        simulationViewMode,
-        meshOverlayMode,
-        setMeshOverlayMode,
-        selectedPatch,
-        manifest,
-        autoRotate,
-        setAutoRotate,
-        visibleLayers,
-      }),
+      simulationViewMode === "parameter_inspection"
+        ? h(ParameterInspectionWorkspace, {
+            manifest,
+            visibleLayers,
+            viewMode,
+          })
+        : h(ModelViewer, {
+            stlUrl,
+            surfaceGraph: manifest?.geometry?.surface_graph || null,
+            constructionLines: manifest?.geometry?.construction_lines || {},
+            viewMode,
+            setViewMode,
+            simulationViewMode,
+            meshOverlayMode,
+            setMeshOverlayMode,
+            selectedPatch,
+            manifest,
+            autoRotate,
+            setAutoRotate,
+            visibleLayers,
+          }),
     ),
     h(ManifestPanel, {
       manifest,
