@@ -379,3 +379,24 @@ nasa_stage37_stator_ring_v1_1 1.1.2 1.1.2 PASS run-7704b2eb566c
 rr_ultrafan_cti_fan_v1_1 1.1.2 1.1.2 PASS run-53b9a597343d
 public_rocket_turbopump_inducer_v1_1 1.1.2 1.1.2 PASS run-235f81d11d31
 ```
+
+## Final Review Minor Display Fix
+
+Final reviewer returned no Critical or Important findings. One Minor display issue was fixed:
+
+```text
+2c6dbc0 fix: align v1.1.2 preset summaries
+```
+
+Fix:
+
+- all five frontend preset summaries now label the active contract as `V1.1.2`;
+- frontend catalog test now asserts every active preset summary contains `V1.1.2`.
+
+Verification:
+
+```text
+cd frontend
+npm.cmd test
+result = 128 passed, 0 failed
+```
