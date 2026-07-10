@@ -6,6 +6,7 @@ import {
   inspectionViewportRects,
   orthographicCameraFrame,
   resolveInspectionAnchor,
+  selectedProjectionFailureKey,
   viewportAtPointer,
   visibleGeometricViews,
 } from "../inspectionSceneModel.js?v=1.1.5";
@@ -279,7 +280,7 @@ export function InspectionScene({
         material.opacity = selected ? 1 : material.userData.baselineOpacity;
       });
     });
-  }, [selectedSurfaceId, surfaceGraph]);
+  }, [manifest, selectedSurfaceId, surfaceGraph]);
 
   useEffect(() => {
     const group = groupRef.current;
@@ -304,7 +305,7 @@ export function InspectionScene({
         child.visible = showMeshEdges && visibleLayers[child.userData.layer] !== false;
       }
     });
-  }, [surfaceGraph, viewMode, visibleLayers]);
+  }, [manifest, surfaceGraph, viewMode, visibleLayers]);
 
   const rects = inspectionViewportRects(viewportSize.width, viewportSize.height, layout);
   const geometricViews = visibleGeometricViews(layout);
@@ -316,18 +317,15 @@ export function InspectionScene({
   };
   const projectionReady =
     viewportSize.width > 0 && viewportSize.height > 0 && Boolean(camerasRef.current && boundsRef.current);
-  const selectedProjectionFailed = projectionReady && geometricViews.some((viewId) => {
-    const projectAnchor = projectionForView(viewId);
-    return (annotationsByView[viewId] || []).some(
-      (annotation) => annotation.selected && !projectAnchor(annotation.anchor, annotation),
-    );
-  });
+  const projectionFailureKey = projectionReady
+    ? selectedProjectionFailureKey(annotationsByView, geometricViews, projectionForView)
+    : "";
 
   useEffect(() => {
-    if (selectedProjectionFailed) {
+    if (projectionFailureKey) {
       onProjectionError?.("parameter_inspection_projection_failed");
     }
-  }, [onProjectionError, projectionVersion, selectedProjectionFailed]);
+  }, [onProjectionError, projectionFailureKey]);
 
   return h(
     "div",

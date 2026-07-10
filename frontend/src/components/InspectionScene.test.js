@@ -60,11 +60,25 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /ParameterAnnotationOverlay/);
     assert.match(source, /resolveInspectionAnchor\(anchor,\s*manifest,\s*surfaceGraph\)/);
     assert.match(source, /point\.project\(camera\)/);
-    assert.match(source, /annotation\.selected/);
+    assert.match(source, /selectedProjectionFailureKey/);
     assert.match(source, /onProjectionError\?\.\("parameter_inspection_projection_failed"\)/);
     assert.match(source, /annotationsByView\[viewId\]/);
     assert.match(source, /const projectionReady\s*=/);
-    assert.match(source, /selectedProjectionFailed\s*=\s*projectionReady\s*&&/);
+    assert.match(source, /const projectionFailureKey\s*=\s*projectionReady/);
+    assert.match(source, /if \(projectionFailureKey\)/);
+    assert.match(source, /\[onProjectionError,\s*projectionFailureKey\]/);
+  });
+
+  test("reapplies selection and visibility after manifest-driven scene rebuilds", () => {
+    const source = readFileSync(scenePath, "utf-8");
+    const buildIndex = source.indexOf("const group = createSurfaceGraphGroup(");
+    const selectionIndex = source.indexOf("child.userData.surfaceId === selectedSurfaceId");
+    const visibilityIndex = source.indexOf("const { showShadedSurfaces, showSurfaceUvWire, showMeshEdges }");
+
+    assert.ok(buildIndex >= 0 && buildIndex < selectionIndex);
+    assert.ok(selectionIndex < visibilityIndex);
+    assert.match(source, /\}, \[manifest, selectedSurfaceId, surfaceGraph\]\);/);
+    assert.match(source, /\}, \[manifest, surfaceGraph, viewMode, visibleLayers\]\);/);
   });
 
   test("applies viewer layer visibility and fully cleans up the scene lifecycle", () => {

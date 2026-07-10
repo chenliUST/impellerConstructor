@@ -40,7 +40,10 @@ export function viewportAtPointer(clientX, clientY, canvasRect, rects, viewIds) 
     if (!rect?.width || !rect?.height) {
       continue;
     }
-    if (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) {
+    if (
+      coordinateInsideViewport(x, rect.x, rect.width, canvasWidth) &&
+      coordinateInsideViewport(y, rect.y, rect.height, canvasHeight)
+    ) {
       return {
         viewId,
         pointer: {
@@ -51,6 +54,22 @@ export function viewportAtPointer(clientX, clientY, canvasRect, rects, viewIds) 
     }
   }
   return null;
+}
+
+export function selectedProjectionFailureKey(annotationsByView, viewIds, projectAnchorForView) {
+  const failures = [];
+  for (const viewId of viewIds || []) {
+    const projectAnchor = projectAnchorForView?.(viewId);
+    for (const annotation of annotationsByView?.[viewId] || []) {
+      if (annotation.selected && !projectAnchor?.(annotation.anchor, annotation)) {
+        failures.push([String(viewId), String(annotation.id)]);
+      }
+    }
+  }
+  failures.sort(([leftViewId, leftId], [rightViewId, rightId]) =>
+    leftViewId.localeCompare(rightViewId) || leftId.localeCompare(rightId),
+  );
+  return failures.length ? JSON.stringify(failures) : "";
 }
 
 export function orthographicCameraFrame(bounds, viewId, aspect) {
@@ -141,4 +160,9 @@ function finitePoint(point, dimensions) {
 function finiteDimension(value) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0;
+}
+
+function coordinateInsideViewport(coordinate, start, size, canvasSize) {
+  const end = start + size;
+  return coordinate >= start && (coordinate < end || (end === canvasSize && coordinate === end));
 }

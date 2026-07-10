@@ -7,6 +7,7 @@ const {
   inspectionViewportRects,
   orthographicCameraFrame,
   resolveInspectionAnchor,
+  selectedProjectionFailureKey,
   viewportAtPointer,
 } = inspectionSceneModel;
 
@@ -137,5 +138,77 @@ describe("inspection scene model", () => {
       pointer: { x: 0, y: 0 },
     });
     assert.equal(viewportAtPointer(400, 650, canvasRect, rects, ["3d", "meridional", "top"]), null);
+  });
+
+  test("internal quad seams belong to exactly one higher-coordinate neighbor", () => {
+    const rects = inspectionViewportRects(1200, 800, "quad");
+    const canvasRect = { left: 100, top: 50, width: 1200, height: 800 };
+
+    assert.deepEqual(viewportAtPointer(700, 250, canvasRect, rects, ["3d", "meridional", "top"]), {
+      viewId: "meridional",
+      pointer: { x: -1, y: 0 },
+    });
+    assert.deepEqual(viewportAtPointer(1000, 450, canvasRect, rects, ["3d", "meridional", "top"]), {
+      viewId: "meridional",
+      pointer: { x: 0, y: -1 },
+    });
+    assert.deepEqual(viewportAtPointer(700, 450, canvasRect, rects, ["3d", "meridional", "top"]), {
+      viewId: "meridional",
+      pointer: { x: -1, y: -1 },
+    });
+  });
+
+  test("outer canvas edges remain hittable", () => {
+    const rects = inspectionViewportRects(1200, 800, "quad");
+    const canvasRect = { left: 100, top: 50, width: 1200, height: 800 };
+
+    assert.deepEqual(viewportAtPointer(1300, 250, canvasRect, rects, ["3d", "meridional", "top"]), {
+      viewId: "meridional",
+      pointer: { x: 1, y: 0 },
+    });
+    assert.deepEqual(viewportAtPointer(1000, 50, canvasRect, rects, ["3d", "meridional", "top"]), {
+      viewId: "meridional",
+      pointer: { x: 0, y: 1 },
+    });
+  });
+
+  test("selected projection failure keys distinguish failing annotation identities", () => {
+    assert.equal(typeof selectedProjectionFailureKey, "function");
+    const projectAnchorForView = () => (anchor) => anchor.resolvable ? { x: 10, y: 20 } : null;
+    const failureKeyA = selectedProjectionFailureKey(
+      { "3d": [{ id: "surface-a", selected: true, anchor: { resolvable: false } }] },
+      ["3d"],
+      projectAnchorForView,
+    );
+    const failureKeyB = selectedProjectionFailureKey(
+      { "3d": [{ id: "surface-b", selected: true, anchor: { resolvable: false } }] },
+      ["3d"],
+      projectAnchorForView,
+    );
+
+    assert.equal(failureKeyA, '[["3d","surface-a"]]');
+    assert.equal(failureKeyB, '[["3d","surface-b"]]');
+    assert.notEqual(failureKeyA, failureKeyB);
+  });
+
+  test("selected projection failure keys are deterministic across view and annotation order", () => {
+    assert.equal(typeof selectedProjectionFailureKey, "function");
+    const projectAnchorForView = () => () => null;
+    const annotationsByView = {
+      top: [
+        { id: "zeta", selected: true, anchor: {} },
+        { id: "ignored", selected: false, anchor: {} },
+      ],
+      "3d": [{ id: "alpha", selected: true, anchor: {} }],
+    };
+
+    assert.equal(
+      selectedProjectionFailureKey(annotationsByView, ["top", "3d"], projectAnchorForView),
+      '[["3d","alpha"],["top","zeta"]]',
+    );
+    assert.equal(
+      selectedProjectionFailureKey(annotationsByView, ["3d", "top"], projectAnchorForView),
+      '[["3d","alpha"],["top","zeta"]]',
+    );
   });
 });
