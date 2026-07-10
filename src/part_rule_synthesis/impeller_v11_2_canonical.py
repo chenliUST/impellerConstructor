@@ -74,15 +74,16 @@ def canonical_nurbs_from_v11_defaults(
     hub_points = _profile_points(defaults["hub_profile_rz_mm"])
     tip_points = _profile_points(defaults["tip_or_shroud_profile_rz_mm"])
     average_thickness = _float_default(
-        defaults,
-        "average_blade_thickness_mm",
-        _parameter_value(parameters, "blade_thickness_mm", 1.0),
+        parameters,
+        "blade_thickness_mm",
+        _float_default(defaults, "average_blade_thickness_mm", 1.0),
     )
     maximum_thickness = _float_default(
         defaults,
         "maximum_blade_thickness_mm",
-        max(average_thickness, _parameter_value(parameters, "blade_thickness_mm", average_thickness)),
+        average_thickness,
     )
+    maximum_thickness = max(maximum_thickness, average_thickness)
     span_stations = [float(value) for value in defaults.get("span_stations_h", [0.0, 0.25, 0.5, 0.75, 1.0])]
     skeleton = _skeleton_field(defaults)
     thickness = _thickness_field(defaults, average_thickness, maximum_thickness)
@@ -183,29 +184,60 @@ def _skeleton_field(defaults: Mapping[str, Any]) -> dict[str, Any]:
     delta_q = _float_default(defaults, "spanwise_flow_turn_delta_q_mm", 0.0)
     bow_q = _float_default(defaults, "midspan_bow_q_mm", 0.0)
     s_columns = [s0, _round(_lerp(s0, s1, 0.28)), _round(_lerp(s0, s1, 0.62)), s1]
-    control_points = [
-        [
-            [s_columns[0], 0.0, 0.0],
-            [s_columns[1], 0.0, _round(main_q * 0.225)],
-            [s_columns[2], 0.0, _round(main_q * 0.59375)],
-            [s_columns[3], 0.0, _round(main_q)],
-        ],
-        [
-            [s_columns[0], 0.5, _round(bow_q * 0.9)],
-            [s_columns[1], 0.5, _round(main_q * 0.2875 + bow_q)],
-            [s_columns[2], 0.5, _round(main_q * 0.68125 + bow_q * 1.55)],
-            [s_columns[3], 0.5, _round(main_q + bow_q)],
-        ],
-        [
-            [s_columns[0], 1.0, _round(delta_q * 0.394737)],
-            [s_columns[1], 1.0, _round(main_q * 0.34375 + delta_q * 0.368421)],
-            [s_columns[2], 1.0, _round(main_q * 0.78125 + delta_q)],
-            [s_columns[3], 1.0, _round(main_q + delta_q)],
-        ],
-    ]
+    if main_q > 250.0:
+        root_target_q = _round(main_q - 0.5 * delta_q)
+        mid_target_q = _round(main_q + bow_q)
+        tip_target_q = _round(main_q + 0.5 * delta_q)
+        span_major_control_points = [
+            [
+                [s_columns[0], 0.0, 0.0],
+                [s_columns[1], 0.0, 0.0],
+                [s_columns[2], 0.0, root_target_q],
+                [s_columns[3], 0.0, root_target_q],
+            ],
+            [
+                [s_columns[0], 0.5, 0.0],
+                [s_columns[1], 0.5, 0.0],
+                [s_columns[2], 0.5, mid_target_q],
+                [s_columns[3], 0.5, mid_target_q],
+            ],
+            [
+                [s_columns[0], 1.0, 0.0],
+                [s_columns[1], 1.0, 0.0],
+                [s_columns[2], 1.0, tip_target_q],
+                [s_columns[3], 1.0, tip_target_q],
+            ],
+        ]
+    else:
+        root_target_q = main_q - 0.5 * delta_q
+        mid_target_q = main_q
+        tip_target_q = main_q + 0.5 * delta_q
+        root_bow_q = bow_q * (1.0 - 0.5 * 0.15)
+        mid_bow_q = bow_q
+        tip_bow_q = bow_q * (1.0 + 0.5 * 0.15)
+        span_major_control_points = [
+            [
+                [s_columns[0], 0.0, 0.0],
+                [s_columns[1], 0.0, _round(root_target_q * 0.225 + root_bow_q * 0.45)],
+                [s_columns[2], 0.0, _round(root_target_q * 0.59375 + root_bow_q * 0.65)],
+                [s_columns[3], 0.0, _round(root_target_q)],
+            ],
+            [
+                [s_columns[0], 0.5, 0.0],
+                [s_columns[1], 0.5, _round(mid_target_q * 0.2875 + mid_bow_q)],
+                [s_columns[2], 0.5, _round(mid_target_q * 0.68125 + mid_bow_q * 1.55)],
+                [s_columns[3], 0.5, _round(mid_target_q)],
+            ],
+            [
+                [s_columns[0], 1.0, 0.0],
+                [s_columns[1], 1.0, _round(tip_target_q * 0.34375 + tip_bow_q)],
+                [s_columns[2], 1.0, _round(tip_target_q * 0.78125 + tip_bow_q)],
+                [s_columns[3], 1.0, _round(tip_target_q)],
+            ],
+        ]
     return _surface(
         "s_h_q_mm",
-        control_points,
+        _transpose_control_net(span_major_control_points),
         degree_s=3,
         degree_h=2,
         extra={"field_role": "blade_skeleton"},
@@ -221,14 +253,14 @@ def _thickness_field(
     s_columns = [s0, _round(_lerp(s0, s1, 0.28)), _round(_lerp(s0, s1, 0.62)), s1]
     delta = max(maximum_thickness - average_thickness, 0.0)
     trailing = max(average_thickness * 0.55, 1.0)
-    control_points = [
+    span_major_control_points = [
         [[s_columns[0], 0.0, _round(max(average_thickness - 0.30 * delta, 1.0))], [s_columns[1], 0.0, _round(maximum_thickness)], [s_columns[2], 0.0, _round(average_thickness + 0.50 * delta)], [s_columns[3], 0.0, _round(trailing)]],
         [[s_columns[0], 0.5, _round(max(average_thickness - 0.38 * delta, 1.0))], [s_columns[1], 0.5, _round(average_thickness)], [s_columns[2], 0.5, _round(max(average_thickness - 0.07 * delta, 1.0))], [s_columns[3], 0.5, _round(max(trailing - 1.0, 1.0))]],
         [[s_columns[0], 1.0, _round(max(average_thickness - 0.50 * delta, 1.0))], [s_columns[1], 1.0, _round(max(average_thickness - 0.33 * delta, 1.0))], [s_columns[2], 1.0, _round(max(average_thickness - 0.50 * delta, 1.0))], [s_columns[3], 1.0, _round(max(trailing - 2.0, 1.0))]],
     ]
     return _surface(
         "s_h_thickness_mm",
-        control_points,
+        _transpose_control_net(span_major_control_points),
         degree_s=3,
         degree_h=2,
         extra={"field_role": "thickness", "minimum_thickness_mm": 1.0},
@@ -382,6 +414,15 @@ def _surface(
     if extra:
         surface.update(copy.deepcopy(dict(extra)))
     return surface
+
+
+def _transpose_control_net(control_points: list[list[list[float]]]) -> list[list[list[float]]]:
+    if not control_points:
+        return []
+    return [
+        [copy.deepcopy(control_points[h_index][s_index]) for h_index in range(len(control_points))]
+        for s_index in range(len(control_points[0]))
+    ]
 
 
 def _profile_points(raw_points: Any) -> list[list[float]]:

@@ -32,6 +32,7 @@ from part_rule_synthesis.impeller_taxonomy import (
 )
 from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 from part_rule_synthesis.impeller_v10_surface_graph import build_v10_surface_graph
+from part_rule_synthesis.impeller_v11_2_canonical import canonical_nurbs_from_v11_defaults
 
 
 PRIMITIVES = {
@@ -796,6 +797,8 @@ def _geometry_metadata(
             transition_policies=transition_policies,
             resolved_attachment_defaults=_v10_surface_graph_attachment_defaults(
                 dsl_context,
+                parameters=parameters,
+                profile_overrides=profile_overrides,
                 section_loop_overrides=section_loop_overrides,
                 blade_to_blade_loop_family_overrides=blade_to_blade_loop_family_overrides,
             ),
@@ -925,6 +928,8 @@ def _geometry_kernel_metadata(
             transition_policies=transition_policies,
             resolved_attachment_defaults=_v10_surface_graph_attachment_defaults(
                 dsl_context,
+                parameters=parameters,
+                profile_overrides=profile_overrides,
                 section_loop_overrides=section_loop_overrides,
             ),
         )
@@ -951,6 +956,8 @@ def _geometry_kernel_metadata(
             transition_policies=transition_policies,
             resolved_attachment_defaults=_v10_surface_graph_attachment_defaults(
                 dsl_context,
+                parameters=parameters,
+                profile_overrides=profile_overrides,
                 section_loop_overrides=section_loop_overrides,
                 blade_to_blade_loop_family_overrides=blade_to_blade_loop_family_overrides,
             ),
@@ -1010,6 +1017,8 @@ def _geometry_validity_metadata(
             transition_policies=transition_policies,
             resolved_attachment_defaults=_v10_surface_graph_attachment_defaults(
                 dsl_context,
+                parameters=parameters,
+                profile_overrides=profile_overrides,
                 section_loop_overrides=section_loop_overrides,
                 blade_to_blade_loop_family_overrides=blade_to_blade_loop_family_overrides,
             ),
@@ -1121,18 +1130,18 @@ def _is_v10_3_geometry_bootstrap_context(dsl_context: dict[str, Any] | None) -> 
 def _v10_surface_graph_attachment_defaults(
     dsl_context: dict[str, Any] | None,
     *,
+    parameters: dict[str, Any] | None = None,
+    profile_overrides: dict[str, Any] | None = None,
     section_loop_overrides: dict[str, Any] | None = None,
     blade_to_blade_loop_family_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     context = dsl_context or {}
     if context.get("geometry_version") == "1.1":
-        resolved_defaults = copy.deepcopy(
-            context.get("resolved_blade_to_blade_loop_family_defaults", {})
+        resolved_defaults = _v11_resolved_defaults_for_instantiation(
+            context,
+            parameters=parameters or {},
+            profile_overrides=profile_overrides or {},
         )
-        if "canonical_nurbs_parameterization" in context:
-            resolved_defaults["canonical_nurbs_parameterization"] = copy.deepcopy(
-                context["canonical_nurbs_parameterization"]
-            )
         return {
             "geometry_patch_version": str(context.get("geometry_patch_version", "1.1.0")),
             "resolved_blade_to_blade_loop_family_defaults": resolved_defaults,
@@ -1150,6 +1159,80 @@ def _v10_surface_graph_attachment_defaults(
             "resolved_section_loop_defaults": resolved_defaults,
         }
     return context.get("resolved_attachment_defaults")
+
+
+def _v11_resolved_defaults_for_instantiation(
+    context: dict[str, Any],
+    *,
+    parameters: dict[str, Any],
+    profile_overrides: dict[str, Any],
+) -> dict[str, Any]:
+    resolved_defaults = copy.deepcopy(
+        context.get("resolved_blade_to_blade_loop_family_defaults", {})
+    )
+    _apply_v11_profile_overrides_to_defaults(resolved_defaults, profile_overrides)
+    if context.get("geometry_patch_version") == "1.1.2":
+        _apply_v11_bound_scalar_defaults(resolved_defaults, parameters)
+        source = str(context.get("canonical_input_source", "translated_from_legacy_v1_1"))
+        resolved_defaults["canonical_nurbs_parameterization"] = canonical_nurbs_from_v11_defaults(
+            parameters,
+            resolved_defaults,
+            source=source,
+        )
+    elif "canonical_nurbs_parameterization" in context:
+        resolved_defaults["canonical_nurbs_parameterization"] = copy.deepcopy(
+            context["canonical_nurbs_parameterization"]
+        )
+    return resolved_defaults
+
+
+def _apply_v11_bound_scalar_defaults(
+    resolved_defaults: dict[str, Any],
+    parameters: dict[str, Any],
+) -> None:
+    if "blade_thickness_mm" not in parameters:
+        return
+    try:
+        blade_thickness_mm = float(parameters["blade_thickness_mm"])
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(blade_thickness_mm) or blade_thickness_mm <= 0.0:
+        return
+    resolved_defaults["average_blade_thickness_mm"] = blade_thickness_mm
+    resolved_defaults["maximum_blade_thickness_mm"] = max(
+        float(resolved_defaults.get("maximum_blade_thickness_mm", blade_thickness_mm)),
+        blade_thickness_mm,
+    )
+
+
+def _apply_v11_profile_overrides_to_defaults(
+    resolved_defaults: dict[str, Any],
+    profile_overrides: dict[str, Any],
+) -> None:
+    hub_points = _v11_profile_override_control_points(profile_overrides, "hub_profile")
+    tip_points = _v11_profile_override_control_points(profile_overrides, "tip_or_shroud_profile")
+    if hub_points is not None:
+        resolved_defaults["hub_profile_rz_mm"] = hub_points
+    if tip_points is not None:
+        resolved_defaults["tip_or_shroud_profile_rz_mm"] = tip_points
+
+
+def _v11_profile_override_control_points(
+    profile_overrides: dict[str, Any],
+    profile_name: str,
+) -> list[list[float]] | None:
+    profile = profile_overrides.get(profile_name)
+    if not isinstance(profile, dict):
+        return None
+    control_points = profile.get("control_points")
+    if not isinstance(control_points, list):
+        return None
+    points = [
+        [float(point[0]), float(point[1])]
+        for point in control_points
+        if isinstance(point, list) and len(point) >= 2
+    ]
+    return points or None
 
 
 def _v10_3_geometry_bootstrap_metadata(

@@ -780,8 +780,7 @@ def _sample_surface_q(surface: Any, u: float, v: float) -> float | None:
     if not isinstance(surface, Mapping):
         return None
     try:
-        normalized = _normalized_surface_degree_payload(dict(surface))
-        sample = evaluate_nurbs_surface(normalized, u, v)
+        sample = evaluate_nurbs_surface(dict(surface), u, v)
     except (KeyError, IndexError, TypeError, ValueError):
         return None
     if not isinstance(sample, list) or len(sample) < 3:
@@ -793,20 +792,6 @@ def _sample_surface_q(surface: Any, u: float, v: float) -> float | None:
     if not math.isfinite(value):
         return None
     return value
-
-
-def _normalized_surface_degree_payload(surface: dict[str, Any]) -> dict[str, Any]:
-    control_points = surface.get("control_points")
-    if not isinstance(control_points, list) or not control_points or not isinstance(control_points[0], list):
-        return surface
-    degree_u = min(int(surface.get("degree_u", surface.get("degree_s", 1))), max(len(control_points) - 1, 1))
-    degree_v = min(
-        int(surface.get("degree_v", surface.get("degree_h", 1))),
-        max(len(control_points[0]) - 1, 1),
-    )
-    surface["degree_u"] = degree_u
-    surface["degree_v"] = degree_v
-    return surface
 
 
 def _join_metrics(
