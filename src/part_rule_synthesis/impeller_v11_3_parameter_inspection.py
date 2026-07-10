@@ -52,6 +52,8 @@ def validate_parameter_inspection_contract(
     support_profiles = contract.get("support_profiles")
     resolved_dimensions = contract.get("resolved_dimensions")
     continuity_measurements = contract.get("continuity_measurements")
+    parameter_groups = contract.get("parameter_groups")
+    parameters = contract.get("parameters")
     collections = (
         blade_instances,
         surface_references,
@@ -73,6 +75,8 @@ def validate_parameter_inspection_contract(
     if not _mapping_records_are_well_formed(section_loops, "section_loop_id"):
         return [{"reason": "parameter_inspection_contract_unsupported"}]
     if not _support_profiles_are_well_formed(support_profiles) or not _dimensions_are_well_formed(resolved_dimensions):
+        return [{"reason": "parameter_inspection_contract_unsupported"}]
+    if not _engineering_records_are_well_formed(parameter_groups, parameters):
         return [{"reason": "parameter_inspection_contract_unsupported"}]
 
     graph_surface_ids = {
@@ -285,6 +289,156 @@ def _inspection_parameter(
     }
 
 
+def _engineering_records_are_well_formed(parameter_groups: Any, parameters: Any) -> bool:
+    if not isinstance(parameter_groups, list) or not parameter_groups or not isinstance(parameters, list):
+        return False
+    group_ids: set[str] = set()
+    for group in parameter_groups:
+        if (
+            not isinstance(group, Mapping)
+            or not _nonempty_string(group.get("group_id"))
+            or group["group_id"] in group_ids
+            or not _nonempty_string(group.get("label"))
+            or not isinstance(group.get("order"), int)
+            or isinstance(group["order"], bool)
+            or not isinstance(group.get("collapsed"), bool)
+        ):
+            return False
+        group_ids.add(group["group_id"])
+
+    parameter_ids: set[str] = set()
+    primitive_ids: set[str] = set()
+    required_fields = {
+        "parameter_id",
+        "group_id",
+        "label",
+        "requested_value",
+        "resolved_value",
+        "unit",
+        "applicable_views",
+        "feature_geometry",
+        "dimension_definition",
+        "selection_scope",
+        "order",
+    }
+    for parameter in parameters:
+        if not isinstance(parameter, Mapping) or not required_fields <= set(parameter):
+            return False
+        parameter_id = parameter["parameter_id"]
+        if (
+            not _nonempty_string(parameter_id)
+            or parameter_id in parameter_ids
+            or parameter.get("group_id") not in group_ids
+            or not _nonempty_string(parameter.get("label"))
+            or not _nonempty_string(parameter.get("unit"))
+            or not isinstance(parameter.get("order"), int)
+            or isinstance(parameter["order"], bool)
+            or not _engineering_value_is_finite(parameter["requested_value"])
+            or not _engineering_value_is_finite(parameter["resolved_value"])
+            or not _applicable_views_are_well_formed(parameter["applicable_views"])
+            or not isinstance(parameter["selection_scope"], Mapping)
+            or not _engineering_value_is_finite(parameter["selection_scope"])
+            or not _feature_geometry_is_well_formed(parameter["feature_geometry"], primitive_ids)
+            or not _dimension_definition_is_well_formed(parameter["dimension_definition"])
+        ):
+            return False
+        parameter_ids.add(parameter_id)
+    return True
+
+
+def _engineering_value_is_finite(value: Any) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return math.isfinite(float(value))
+    if isinstance(value, str):
+        return True
+    if isinstance(value, Mapping):
+        return all(isinstance(key, str) and _engineering_value_is_finite(item) for key, item in value.items())
+    if isinstance(value, list):
+        return all(_engineering_value_is_finite(item) for item in value)
+    return False
+
+
+def _applicable_views_are_well_formed(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(_nonempty_string(view) for view in value)
+        and len(value) == len(set(value))
+    )
+
+
+def _feature_geometry_is_well_formed(features: Any, primitive_ids: set[str]) -> bool:
+    if not isinstance(features, list) or not features:
+        return False
+    for feature in features:
+        if not isinstance(feature, Mapping):
+            return False
+        kind = feature.get("kind")
+        primitive_id = feature.get("id")
+        if (
+            kind not in ENGINEERING_FEATURE_KINDS
+            or not _nonempty_string(primitive_id)
+            or primitive_id in primitive_ids
+            or not _nonempty_string(feature.get("coordinate_system"))
+            or not _engineering_value_is_finite(feature)
+            or not _feature_coordinates_are_well_formed(kind, feature)
+        ):
+            return False
+        primitive_ids.add(primitive_id)
+    return True
+
+
+def _feature_coordinates_are_well_formed(kind: str, feature: Mapping[str, Any]) -> bool:
+    if kind == "nurbs_curve":
+        return _coordinate_array(feature.get("control_points"))
+    if kind == "polyline":
+        return _coordinate_array(feature.get("points"))
+    if kind in {"control_point", "point"}:
+        return _coordinate_vector(feature.get("coordinates"))
+    if kind == "local_frame":
+        return all(_coordinate_vector(feature.get(field)) for field in ("origin", "s_axis", "q_axis"))
+    if kind == "reference_axis":
+        return all(_coordinate_vector(feature.get(field)) for field in ("origin", "direction"))
+    return False
+
+
+def _dimension_definition_is_well_formed(definition: Any) -> bool:
+    if definition is None:
+        return True
+    if not isinstance(definition, Mapping):
+        return False
+    required_fields = {"kind", "measurement_points", "unit", "tolerance"}
+    if not required_fields <= set(definition) or definition.get("kind") not in ENGINEERING_DIMENSION_KINDS:
+        return False
+    tolerance = definition.get("tolerance")
+    return (
+        _nonempty_string(definition.get("unit"))
+        and _finite_number(tolerance)
+        and float(tolerance) >= 0.0
+        and _coordinate_array(definition.get("measurement_points"), minimum_count=2)
+        and _engineering_value_is_finite(definition)
+    )
+
+
+def _coordinate_vector(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) >= 2
+        and all(_finite_number(coordinate) for coordinate in value)
+    )
+
+
+def _coordinate_array(value: Any, *, minimum_count: int = 1) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) >= minimum_count
+        and all(_coordinate_vector(point) for point in value)
+        and len({len(point) for point in value}) == 1
+    )
+
+
 def _engineering_parameter_records(
     canonical: Mapping[str, Any],
     blade_instances: Mapping[str, Any],
@@ -391,38 +545,44 @@ def _engineering_parameter_records(
                 order=len(parameters),
             )
         )
-        thickness = resolved_dimensions["thickness_max_mm"]
         thickness_parameter_id = f"blade:{blade_id}:station:{station_id}:thickness"
-        thickness_value = float(thickness["resolved_value"])
+        thickness_endpoints = _section_thickness_endpoints(loop)
+        thickness_value = _distance_between_points(*thickness_endpoints)
         parameters.append(
             _inspection_parameter(
                 parameter_id=thickness_parameter_id,
                 group_id="section_loop",
                 label="Blade thickness",
-                requested_value=thickness["requested_value"],
-                resolved_value=thickness["resolved_value"],
-                unit=thickness["unit"],
+                requested_value=thickness_value,
+                resolved_value=thickness_value,
+                unit="mm",
                 applicable_views=["s_q", "blade_3d"],
                 feature_geometry=[
                     {
                         "kind": "point",
-                        "id": f"{thickness_parameter_id}:point",
+                        "id": f"{thickness_parameter_id}:pressure_point",
                         "coordinate_system": "s_q_mm",
-                        "coordinates": point,
+                        "coordinates": thickness_endpoints[0],
+                    },
+                    {
+                        "kind": "point",
+                        "id": f"{thickness_parameter_id}:suction_point",
+                        "coordinate_system": "s_q_mm",
+                        "coordinates": thickness_endpoints[1],
                     },
                     {
                         "kind": "local_frame",
                         "id": f"{thickness_parameter_id}:frame",
                         "coordinate_system": "s_q_mm",
-                        "origin": point,
+                        "origin": thickness_endpoints[0],
                         "s_axis": [1.0, 0.0],
                         "q_axis": [0.0, 1.0],
                     },
                 ],
                 dimension_definition={
                     "kind": "linear",
-                    "measurement_points": [point, [point[0], point[1] + thickness_value]],
-                    "unit": thickness["unit"],
+                    "measurement_points": thickness_endpoints,
+                    "unit": "mm",
                     "tolerance": 1.0e-6,
                 },
                 selection_scope=scope,
@@ -455,7 +615,10 @@ def _engineering_parameter_records(
 
     root_offset = resolved_dimensions["root_offset_mm"]
     for blade_id, blade in blade_instances.items():
-        station_id = blade["span_station_ids"][0]
+        station_ids = blade.get("span_station_ids", [])
+        if not station_ids:
+            continue
+        station_id = station_ids[0]
         loop_id = span_stations[station_id]["section_loop_id"]
         parameter_id = f"blade:{blade_id}:attachment:root_offset"
         parameters.append(
@@ -490,6 +653,17 @@ def _engineering_parameter_records(
 def _station_reference_point(loop: Mapping[str, Any]) -> list[float]:
     pressure = loop["segment_references"]["pressure_side"]["display_points_s_q_mm"]
     return copy.deepcopy(pressure[len(pressure) // 2])
+
+
+def _section_thickness_endpoints(loop: Mapping[str, Any]) -> list[list[float]]:
+    pressure = loop["segment_references"]["pressure_side"]["display_points_s_q_mm"]
+    suction = loop["segment_references"]["suction_side"]["display_points_s_q_mm"]
+    sample_index = min(len(pressure), len(suction)) // 2
+    return [copy.deepcopy(pressure[sample_index]), copy.deepcopy(suction[sample_index])]
+
+
+def _distance_between_points(left: Sequence[float], right: Sequence[float]) -> float:
+    return math.sqrt(sum((float(right_axis) - float(left_axis)) ** 2 for left_axis, right_axis in zip(left, right)))
 
 
 def _section_loop_points(loop: Mapping[str, Any]) -> list[list[float]]:
