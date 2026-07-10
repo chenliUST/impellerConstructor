@@ -177,8 +177,9 @@ On 2026-07-11 the Parameter inspection presentation was simplified without chang
 - UV overlays, triangle wireframe, colored support-profile overlays, and parameter leader lines are absent;
 - native HTML parameter buttons replace the full-screen SVG label layer;
 - clicking a parameter row exclusively highlights its generated target surfaces, and clicking it again clears the highlight.
+- obsolete anchor projection, projection-error, and leader-layout code was removed after the labels became viewport-fixed controls.
 
-Fresh frontend result: `187 passed, 0 failed`.
+Fresh frontend result: `175 passed, 0 failed`.
 
 Fresh browser result:
 

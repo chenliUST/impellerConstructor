@@ -28,7 +28,6 @@ const INSPECTION_TAB_TEST_IDS = {
 export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, viewMode }) {
   const [activeTab, setActiveTab] = useState("3d");
   const [annotationLevel, setAnnotationLevel] = useState("key");
-  const [projectionError, setProjectionError] = useState(null);
   const [activeAnnotationId, setActiveAnnotationId] = useState(null);
   const [narrowQuad, setNarrowQuad] = useState(false);
   const model = useMemo(() => resolveParameterInspection(manifest), [manifest]);
@@ -36,7 +35,6 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
   const generationId = model.contract?.generation_id;
 
   useLayoutEffect(() => {
-    setProjectionError(null);
     setActiveAnnotationId(null);
     setSelection(defaultInspectionSelection(model));
     setActiveTab("3d");
@@ -75,7 +73,6 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
   const quadLayout = narrowQuad ? "quad_stacked" : "quad";
 
   function handleSurfaceSelection(surfaceId) {
-    setProjectionError(null);
     setActiveAnnotationId(null);
     const reference = model.indices.surfaces[surfaceId];
     if (reference?.inspectable === true) {
@@ -84,25 +81,21 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
   }
 
   function handleSectionSelection(nextSelection) {
-    setProjectionError(null);
     setActiveAnnotationId(null);
     setSelection((current) => reduceInspectionSelection(model, current, nextSelection));
   }
 
   function handleBladeSelection(bladeId) {
-    setProjectionError(null);
     setActiveAnnotationId(null);
     setSelection((current) => reduceInspectionSelection(model, current, { bladeId }));
   }
 
   function handleStationSelection(spanStationId) {
-    setProjectionError(null);
     setActiveAnnotationId(null);
     setSelection((current) => reduceInspectionSelection(model, current, { spanStationId }));
   }
 
   function handleTabSelection(viewId) {
-    setProjectionError(null);
     setActiveAnnotationId(null);
     setActiveTab(viewId);
   }
@@ -218,7 +211,6 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
         ),
       ),
     ),
-    projectionError ? h("div", { className: "inspection-error-banner", role: "status" }, projectionError) : null,
     activeTab === "quad"
       ? renderQuadView({
           annotationsByView,
@@ -226,7 +218,6 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
           handleTabSelection,
           manifest,
           model,
-          onProjectionError: setProjectionError,
           onSelectSurface: handleSurfaceSelection,
           onSelectSection: handleSectionSelection,
           onSelectAnnotation: handleAnnotationSelection,
@@ -257,13 +248,11 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
               layout: activeTab,
               selectedSurfaceIds: displayedSurfaceIds,
               onSelectSurface: handleSurfaceSelection,
-              onProjectionError: setProjectionError,
               visibleLayers,
               viewMode,
               annotationsByView,
               selectedAnnotationId: activeAnnotationId,
               onSelectAnnotation: handleAnnotationSelection,
-              selectionContextKey: JSON.stringify(selection),
             }),
           ),
   );
@@ -275,7 +264,6 @@ function renderQuadView({
   handleTabSelection,
   manifest,
   model,
-  onProjectionError,
   onSelectSurface,
   onSelectSection,
   onSelectAnnotation,
@@ -299,13 +287,11 @@ function renderQuadView({
         layout: quadLayout,
         selectedSurfaceIds,
         onSelectSurface,
-        onProjectionError,
         visibleLayers,
         viewMode,
         annotationsByView,
         selectedAnnotationId,
         onSelectAnnotation,
-        selectionContextKey: JSON.stringify(selection),
       }),
     ),
     ["3d", "meridional", "s_q", "top"].map((viewId) =>

@@ -167,4 +167,4 @@ The browser services were refreshed from the final worktree before the last smok
 
 ## Monochrome Inspection Follow-Up
 
-The 2026-07-11 frontend-only follow-up removes UV and leader clutter and adds direct parameter-to-surface selection. Verification: `187` frontend tests passed; desktop 3D, Quad, and narrow S-Q browser smoke passed; `101` surfaces rendered; UV overlay and leader counts were both zero; non-background ratio was `0.1595`. The screenshots were visually inspected after regeneration.
+The 2026-07-11 frontend-only follow-up removes UV and leader clutter and adds direct parameter-to-surface selection. Obsolete projection helpers and their dedicated tests were deleted once labels no longer depended on geometry anchors. Verification: `175` frontend tests passed; desktop 3D, Quad, and narrow S-Q browser smoke passed; `101` surfaces rendered; UV overlay and leader counts were both zero; non-background ratio was `0.1595`. The screenshots were visually inspected after regeneration.

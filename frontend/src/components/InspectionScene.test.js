@@ -57,21 +57,16 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /removeEventListener\("pointerdown",\s*handlePointerDown,\s*true\)/);
   });
 
-  test("projects annotations and reports selected anchor failures", () => {
+  test("renders annotation buttons without geometry projection or leader errors", () => {
     const source = readFileSync(scenePath, "utf-8");
 
     assert.match(source, /ParameterAnnotationOverlay/);
-    assert.match(source, /resolveInspectionAnchor\(anchor,\s*manifest,\s*surfaceGraph\)/);
-    assert.match(source, /point\.project\(camera\)/);
-    assert.match(source, /selectedProjectionFailureKey/);
-    assert.match(source, /onProjectionError\?\.\("parameter_inspection_projection_failed"\)/);
     assert.match(source, /annotationsByView\[viewId\]/);
-    assert.match(source, /const projectionReady\s*=/);
-    assert.match(source, /const projectionFailureKey\s*=\s*projectionReady/);
-    assert.match(source, /projectionContextSignature\(\s*manifest,\s*annotationsByView,\s*geometricViews,\s*selectionContextKey,?\s*\)/);
-    assert.match(source, /projectionFailureNotificationKey\(\s*projectionFailureKey,\s*projectionContextKey,\s*projectionEpoch/);
-    assert.match(source, /if \(projectionNotificationKey\)/);
-    assert.match(source, /\[onProjectionError,\s*projectionNotificationKey\]/);
+    assert.doesNotMatch(source, /resolveInspectionAnchor/);
+    assert.doesNotMatch(source, /point\.project\(camera\)/);
+    assert.doesNotMatch(source, /selectedProjectionFailureKey/);
+    assert.doesNotMatch(source, /onProjectionError/);
+    assert.doesNotMatch(source, /projectionEpoch/);
   });
 
   test("uses parameter clicks instead of colored meridional control overlays", () => {
@@ -82,29 +77,21 @@ describe("InspectionScene source contract", () => {
     assert.doesNotMatch(source, /meridional-support-control/);
   });
 
-  test("documents the complete workspace selection revision and gates overlays until projection is ready", () => {
+  test("renders parameter overlays after viewport sizing without a selection revision key", () => {
     const source = readFileSync(scenePath, "utf-8");
 
-    assert.match(source, /selectionContextKey\s*=\s*""/);
-    assert.match(source, /Task 6 passes JSON\.stringify\(selection\)/);
-    assert.match(source, /projectionReady\s*\?\s*geometricViews\.map\(\(viewId\) =>/);
+    assert.doesNotMatch(source, /selectionContextKey/);
+    assert.match(source, /viewportSize\.width > 0\s*&&\s*viewportSize\.height > 0/);
+    assert.match(source, /geometricViews\.map\(\(viewId\) =>/);
     assert.match(source, /:\s*null,?\s*\n\s*\);/);
   });
 
-  test("increments the projection epoch only after scene refs and initial camera framing are installed", () => {
+  test("does not retain obsolete projection epoch state", () => {
     const source = readFileSync(scenePath, "utf-8");
-    const sceneInstallIndex = source.indexOf("scene.add(group);");
-    const refsIndex = source.indexOf("groupRef.current = group;");
-    const initialFrameIndex = source.indexOf("resize();");
-    const installedContextIndex = source.indexOf("installedSceneRef.current = { manifest, surfaceGraph };");
-    const epochIndex = source.indexOf("setProjectionEpoch((epoch) => epoch + 1);");
 
-    assert.match(source, /const \[projectionEpoch, setProjectionEpoch\] = useState\(0\)/);
-    assert.ok(sceneInstallIndex >= 0 && sceneInstallIndex < refsIndex);
-    assert.ok(refsIndex < initialFrameIndex);
-    assert.ok(initialFrameIndex < installedContextIndex);
-    assert.ok(installedContextIndex < epochIndex);
-    assert.match(source, /key:\s*`\$\{viewId\}:\$\{projectionEpoch\}`/);
+    assert.doesNotMatch(source, /projectionEpoch/);
+    assert.doesNotMatch(source, /projectionVersion/);
+    assert.match(source, /key:\s*viewId/);
   });
 
   test("reapplies selection and visibility after manifest-driven scene rebuilds", () => {

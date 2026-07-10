@@ -6,10 +6,6 @@ import {
   inspectionViewportRects,
   inspectionRendererLifecycle,
   orthographicCameraFrame,
-  projectionContextSignature,
-  projectionFailureNotificationKey,
-  resolveInspectionAnchor,
-  selectedProjectionFailureKey,
   viewportAtPointer,
   visibleGeometricViews,
 } from "../inspectionSceneModel.js?v=1.1.5";
@@ -20,36 +16,29 @@ import { ParameterAnnotationOverlay } from "./ParameterAnnotationOverlay.js?v=1.
 const h = React.createElement;
 const EMPTY_SURFACE_GRAPH = { surfaces: [] };
 
-// Task 6 passes JSON.stringify(selection) as the complete workspace selection revision.
 export function InspectionScene({
   manifest = null,
   surfaceGraph = EMPTY_SURFACE_GRAPH,
   layout = "3d",
   selectedSurfaceIds = [],
   onSelectSurface = null,
-  onProjectionError = null,
   visibleLayers = defaultVisibleLayers(),
   viewMode = "combined",
   annotationsByView = {},
   selectedAnnotationId = null,
   onSelectAnnotation = null,
-  selectionContextKey = "",
 }) {
   const containerRef = useRef(null);
   const groupRef = useRef(null);
   const camerasRef = useRef(null);
   const controlsRef = useRef(null);
-  const boundsRef = useRef(null);
   const rectsRef = useRef({});
   const sizeRef = useRef({ width: 0, height: 0 });
   const resizeRef = useRef(null);
-  const installedSceneRef = useRef(null);
   const layoutRef = useRef(layout);
   const onSelectSurfaceRef = useRef(onSelectSurface);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [surfaceCount, setSurfaceCount] = useState(0);
-  const [projectionEpoch, setProjectionEpoch] = useState(0);
-  const [projectionVersion, setProjectionVersion] = useState(0);
   const [rendererStats, setRendererStats] = useState(() => inspectionRendererLifecycle.snapshot());
 
   layoutRef.current = layout;
@@ -142,7 +131,6 @@ export function InspectionScene({
     groupRef.current = group;
     camerasRef.current = cameras;
     controlsRef.current = controls;
-    boundsRef.current = bounds;
     let renderedSurfaceCount = 0;
     group.traverse((child) => {
       if (child.isMesh && child.userData.surfaceId) {
@@ -204,8 +192,6 @@ export function InspectionScene({
     const observer = new ResizeObserver(resize);
     observer.observe(container);
     resize();
-    installedSceneRef.current = { manifest, surfaceGraph };
-    setProjectionEpoch((epoch) => epoch + 1);
 
     const setActiveControl = (activeViewId) => {
       Object.entries(controls).forEach(([viewId, control]) => {
@@ -246,9 +232,6 @@ export function InspectionScene({
     renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
     renderer.domElement.addEventListener("pointerdown", handlePointerDown, true);
 
-    const handleControlsChange = () => setProjectionVersion((version) => version + 1);
-    Object.values(controls).forEach((control) => control.addEventListener("change", handleControlsChange));
-
     let frameId = 0;
     const animate = () => {
       frameId = window.requestAnimationFrame(animate);
@@ -277,7 +260,6 @@ export function InspectionScene({
       renderer.domElement.removeEventListener("pointermove", handlePointerMove);
       renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown, true);
-      Object.values(controls).forEach((control) => control.removeEventListener("change", handleControlsChange));
       Object.values(controls).forEach((control) => control.dispose());
       scene.remove(group);
       disposeObject(group);
@@ -287,9 +269,7 @@ export function InspectionScene({
       groupRef.current = null;
       camerasRef.current = null;
       controlsRef.current = null;
-      boundsRef.current = null;
       resizeRef.current = null;
-      installedSceneRef.current = null;
     };
   }, [manifest, surfaceGraph]);
 
@@ -340,41 +320,6 @@ export function InspectionScene({
 
   const rects = inspectionViewportRects(viewportSize.width, viewportSize.height, layout);
   const geometricViews = visibleGeometricViews(layout);
-  const projectionForView = (viewId) => {
-    const camera = camerasRef.current?.[viewId];
-    const bounds = boundsRef.current;
-    const rect = rects[viewId];
-    return (anchor) => projectInspectionAnchor(anchor, manifest, surfaceGraph, camera, bounds, rect);
-  };
-  const projectionReady =
-    viewportSize.width > 0 &&
-    viewportSize.height > 0 &&
-    projectionEpoch > 0 &&
-    installedSceneRef.current?.manifest === manifest &&
-    installedSceneRef.current?.surfaceGraph === surfaceGraph &&
-    Boolean(camerasRef.current && boundsRef.current);
-  const projectionFailureKey = projectionReady
-    ? selectedProjectionFailureKey(annotationsByView, geometricViews, projectionForView)
-    : "";
-  const projectionContextKey = projectionContextSignature(
-    manifest,
-    annotationsByView,
-    geometricViews,
-    selectionContextKey,
-  );
-  const projectionNotificationKey = projectionReady
-    ? projectionFailureNotificationKey(
-        projectionFailureKey,
-        projectionContextKey,
-        projectionEpoch,
-      )
-    : "";
-
-  useEffect(() => {
-    if (projectionNotificationKey) {
-      onProjectionError?.("parameter_inspection_projection_failed");
-    }
-  }, [onProjectionError, projectionNotificationKey]);
 
   return h(
     "div",
@@ -382,8 +327,6 @@ export function InspectionScene({
       className: "inspection-scene",
       style: { position: "relative", width: "100%", height: "100%", minWidth: 0, minHeight: 0 },
       "data-layout": layout,
-      "data-projection-epoch": projectionEpoch,
-      "data-projection-version": projectionVersion,
     },
     h("div", {
       className: "inspection-webgl",
@@ -399,7 +342,7 @@ export function InspectionScene({
       "data-scene-surface-count": String(surfaceCount),
       "data-visible-uv-overlay-count": "0",
     }),
-    projectionReady
+    viewportSize.width > 0 && viewportSize.height > 0
       ? geometricViews.map((viewId) => {
           const rect = rects[viewId];
           if (!rect?.width || !rect?.height) {
@@ -409,7 +352,7 @@ export function InspectionScene({
             "div",
             {
               className: `inspection-annotation-viewport inspection-annotation-${viewId}`,
-              key: `${viewId}:${projectionEpoch}`,
+              key: viewId,
               style: {
                 position: "absolute",
                 left: rect.x,
@@ -430,37 +373,6 @@ export function InspectionScene({
         })
       : null,
   );
-}
-
-function projectInspectionAnchor(anchor, manifest, surfaceGraph, camera, bounds, rect) {
-  if (!camera || !bounds || !rect?.width || !rect?.height) {
-    return null;
-  }
-  const resolved = resolveInspectionAnchor(anchor, manifest, surfaceGraph);
-  if (resolved?.viewportCorner) {
-    return viewportCornerPoint(resolved.viewportCorner, rect.width, rect.height);
-  }
-  if (!Array.isArray(resolved)) {
-    return null;
-  }
-  const point = new THREE.Vector3(...resolved).sub(bounds.center);
-  point.project(camera);
-  if (![point.x, point.y, point.z].every(Number.isFinite) || Math.max(Math.abs(point.x), Math.abs(point.y)) > 1e6) {
-    return null;
-  }
-  return {
-    x: ((point.x + 1) / 2) * rect.width,
-    y: ((1 - point.y) / 2) * rect.height,
-  };
-}
-
-function viewportCornerPoint(corner, width, height) {
-  const horizontalInset = Math.min(12, width / 4);
-  const verticalInset = Math.min(14, height / 4);
-  return {
-    x: corner.endsWith("left") ? horizontalInset : width - horizontalInset,
-    y: corner.startsWith("bottom") ? height - verticalInset : verticalInset,
-  };
 }
 
 function forEachMaterial(material, callback) {

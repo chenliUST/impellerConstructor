@@ -24,7 +24,7 @@ describe("ParameterInspectionWorkspace source contract", () => {
     assert.doesNotMatch(source, /onGeometry/);
   });
 
-  test("keeps one selection context across views and clears transient projection errors", () => {
+  test("keeps one selection context across views without obsolete projection state", () => {
     const source = readFileSync(workspacePath, "utf-8");
 
     assert.match(source, /resolveParameterInspection\(manifest\)/);
@@ -32,8 +32,8 @@ describe("ParameterInspectionWorkspace source contract", () => {
     assert.match(source, /reduceInspectionSelection\(model, current,/);
     assert.match(source, /annotationsForView\(model, viewId, annotationLevel, selection\)/);
     assert.match(source, /sectionLoopForSelection\(model, selection\)/);
-    assert.match(source, /selectionContextKey:\s*JSON\.stringify\(selection\)/);
-    assert.match(source, /setProjectionError\(null\)/);
+    assert.doesNotMatch(source, /selectionContextKey/);
+    assert.doesNotMatch(source, /projectionError/);
     assert.match(source, /model\.contract\?\.generation_id/);
     assert.match(source, /data-testid":\s*"inspection-workspace"/);
     assert.match(source, /inspection-tab-quad/);
@@ -53,9 +53,8 @@ describe("ParameterInspectionWorkspace source contract", () => {
     assert.match(source, /onSelectAnnotation/);
   });
 
-  test("clears projection errors before selection and tab changes without a passive clear race", () => {
+  test("clears active parameter selection before geometry and navigation changes", () => {
     const source = readFileSync(workspacePath, "utf-8");
-    const generationReset = source.match(/useLayoutEffect\(\(\) => \{([\s\S]*?)\}, \[generationId\]\);/)?.[1] || "";
     const surfaceSelection = source.match(/function handleSurfaceSelection\(surfaceId\) \{([\s\S]*?)\n  \}/)?.[1] || "";
     const sectionSelection = source.match(/function handleSectionSelection\(nextSelection\) \{([\s\S]*?)\n  \}/)?.[1] || "";
     const tabSelection = source.match(/function handleTabSelection\(viewId\) \{([\s\S]*?)\n  \}/)?.[1] || "";
@@ -63,14 +62,9 @@ describe("ParameterInspectionWorkspace source contract", () => {
     const stationSelection = source.match(/function handleStationSelection\(spanStationId\) \{([\s\S]*?)\n  \}/)?.[1] || "";
 
     assert.match(source, /import React, \{ useEffect, useLayoutEffect, useMemo, useState \}/);
-    assert.ok(generationReset.indexOf("setProjectionError(null)") < generationReset.indexOf("setSelection("));
-    assert.ok(surfaceSelection.indexOf("setProjectionError(null)") < surfaceSelection.indexOf("setSelection("));
-    assert.ok(sectionSelection.indexOf("setProjectionError(null)") < sectionSelection.indexOf("setSelection("));
-    assert.ok(tabSelection.indexOf("setProjectionError(null)") < tabSelection.indexOf("setActiveTab("));
     for (const handler of [surfaceSelection, sectionSelection, bladeSelection, stationSelection, tabSelection]) {
       assert.match(handler, /setActiveAnnotationId\(null\)/);
     }
-    assert.doesNotMatch(source, /useEffect\(\(\) => \{\s*setProjectionError\(null\);\s*\}, \[activeTab, generationId, selection\]\)/);
     assert.match(source, /onClick: \(\) => handleTabSelection\(tab\.id\)/);
     assert.match(source, /onClick: \(\) => handleTabSelection\(viewId\)/);
     assert.doesNotMatch(surfaceSelection, /setActiveTab/);
