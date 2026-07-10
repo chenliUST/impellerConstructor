@@ -382,3 +382,39 @@ Result: `16 passed in 244.52s (0:04:04)`.
 ### Suite Status
 
 Per instruction, the long three-file suite was not started in this wave.
+
+---
+
+## Review Fix: Profile And Attachment Provenance
+
+Implementation commit: `a02915e fix: bind profile and attachment provenance`.
+
+- Profile bindings now require matching source/support profile IDs, hub/tip group and deterministic path, curve primitive ID, control provenance, and authoritative degree/control values.
+- Attachment bindings require the declared blade's deterministic root/shroud surface ID and parameter path; attachment scopes include source station indices.
+- Legacy `:pose`, `blade.main_blade_count`, and `blade.angular_pitch_deg` records are graph-bound with their feature primitives rather than exempted.
+
+### RED Evidence
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -k "cross_profile or cross_blade_attachment" -q
+```
+
+Result before implementation: `1 failed, 1 passed in 20.84s`; a cross-profile selector swap and degree-value mutation were accepted.
+
+### GREEN Evidence
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -k "cross_profile or cross_blade_attachment" -q
+```
+
+Result: `2 passed, 16 deselected in 18.72s`.
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -q
+```
+
+Result: `18 passed in 270.75s (0:04:30)`.
+
+### Suite Status
+
+Per instruction, the long three-file suite was not started in this wave.
