@@ -361,3 +361,43 @@ def test_validator_binds_placement_shroud_and_sagitta_features_to_generated_grap
         assert validate_parameter_inspection_contract(graph, malformed) == [
             {"reason": "parameter_inspection_contract_unsupported"}
         ]
+
+
+def test_validator_rejects_selector_identity_swaps_with_valid_generated_geometry():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    parameter_id = next(item["parameter_id"] for item in contract["parameters"] if ":control:0:s" in item["parameter_id"])
+
+    for key, replacement in (
+        ("source_station_index", 1),
+        ("source_segment_name", "suction_side"),
+        ("source_control_index", 1),
+    ):
+        malformed = deepcopy(contract)
+        parameter = next(item for item in malformed["parameters"] if item["parameter_id"] == parameter_id)
+        parameter["selection_scope"][key] = replacement
+        assert validate_parameter_inspection_contract(graph, malformed) == [
+            {"reason": "parameter_inspection_contract_unsupported"}
+        ]
+
+
+def test_validator_binds_join_results_and_placement_feature_primitives():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    mutations = [
+        lambda parameter: parameter["feature_geometry"][0]["points"].__setitem__(1, [123.0, 456.0]),
+        lambda parameter: parameter["feature_geometry"][0].update(direction=[0.0, 1.0]),
+        lambda parameter: parameter["feature_geometry"][0].update(direction=[0.0, 1.0]),
+    ]
+    parameter_ids = [
+        next(item["parameter_id"] for item in contract["parameters"] if item["parameter_id"].endswith("join_status")),
+        "blade.main.count",
+        "blade.angular_pitch",
+    ]
+
+    for parameter_id, mutate in zip(parameter_ids, mutations):
+        malformed = deepcopy(contract)
+        mutate(next(item for item in malformed["parameters"] if item["parameter_id"] == parameter_id))
+        assert validate_parameter_inspection_contract(graph, malformed) == [
+            {"reason": "parameter_inspection_contract_unsupported"}
+        ]

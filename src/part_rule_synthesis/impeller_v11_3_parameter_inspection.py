@@ -538,6 +538,8 @@ def _engineering_parameters_match_source_geometry(
     for parameter in parameters:
         scope = parameter["selection_scope"]
         parameter_id = parameter["parameter_id"]
+        if not _selection_scope_identity_matches(parameter, surface_graph):
+            return False
         source_control_point_id = scope.get("source_control_point_id")
         if source_control_point_id is not None and not _section_control_matches_source(
             parameter, scope, surface_graph
@@ -548,6 +550,10 @@ def _engineering_parameters_match_source_geometry(
         ):
             return False
         if parameter_id.endswith(".profile.degree") and not _profile_curve_matches_source(
+            parameter, scope, support_profiles
+        ):
+            return False
+        if parameter_id.endswith(".curve") and not _profile_curve_matches_source(
             parameter, scope, support_profiles
         ):
             return False
@@ -573,7 +579,50 @@ def _engineering_parameters_match_source_geometry(
             return False
         if parameter_id == "shroud.thickness" and not _shroud_thickness_matches_source(parameter, surfaces):
             return False
+        if parameter_id.endswith("join_status") and not _join_status_matches_source(parameter, scope, surface_graph):
+            return False
+        if parameter_id.endswith("root_offset") and not _root_offset_matches_source(parameter, scope, surface_graph):
+            return False
     return True
+
+
+def _selection_scope_identity_matches(parameter: Mapping[str, Any], surface_graph: Mapping[str, Any]) -> bool:
+    scope = parameter["selection_scope"]
+    if "source_station_index" not in scope:
+        return True
+    loop = _generated_loop(surface_graph, scope)
+    blade_id = scope.get("blade_instance_id")
+    station_index = scope.get("source_station_index")
+    if loop is None or not isinstance(blade_id, str) or not isinstance(station_index, int):
+        return False
+    station_id = f"{blade_id}:span_{station_index}"
+    loop_id = f"{station_id}:loop"
+    if scope.get("span_station_id") != station_id or scope.get("section_loop_id") != loop_id:
+        return False
+    segment_name = scope.get("source_segment_name")
+    if segment_name is None:
+        return True
+    segment = loop.get("segments", {}).get(segment_name)
+    if not isinstance(segment, Mapping) or scope.get("section_segment_id") != f"{loop_id}:{segment_name}":
+        return False
+    control_index = scope.get("source_control_index")
+    if control_index is None:
+        return True
+    controls = segment.get("control_points_s_q", [])
+    if not isinstance(control_index, int) or control_index < 0 or control_index >= len(controls):
+        return False
+    scale = loop.get("streamwise_metric_scale_mm")
+    if not _finite_number(scale):
+        return False
+    expected_control_id = _control_point_records(f"{loop_id}:{segment_name}", controls, float(scale))[control_index][
+        "control_point_id"
+    ]
+    if scope.get("source_control_point_id") != expected_control_id:
+        return False
+    axis = parameter["parameter_id"].rsplit(":", 1)[-1]
+    return parameter["parameter_id"] == (
+        f"blade:{blade_id}:station:{station_id}:section:{segment_name}:control:{control_index}:{axis}"
+    )
 
 
 def _section_control_matches_source(
@@ -718,15 +767,36 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
     splitter_directions = _graph_blade_anchor_directions(surface_graph, "splitter")
     parameter_id = parameter["parameter_id"]
     if parameter_id == "blade.main.count":
-        return parameter["resolved_value"] == main_count and parameter["selection_scope"].get("source_geometry_kind") == "blade_population"
+        feature = parameter["feature_geometry"]
+        return (
+            parameter["resolved_value"] == main_count
+            and parameter["selection_scope"].get("source_geometry_kind") == "blade_population"
+            and len(feature) == 1
+            and feature[0].get("kind") == "reference_axis"
+            and feature[0].get("origin") == [0.0, 0.0]
+            and feature[0].get("direction") == [1.0, 0.0]
+        )
     if parameter_id == "blade.angular_pitch":
         expected = _angular_dimension(main_directions[0], main_directions[1]) if len(main_directions) >= 2 else None
-        return expected is not None and parameter["dimension_definition"] == expected and parameter["resolved_value"] == _measure_dimension(expected)
+        feature = parameter["feature_geometry"]
+        return (
+            expected is not None
+            and parameter["dimension_definition"] == expected
+            and parameter["resolved_value"] == _measure_dimension(expected)
+            and len(feature) == 2
+            and [item.get("direction") for item in feature] == [main_directions[0], main_directions[1]]
+        )
     if parameter_id == "blade.splitter.phase":
         if main_directions and splitter_directions:
             expected = _angular_dimension(main_directions[0], splitter_directions[0])
-            return parameter["dimension_definition"] == expected and parameter["resolved_value"] == _measure_dimension(expected)
-        return parameter["resolved_value"] == "not_applicable"
+            feature = parameter["feature_geometry"]
+            return (
+                parameter["dimension_definition"] == expected
+                and parameter["resolved_value"] == _measure_dimension(expected)
+                and len(feature) == 1
+                and feature[0].get("direction") == main_directions[0]
+            )
+        return parameter["resolved_value"] == "not_applicable" and parameter["feature_geometry"][0].get("direction") == [1.0, 0.0]
     return False
 
 
@@ -756,6 +826,49 @@ def _shroud_thickness_matches_source(parameter: Mapping[str, Any], surfaces: Map
         and features == points
         and parameter["dimension_definition"].get("measurement_points") == points
         and parameter["resolved_value"] == _distance(*points)
+    )
+
+
+def _join_status_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surface_graph: Mapping[str, Any]
+) -> bool:
+    loop = _generated_loop(surface_graph, scope)
+    if loop is None:
+        return False
+    scale = loop.get("streamwise_metric_scale_mm")
+    if not _finite_number(scale):
+        return False
+    points = [
+        point
+        for segment in loop.get("segments", {}).values()
+        for point in _metric_s_q_points(segment.get("points_s_q", []), float(scale))
+    ]
+    feature = parameter["feature_geometry"]
+    return (
+        parameter["resolved_value"] == loop.get("metrics", {}).get("join_status")
+        and len(feature) == 1
+        and feature[0].get("kind") == "polyline"
+        and feature[0].get("points") == points
+    )
+
+
+def _root_offset_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surface_graph: Mapping[str, Any]
+) -> bool:
+    loop = _generated_loop(surface_graph, scope)
+    resolved = (
+        surface_graph.get("canonical_nurbs_parameterization", {})
+        .get("active_span_policy", {})
+        .get("root_offset", {})
+        .get("resolved_constant_mm")
+    )
+    feature = parameter["feature_geometry"]
+    return (
+        loop is not None
+        and parameter["resolved_value"] == resolved
+        and len(feature) == 1
+        and feature[0].get("kind") == "point"
+        and feature[0].get("coordinates") == _generated_station_reference_point(loop)
     )
 
 
@@ -919,7 +1032,7 @@ def _engineering_parameter_records(
                 applicable_views=["meridional", "blade_3d"],
                 feature_geometry=[feature],
                 dimension_definition=None,
-                selection_scope={"support_profile_id": profile_id},
+                selection_scope={"support_profile_id": profile_id, "source_profile_id": profile_id},
                 order=len(parameters),
             )
         )
@@ -1085,6 +1198,7 @@ def _engineering_parameter_records(
                     "blade_instance_id": blade_id,
                     "span_station_id": station_id,
                     "section_loop_id": loop_id,
+                    "source_station_index": span_stations[station_id]["source_loop_index"],
                 },
                 order=len(parameters),
             )
