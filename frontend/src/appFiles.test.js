@@ -125,6 +125,18 @@ describe("frontend application files", () => {
     assert.match(workspaceSource, /transition_surfaces/);
   });
 
+  test("viewer exports and keeps using the proven surface-graph helpers for CAD and CFD", () => {
+    const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+
+    assert.match(viewerSource, /export function createSurfaceGraphGroup\(/);
+    assert.match(viewerSource, /export function surfaceGraphBounds\(/);
+    assert.match(viewerSource, /export function disposeObject\(/);
+    assert.match(
+      viewerSource,
+      /createSurfaceGraphGroup\(\s*visibleSurfaceGraph,\s*bounds\.center,\s*simulationViewMode,\s*selectedSurfaceIds,\s*activeMeshOverlayMode,\s*manifest,\s*\)/,
+    );
+  });
+
   test("viewer renders mesh-only surface graph geometry and bounds", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 

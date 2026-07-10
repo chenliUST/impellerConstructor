@@ -373,7 +373,7 @@ export function ModelViewer({
   );
 }
 
-function createSurfaceGraphGroup(
+export function createSurfaceGraphGroup(
   surfaceGraph,
   center,
   simulationViewMode,
@@ -763,7 +763,7 @@ function filterSurfaceGraph(surfaceGraph, simulationViewMode, manifest) {
   };
 }
 
-function surfaceGraphBounds(surfaceGraph) {
+export function surfaceGraphBounds(surfaceGraph) {
   const box = new THREE.Box3();
   let hasPoint = false;
 
@@ -955,7 +955,7 @@ function pushPoint(positions, point, center) {
   positions.push(point[0] - center.x, point[1] - center.y, point[2] - center.z);
 }
 
-function disposeObject(object) {
+export function disposeObject(object) {
   object.traverse((child) => {
     if (child.geometry) {
       child.geometry.dispose();
