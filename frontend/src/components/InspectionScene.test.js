@@ -65,10 +65,19 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /annotationsByView\[viewId\]/);
     assert.match(source, /const projectionReady\s*=/);
     assert.match(source, /const projectionFailureKey\s*=\s*projectionReady/);
-    assert.match(source, /projectionContextSignature\(manifest,\s*annotationsByView,\s*geometricViews\)/);
+    assert.match(source, /projectionContextSignature\(\s*manifest,\s*annotationsByView,\s*geometricViews,\s*selectionContextKey,?\s*\)/);
     assert.match(source, /projectionFailureNotificationKey\(\s*projectionFailureKey,\s*projectionContextKey,\s*projectionEpoch/);
     assert.match(source, /if \(projectionNotificationKey\)/);
     assert.match(source, /\[onProjectionError,\s*projectionNotificationKey\]/);
+  });
+
+  test("documents the complete workspace selection revision and gates overlays until projection is ready", () => {
+    const source = readFileSync(scenePath, "utf-8");
+
+    assert.match(source, /selectionContextKey\s*=\s*""/);
+    assert.match(source, /Task 6 passes JSON\.stringify\(selection\)/);
+    assert.match(source, /projectionReady\s*\?\s*geometricViews\.map\(\(viewId\) =>/);
+    assert.match(source, /:\s*null,?\s*\n\s*\);/);
   });
 
   test("increments the projection epoch only after scene refs and initial camera framing are installed", () => {

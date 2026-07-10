@@ -272,4 +272,34 @@ describe("inspection scene model", () => {
     assert.equal(stableKey, projectionFailureNotificationKey('[["3d","same"]]', equivalentContext, 4));
     assert.notEqual(stableKey, projectionFailureNotificationKey('[["3d","same"]]', equivalentContext, 5));
   });
+
+  test("projection notification keys distinguish the same failed id across workspace selection revisions", () => {
+    const manifest = { generation_id: "generation-a" };
+    const annotations = {
+      "3d": [{ id: "same", selected: true, anchor: { kind: "surface", surfaceId: "surface-a" } }],
+    };
+    const contextA = projectionContextSignature(manifest, annotations, ["3d"], '{"surfaceId":"surface-a"}');
+    const contextB = projectionContextSignature(manifest, annotations, ["3d"], '{"surfaceId":"surface-b"}');
+
+    assert.notEqual(contextA, contextB);
+    assert.notEqual(
+      projectionFailureNotificationKey('[["3d","same"]]', contextA, 6),
+      projectionFailureNotificationKey('[["3d","same"]]', contextB, 6),
+    );
+  });
+
+  test("stable workspace selection revision preserves the projection notification key", () => {
+    const manifest = { generation_id: "generation-a" };
+    const annotations = {
+      "3d": [{ id: "same", selected: true, anchor: { kind: "surface", surfaceId: "surface-a" } }],
+    };
+    const firstContext = projectionContextSignature(manifest, annotations, ["3d"], '{"surfaceId":"surface-a"}');
+    const repeatedContext = projectionContextSignature(manifest, annotations, ["3d"], '{"surfaceId":"surface-a"}');
+
+    assert.equal(firstContext, repeatedContext);
+    assert.equal(
+      projectionFailureNotificationKey('[["3d","same"]]', firstContext, 6),
+      projectionFailureNotificationKey('[["3d","same"]]', repeatedContext, 6),
+    );
+  });
 });

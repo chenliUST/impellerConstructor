@@ -72,7 +72,7 @@ export function selectedProjectionFailureKey(annotationsByView, viewIds, project
   return failures.length ? JSON.stringify(failures) : "";
 }
 
-export function projectionContextSignature(manifest, annotationsByView, viewIds) {
+export function projectionContextSignature(manifest, annotationsByView, viewIds, selectionContextKey = "") {
   const views = [...new Set((viewIds || []).map(String))].sort().map((viewId) => {
     const annotations = (annotationsByView?.[viewId] || [])
       .map((annotation) => [
@@ -83,7 +83,11 @@ export function projectionContextSignature(manifest, annotationsByView, viewIds)
       .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
     return [viewId, annotations];
   });
-  return JSON.stringify({ generationId: manifest?.generation_id ?? null, views });
+  return JSON.stringify({
+    generationId: manifest?.generation_id ?? null,
+    selectionContextKey: String(selectionContextKey),
+    views,
+  });
 }
 
 export function projectionFailureNotificationKey(failureKey, contextSignature, projectionEpoch) {

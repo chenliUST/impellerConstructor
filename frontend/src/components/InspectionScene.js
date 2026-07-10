@@ -21,6 +21,7 @@ const h = React.createElement;
 const SELECTED_EMISSIVE = "#f97316";
 const EMPTY_SURFACE_GRAPH = { surfaces: [] };
 
+// Task 6 passes JSON.stringify(selection) as the complete workspace selection revision.
 export function InspectionScene({
   manifest = null,
   surfaceGraph = EMPTY_SURFACE_GRAPH,
@@ -31,6 +32,7 @@ export function InspectionScene({
   visibleLayers = defaultVisibleLayers(),
   viewMode = "combined",
   annotationsByView = {},
+  selectionContextKey = "",
 }) {
   const containerRef = useRef(null);
   const groupRef = useRef(null);
@@ -332,7 +334,12 @@ export function InspectionScene({
   const projectionFailureKey = projectionReady
     ? selectedProjectionFailureKey(annotationsByView, geometricViews, projectionForView)
     : "";
-  const projectionContextKey = projectionContextSignature(manifest, annotationsByView, geometricViews);
+  const projectionContextKey = projectionContextSignature(
+    manifest,
+    annotationsByView,
+    geometricViews,
+    selectionContextKey,
+  );
   const projectionNotificationKey = projectionReady
     ? projectionFailureNotificationKey(
         projectionFailureKey,
@@ -364,38 +371,40 @@ export function InspectionScene({
       "data-renderer-count": "1",
       "data-scene-surface-count": String(surfaceCount),
     }),
-    geometricViews.map((viewId) => {
-      const rect = rects[viewId];
-      if (!rect?.width || !rect?.height) {
-        return null;
-      }
-      return h(
-        "svg",
-        {
-          className: `inspection-annotation-viewport inspection-annotation-${viewId}`,
-          key: `${viewId}:${projectionEpoch}`,
-          viewBox: `0 0 ${rect.width} ${rect.height}`,
-          width: rect.width,
-          height: rect.height,
-          style: {
-            position: "absolute",
-            left: rect.x,
-            top: viewportSize.height - rect.y - rect.height,
-            width: rect.width,
-            height: rect.height,
-            overflow: "hidden",
-            pointerEvents: "none",
-          },
-          "aria-hidden": "true",
-        },
-        h(ParameterAnnotationOverlay, {
-          annotations: annotationsByView[viewId] || [],
-          projectAnchor: projectionForView(viewId),
-          viewportWidth: rect.width,
-          viewportHeight: rect.height,
-        }),
-      );
-    }),
+    projectionReady
+      ? geometricViews.map((viewId) => {
+          const rect = rects[viewId];
+          if (!rect?.width || !rect?.height) {
+            return null;
+          }
+          return h(
+            "svg",
+            {
+              className: `inspection-annotation-viewport inspection-annotation-${viewId}`,
+              key: `${viewId}:${projectionEpoch}`,
+              viewBox: `0 0 ${rect.width} ${rect.height}`,
+              width: rect.width,
+              height: rect.height,
+              style: {
+                position: "absolute",
+                left: rect.x,
+                top: viewportSize.height - rect.y - rect.height,
+                width: rect.width,
+                height: rect.height,
+                overflow: "hidden",
+                pointerEvents: "none",
+              },
+              "aria-hidden": "true",
+            },
+            h(ParameterAnnotationOverlay, {
+              annotations: annotationsByView[viewId] || [],
+              projectAnchor: projectionForView(viewId),
+              viewportWidth: rect.width,
+              viewportHeight: rect.height,
+            }),
+          );
+        })
+      : null,
   );
 }
 
