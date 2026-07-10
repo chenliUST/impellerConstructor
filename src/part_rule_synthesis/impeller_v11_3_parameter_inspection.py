@@ -35,7 +35,10 @@ def validate_parameter_inspection_contract(
     ):
         return [{"reason": "parameter_inspection_contract_unsupported"}]
     if any(
-        not isinstance(loop, Mapping) or not isinstance(loop.get("metrics"), Mapping)
+        not isinstance(loop, Mapping)
+        or not isinstance(loop.get("metrics"), Mapping)
+        or not isinstance(loop.get("span_station_id"), str)
+        or not loop.get("span_station_id")
         for loop in section_loops.values()
     ):
         return [{"reason": "parameter_inspection_contract_unsupported"}]

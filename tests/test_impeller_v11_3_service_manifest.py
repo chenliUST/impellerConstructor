@@ -114,6 +114,19 @@ def test_validation_rejects_malformed_section_loop_entry():
     assert "parameter_inspection_contract_unsupported" in reasons
 
 
+def test_validation_rejects_malformed_nested_contract_values():
+    baseline = graph_for()
+    loop_id = next(iter(baseline["parameter_inspection"]["section_loops"]))
+
+    for malformed_station_id in ([], {}):
+        graph = deepcopy(baseline)
+        graph["parameter_inspection"]["section_loops"][loop_id]["span_station_id"] = malformed_station_id
+
+        reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+
+        assert "parameter_inspection_contract_unsupported" in reasons
+
+
 def test_all_active_presets_expose_service_inspection_contracts(tmp_path):
     service = RuleSynthesisService(tmp_path, model_output_root=tmp_path / "Model Output")
     for preset_id in ACTIVE_PRESETS:
