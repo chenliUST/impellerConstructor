@@ -258,3 +258,124 @@ public_rocket_turbopump_inducer_v1_1 1.1.2 1.1.2 PASS run-6e2d32bd20e5
 - Active-span feasibility is now pointwise. During Task 3 review, interval-averaged feasibility was rejected; strict pointwise diagnostics are the accepted semantic rule.
 - Leading/trailing cap metadata now distinguishes target sagitta from resolved sagitta measured from final cap geometry.
 - Frontend presets expose canonical defaults, and the new `Parameter views` panel reads preset defaults before generation and manifest-resolved canonical data after generation.
+
+## Final Review Fix Verification
+
+Final verification branch head:
+
+```text
+b74e06c chore: keep sdd scratch out of source history
+```
+
+Final review fixes included:
+
+- canonical NURBS skeleton/thickness surfaces are streamwise-major, so direct `evaluate_nurbs_surface(surface, s, h)` reads the intended parameter axes;
+- service instantiation regenerates canonical payloads from bound scalar parameters, so parameter edits affect geometry and manifest consistently;
+- V1.1.2 validation gates are explicit for infeasible active-span offsets, malformed canonical NURBS fields, population mismatches, and unresolved cap sagitta;
+- closed-preset default active-span offsets were reduced to `19.0 mm` to satisfy pointwise feasibility while retaining the V1.1.2 root/shroud offset contract;
+- SDD scratch reports were removed from source history tracking while preserving local ignored recovery files.
+
+### Final Backend And Frontend Verification
+
+Command:
+
+```text
+python -m pytest tests/test_impeller_v11_2_canonical_parameterization.py tests/test_impeller_v11_2_preset_translation.py tests/test_impeller_v11_2_active_span_policy.py tests/test_impeller_v11_2_nurbs_loop_caps.py tests/test_impeller_v11_2_surface_graph_compatibility.py -q
+```
+
+Result:
+
+```text
+24 passed in 231.94s (0:03:51)
+```
+
+Command:
+
+```text
+python -m pytest tests/test_impeller_geometry_validation.py -q
+```
+
+Result:
+
+```text
+17 passed in 2.34s
+```
+
+Command:
+
+```text
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_bounded_brep_export.py -q
+```
+
+Result:
+
+```text
+38 passed in 1.26s
+```
+
+Command:
+
+```text
+cd frontend
+npm.cmd test
+```
+
+Result:
+
+```text
+tests 128
+suites 13
+pass 128
+fail 0
+duration_ms 293.7254
+```
+
+### Final V1.1 Regression Verification
+
+Command:
+
+```text
+python -m pytest tests/test_impeller_v11_resources.py tests/test_impeller_v11_blade_to_blade_loop_domain.py tests/test_impeller_v11_loop_c2_continuity.py tests/test_impeller_v11_main_splitter_domain.py -q
+```
+
+Result:
+
+```text
+37 passed in 13.57s
+```
+
+Command:
+
+```text
+python -m pytest tests/test_impeller_v11_six_face_surface_family.py tests/test_impeller_v11_root_attachment_surface.py tests/test_impeller_v11_tip_or_shroud_surface.py -q
+```
+
+Result:
+
+```text
+25 passed in 70.97s (0:01:10)
+```
+
+Command:
+
+```text
+python -m pytest tests/test_impeller_v11_mesh_and_export_contract.py -q
+```
+
+Result:
+
+```text
+9 passed in 211.42s (0:03:31)
+```
+
+### Final Five-Preset Service Smoke
+
+Preset result lines:
+
+```text
+radial_open_reference_v1_1 1.1.2 1.1.2 PASS run-922c203e60d1
+radial_closed_reference_v1_1 1.1.2 1.1.2 PASS run-25f44f58b56c
+nasa_stage37_stator_ring_v1_1 1.1.2 1.1.2 PASS run-7704b2eb566c
+rr_ultrafan_cti_fan_v1_1 1.1.2 1.1.2 PASS run-53b9a597343d
+public_rocket_turbopump_inducer_v1_1 1.1.2 1.1.2 PASS run-235f81d11d31
+```
