@@ -21,7 +21,7 @@ function manifestFixture() {
     blade_instances: {
       blade_0: {
         blade_instance_id: "blade_0",
-        surface_ids: ["blade_0_pressure_surface"],
+        surface_ids: ["blade_0_pressure_surface", "blade_0_suction_surface"],
         span_station_ids: ["blade_0:span_0"],
       },
     },
@@ -30,6 +30,11 @@ function manifestFixture() {
         surface_id: "blade_0_pressure_surface",
         blade_instance_id: "blade_0",
         face_family: "blade_pressure",
+      },
+      blade_0_suction_surface: {
+        surface_id: "blade_0_suction_surface",
+        blade_instance_id: "blade_0",
+        face_family: "blade_suction",
       },
     },
     span_stations: {
@@ -68,7 +73,10 @@ function manifestFixture() {
     geometry: {
       surface_graph: {
         generation_id: "g1",
-        surfaces: [{ id: "blade_0_pressure_surface", uv_grid: [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]] }],
+        surfaces: [
+          { id: "blade_0_pressure_surface", uv_grid: [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]] },
+          { id: "blade_0_suction_surface", uv_grid: [[[0, 0, 1], [1, 0, 1]], [[0, 1, 1], [1, 1, 1]]] },
+        ],
       },
     },
   };
@@ -104,6 +112,50 @@ describe("parameter inspection model", () => {
     const selection = defaultInspectionSelection(model);
     assert.ok(annotationsForView(model, "s_q", "key", selection).length > 0);
     assert.ok(annotationsForView(model, "s_q", "all", selection).length >= annotationsForView(model, "s_q", "key", selection).length);
+  });
+
+  test("selected surface excludes sibling surfaces on the same blade", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const selection = mergeInspectionSelection(defaultInspectionSelection(model), {
+      surfaceId: "blade_0_pressure_surface",
+    });
+
+    assert.deepEqual(
+      annotationsForView(model, "3d", "selected", selection).map((annotation) => annotation.id),
+      ["3d:blade_0_pressure_surface"],
+    );
+  });
+
+  test("selected section segment excludes siblings while retaining key annotations", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const selection = mergeInspectionSelection(defaultInspectionSelection(model), {
+      sectionSegmentId: "pressure_side",
+    });
+
+    assert.deepEqual(
+      annotationsForView(model, "s_q", "selected", selection).map((annotation) => annotation.id),
+      [
+        "s_q:thickness_min_mm",
+        "s_q:thickness_max_mm",
+        "s_q:blade_0:span_0:loop:pressure_side",
+      ],
+    );
+  });
+
+  test("blade-only selection expands to all annotations on the blade", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const selection = {
+      bladeId: "blade_0",
+      surfaceId: null,
+      spanStationId: null,
+      sectionSegmentId: null,
+      controlPointId: null,
+    };
+
+    assert.deepEqual(
+      annotationsForView(model, "3d", "selected", selection).map((annotation) => annotation.id),
+      ["3d:blade_0_pressure_surface", "3d:blade_0_suction_surface"],
+    );
   });
 
   test("active display names identify v1.1.3 while backend preset ids remain stable", () => {
