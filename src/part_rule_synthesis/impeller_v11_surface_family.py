@@ -91,7 +91,7 @@ def build_v11_surface_graph(
         graph_failures = [*copy.deepcopy(failures), *_surface_failures(surfaces)]
     status = "PASS" if not graph_failures else "FAIL"
     topology_graph = build_v10_topology_graph(surfaces)
-    return {
+    graph = {
         "transition_geometry_status": TRANSITION_GEOMETRY_STATUS,
         "geometry_version": GEOMETRY_VERSION,
         "geometry_patch_version": GEOMETRY_PATCH_VERSION,
@@ -128,6 +128,14 @@ def build_v11_surface_graph(
         "sampled_blades": copy.deepcopy(loop_family.get("blades", [])),
         "cad_features": [],
     }
+    from part_rule_synthesis.impeller_v11_3_parameter_inspection import (
+        build_parameter_inspection_contract,
+    )
+
+    inspection = build_parameter_inspection_contract(graph)
+    graph["generation_id"] = inspection["generation_id"]
+    graph["parameter_inspection"] = inspection
+    return graph
 
 
 def _merge_v11_profile_overrides(defaults: dict[str, Any], profile_overrides: dict[str, Any]) -> dict[str, Any]:
