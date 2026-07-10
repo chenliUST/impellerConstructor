@@ -255,3 +255,57 @@ The identical command was started again after the final test-only self-review ch
 ## Concerns
 
 The exact backend suite is slow: the completed run took 15 minutes 30 seconds. The final exact rerun was interrupted after the focused post-review test passed, so the last completed exact result predates that test-only addition.
+
+---
+
+## Review Fix: Source-Bound Engineering Evidence
+
+Review-fix implementation commit: `d83a8f0 fix: bind engineering inspection to source geometry`.
+
+Addressed the review findings in `impeller_v11_3_parameter_inspection.py`, `service.py`, and the two Task 2 test modules:
+
+- Closed shroud width now comes from the closed attachment's authoritative `shroud_reference_loop` and `shroud_attachment_loop` evidence. It never uses the root-only metric scale.
+- Every generated control point for every section segment and station emits both `s` and `q` parameter records.
+- Validation binds control, profile, station, thickness, sagitta, and attachment parameter evidence to the source contract/geometry. Self-consistent mutations that no longer match source evidence are rejected.
+- Angular dimension vectors must have equal coordinate dimensions.
+- The public V1.1 service manifest projects `parameter_inspection_capabilities`.
+
+### RED Evidence
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py tests/test_impeller_v11_3_service_manifest.py -q
+```
+
+Result: `5 failed, 23 passed in 796.35s (0:13:16)`. The failures covered missing closed-shroud provenance, truncated controls, missing source binding, angular vector dimension acceptance, and missing public manifest capabilities.
+
+### GREEN Evidence
+
+Focused engineering checks after implementation:
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -k "engineering_dimension_records or closed_shroud_width or section_control_parameters or self_consistent or angular_dimension" -q
+```
+
+Result: `5 passed, 7 deselected in 58.12s`.
+
+Required focused suite:
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py tests/test_impeller_v11_3_service_manifest.py -q
+```
+
+Result: `28 passed in 861.51s (0:14:21)`.
+
+### Exact Suite Status
+
+Started the required Task 2 exact suite after the focused suite passed:
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py tests/test_impeller_v11_3_parameter_inspection_contract.py tests/test_impeller_v11_3_service_manifest.py -q
+```
+
+The user interrupted the task before this command returned a final result. No replacement long suite was started at the user's instruction.
+
+### Concerns
+
+The completed focused suite takes approximately 14 minutes in this environment. The post-review exact suite is incomplete, so it has no pass/fail result for the final review-fix commit.
