@@ -5,9 +5,10 @@ import {
   INSPECTION_TABS,
   annotationsForView,
   defaultInspectionSelection,
-  mergeInspectionSelection,
+  reduceInspectionSelection,
   resolveParameterInspection,
   sectionLoopForSelection,
+  selectedSurfaceIdsForSelection,
 } from "../parameterInspectionModel.js?v=1.1.5";
 import { InspectionScene } from "./InspectionScene.js?v=1.1.5";
 import { ParameterAnnotationOverlay } from "./ParameterAnnotationOverlay.js?v=1.1.5";
@@ -58,22 +59,33 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
     [annotationLevel, model, selection],
   );
   const selectedLoop = sectionLoopForSelection(model, selection);
+  const selectedSurfaceIds = useMemo(
+    () => selectedSurfaceIdsForSelection(model, selection),
+    [model, selection],
+  );
   const quadLayout = narrowQuad ? "quad_stacked" : "quad";
 
   function handleSurfaceSelection(surfaceId) {
     setProjectionError(null);
     const reference = model.indices.surfaces[surfaceId];
-    setSelection((current) =>
-      mergeInspectionSelection(current, {
-        surfaceId,
-        bladeId: reference?.blade_instance_id || current.bladeId,
-      }),
-    );
+    if (reference) {
+      setSelection((current) => reduceInspectionSelection(model, current, { surfaceId }));
+    }
   }
 
   function handleSectionSelection(nextSelection) {
     setProjectionError(null);
-    setSelection((current) => mergeInspectionSelection(current, nextSelection));
+    setSelection((current) => reduceInspectionSelection(model, current, nextSelection));
+  }
+
+  function handleBladeSelection(bladeId) {
+    setProjectionError(null);
+    setSelection((current) => reduceInspectionSelection(model, current, { bladeId }));
+  }
+
+  function handleStationSelection(spanStationId) {
+    setProjectionError(null);
+    setSelection((current) => reduceInspectionSelection(model, current, { spanStationId }));
   }
 
   function handleTabSelection(viewId) {
@@ -99,7 +111,15 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
 
   return h(
     "section",
-    { className: "parameter-inspection-workspace", "data-testid": "inspection-workspace", "data-active-tab": activeTab },
+    {
+      className: "parameter-inspection-workspace",
+      "data-testid": "inspection-workspace",
+      "data-active-tab": activeTab,
+      "data-selected-blade-id": selection.bladeId || "",
+      "data-selected-station-id": selection.spanStationId || "",
+      "data-selected-surface-count": String(selectedSurfaceIds.length),
+    },
+    h("div", { className: "inspection-provenance-badge", "data-testid": "inspection-provenance" }, "Resolved manifest | runtime 1.1.3 | geometry 1.1.2"),
     h(
       "div",
       { className: "inspection-workspace-toolbar" },
@@ -119,6 +139,43 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
               onClick: () => handleTabSelection(tab.id),
             },
             tab.label,
+          ),
+        ),
+      ),
+      h(
+        "div",
+        { className: "inspection-entity-selectors" },
+        h(
+          "label",
+          null,
+          h("span", null, "Blade"),
+          h(
+            "select",
+            {
+              value: selection.bladeId || "",
+              "data-testid": "inspection-blade-selector",
+              onInput: (event) => handleBladeSelection(event.target.value),
+            },
+            Object.values(model.indices.blades).map((blade) =>
+              h("option", { key: blade.blade_instance_id, value: blade.blade_instance_id }, bladeLabel(blade)),
+            ),
+          ),
+        ),
+        h(
+          "label",
+          null,
+          h("span", null, "Station"),
+          h(
+            "select",
+            {
+              value: selection.spanStationId || "",
+              "data-testid": "inspection-station-selector",
+              onInput: (event) => handleStationSelection(event.target.value),
+            },
+            (model.indices.blades[selection.bladeId]?.span_station_ids || []).map((stationId) => {
+              const station = model.indices.stations[stationId];
+              return h("option", { key: stationId, value: stationId }, stationLabel(station));
+            }),
           ),
         ),
       ),
@@ -150,6 +207,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
           onSelectSection: handleSectionSelection,
           selectedLoop,
           selection,
+          selectedSurfaceIds,
           quadLayout,
           viewMode,
           visibleLayers,
@@ -169,7 +227,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
               manifest,
               surfaceGraph: model.surfaceGraph,
               layout: activeTab,
-              selectedSurfaceId: selection.surfaceId,
+              selectedSurfaceIds,
               onSelectSurface: handleSurfaceSelection,
               onProjectionError: setProjectionError,
               visibleLayers,
@@ -192,6 +250,7 @@ function renderQuadView({
   onSelectSection,
   selectedLoop,
   selection,
+  selectedSurfaceIds,
   quadLayout,
   viewMode,
   visibleLayers,
@@ -206,7 +265,7 @@ function renderQuadView({
         manifest,
         surfaceGraph: model.surfaceGraph,
         layout: quadLayout,
-        selectedSurfaceId: selection.surfaceId,
+        selectedSurfaceIds,
         onSelectSurface,
         onProjectionError,
         visibleLayers,
@@ -279,4 +338,14 @@ function sectionAnnotationRailAnchor(anchor) {
 
 function viewLabel(viewId) {
   return INSPECTION_TABS.find((tab) => tab.id === viewId)?.label || viewId;
+}
+
+function bladeLabel(blade) {
+  const bladeClass = String(blade.blade_class || "blade").replaceAll("_", " ");
+  return `${bladeClass} ${Number(blade.blade_index) + 1}`;
+}
+
+function stationLabel(station) {
+  const hValue = Number(station?.h);
+  return Number.isFinite(hValue) ? `h ${hValue.toFixed(3)}` : station?.span_station_id || "station";
 }

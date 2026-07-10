@@ -470,8 +470,8 @@ def _loop_is_closed(loop: Mapping[str, Any]) -> bool:
     joins = (
         (pressure[0], leading[0]),
         (leading[-1], suction[0]),
-        (suction[-1], trailing[-1]),
-        (trailing[0], pressure[-1]),
+        (suction[-1], trailing[0]),
+        (trailing[-1], pressure[-1]),
     )
     return all(
         math.isclose(float(left[0]), float(right[0]), rel_tol=0.0, abs_tol=1.0e-7)
@@ -488,6 +488,13 @@ def _resolved_dimensions(surface_graph: Mapping[str, Any], canonical: Mapping[st
         for point in row
     ]
     population = canonical.get("blade_population", {})
+    pose_controls = [
+        float(point[2])
+        for row in canonical.get("pose_field", {}).get("control_points", [])
+        for point in row
+    ]
+    main_blade_count = population.get("main_blade_count")
+    angular_pitch_deg = 360.0 / float(main_blade_count) if main_blade_count else None
     active_span = canonical.get("active_span_policy", {})
     return {
         "thickness_min_mm": _dimension(
@@ -518,6 +525,17 @@ def _resolved_dimensions(surface_graph: Mapping[str, Any], canonical: Mapping[st
             population.get("splitter_passage_fraction"),
             population.get("splitter_passage_fraction"),
             "pitch fraction",
+        ),
+        "angular_pitch_deg": _dimension(angular_pitch_deg, angular_pitch_deg, "deg"),
+        "pose_theta_min_deg": _dimension(
+            min(pose_controls) if pose_controls else None,
+            min(pose_controls) if pose_controls else None,
+            "deg",
+        ),
+        "pose_theta_max_deg": _dimension(
+            max(pose_controls) if pose_controls else None,
+            max(pose_controls) if pose_controls else None,
+            "deg",
         ),
     }
 

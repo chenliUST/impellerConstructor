@@ -152,6 +152,21 @@ def test_section_loop_exposes_physical_display_units_and_authoritative_scale():
     ]
 
 
+def test_resolved_dimensions_include_population_pitch_and_pose_evidence():
+    graph = graph_for()
+    dimensions = graph["parameter_inspection"]["resolved_dimensions"]
+    pose_values = [
+        point[2]
+        for row in graph["canonical_nurbs_parameterization"]["pose_field"]["control_points"]
+        for point in row
+    ]
+
+    assert dimensions["angular_pitch_deg"]["resolved_value"] == 45.0
+    assert dimensions["angular_pitch_deg"]["unit"] == "deg"
+    assert dimensions["pose_theta_min_deg"]["resolved_value"] == min(pose_values)
+    assert dimensions["pose_theta_max_deg"]["resolved_value"] == max(pose_values)
+
+
 def test_control_point_ids_are_authoritative_unique_and_stable_under_reorder():
     graph = graph_for()
     baseline = build_parameter_inspection_contract(graph)

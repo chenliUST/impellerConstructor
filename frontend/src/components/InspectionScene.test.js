@@ -34,7 +34,8 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /baselineEmissiveIntensity/);
     assert.match(source, /baselineOpacity/);
     assert.match(source, /group\.traverse\(\(child\)/);
-    assert.match(source, /child\.userData\.surfaceId === selectedSurfaceId/);
+    assert.match(source, /selectedSurfaceIds/);
+    assert.match(source, /selectedSurfaceIdSet\.has\(child\.userData\.surfaceId\)/);
     assert.match(source, /material\.emissive\.set\(/);
     assert.match(source, /material\.emissiveIntensity\s*=/);
     assert.match(source, /material\.opacity\s*=/);
@@ -71,6 +72,16 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /\[onProjectionError,\s*projectionNotificationKey\]/);
   });
 
+  test("renders authoritative meridional support profiles and control geometry", () => {
+    const source = readFileSync(scenePath, "utf-8");
+
+    assert.match(source, /renderMeridionalSupportProfiles/);
+    assert.match(source, /parameter_inspection\?\.support_profiles/);
+    assert.match(source, /meridional-support-profile/);
+    assert.match(source, /meridional-support-control/);
+    assert.match(source, /profile\.control_points/);
+  });
+
   test("documents the complete workspace selection revision and gates overlays until projection is ready", () => {
     const source = readFileSync(scenePath, "utf-8");
 
@@ -99,12 +110,12 @@ describe("InspectionScene source contract", () => {
   test("reapplies selection and visibility after manifest-driven scene rebuilds", () => {
     const source = readFileSync(scenePath, "utf-8");
     const buildIndex = source.indexOf("const group = createSurfaceGraphGroup(");
-    const selectionIndex = source.indexOf("child.userData.surfaceId === selectedSurfaceId");
+    const selectionIndex = source.indexOf("selectedSurfaceIdSet.has(child.userData.surfaceId)");
     const visibilityIndex = source.indexOf("const { showShadedSurfaces, showSurfaceUvWire, showMeshEdges }");
 
     assert.ok(buildIndex >= 0 && buildIndex < selectionIndex);
     assert.ok(selectionIndex < visibilityIndex);
-    assert.match(source, /\}, \[manifest, selectedSurfaceId, surfaceGraph\]\);/);
+    assert.match(source, /\}, \[manifest, selectedSurfaceIds, surfaceGraph\]\);/);
     assert.match(source, /\}, \[manifest, surfaceGraph, viewMode, visibleLayers\]\);/);
   });
 
@@ -125,7 +136,10 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /renderer\.dispose\(\)/);
     assert.match(source, /renderer\.domElement\.remove\(\)/);
     assert.match(source, /"data-testid":\s*"inspection-webgl"/);
-    assert.match(source, /"data-renderer-count":\s*"1"/);
+    assert.match(source, /rendererConstructionCountRef\.current \+= 1/);
+    assert.match(source, /constructedContextSetRef\.current\.add\(renderer\.getContext\(\)\)/);
+    assert.match(source, /"data-renderer-count":\s*String\(rendererStats\.rendererCount\)/);
+    assert.match(source, /"data-context-count":\s*String\(rendererStats\.contextCount\)/);
     assert.match(source, /"data-scene-surface-count":/);
   });
 });

@@ -46,6 +46,19 @@ function visibleText(node) {
 }
 
 function loopFixture() {
+  const segment = (sectionSegmentId, points, controlIds) => ({
+    section_segment_id: sectionSegmentId,
+    points_s_q: points,
+    control_points_s_q: points,
+    display_points_s_q_mm: points.map(([s, q]) => [s * 100, q]),
+    display_control_points_s_q_mm: points.map(([s, q]) => [s * 100, q]),
+    control_points: points.map(([s, q], index) => ({
+      control_point_id: controlIds[index],
+      section_segment_id: sectionSegmentId,
+      coordinates_s_q: [s, q],
+      display_coordinates_s_q_mm: [s * 100, q],
+    })),
+  });
   return {
     section_loop_id: "blade_0:span_0:loop",
     join_metrics: {
@@ -58,27 +71,60 @@ function loopFixture() {
     },
     segment_references: {
       pressure_side: {
-        section_segment_id: "blade_0:span_0:loop:pressure_side",
-        points_s_q: [[0, -1], [0.5, -1.2], [1, -0.8]],
-        control_points_s_q: [[0, -1], [0.5, -1.3], [1, -0.8]],
+        ...segment(
+          "blade_0:span_0:loop:pressure_side",
+          [[0, -1], [0.5, -1.2], [1, -0.8]],
+          ["pressure-inlet", "pressure-mid", "pressure-outlet"],
+        ),
       },
       leading_edge: {
-        section_segment_id: "blade_0:span_0:loop:leading_edge",
-        points_s_q: [[0, 1], [-0.12, 0], [0, -1]],
-        control_points_s_q: [[0, 1], [-0.12, 0], [0, -1]],
+        ...segment(
+          "blade_0:span_0:loop:leading_edge",
+          [[0, -1], [-0.12, 0], [0, 1]],
+          ["leading-pressure", "leading-mid", "leading-suction"],
+        ),
       },
       suction_side: {
-        section_segment_id: "blade_0:span_0:loop:suction_side",
-        points_s_q: [[1, 0.8], [0.5, 1.2], [0, 1]],
-        control_points_s_q: [[1, 0.8], [0.5, 1.3], [0, 1]],
+        ...segment(
+          "blade_0:span_0:loop:suction_side",
+          [[0, 1], [0.5, 1.2], [1, 0.8]],
+          ["suction-inlet", "suction-mid", "suction-outlet"],
+        ),
       },
       trailing_edge: {
-        section_segment_id: "blade_0:span_0:loop:trailing_edge",
-        points_s_q: [[1, -0.8], [1.12, 0], [1, 0.8]],
-        control_points_s_q: [[1, -0.8], [1.12, 0], [1, 0.8]],
+        ...segment(
+          "blade_0:span_0:loop:trailing_edge",
+          [[1, 0.8], [1.12, 0], [1, -0.8]],
+          ["trailing-suction", "trailing-mid", "trailing-pressure"],
+        ),
       },
     },
   };
+}
+
+function actualOpenPresetLoopFixture() {
+  const loop = loopFixture();
+  loop.section_loop_id = "blade_0:span_0:loop";
+  loop.streamwise_metric_scale_mm = 667.5320490261993;
+  loop.source_coordinate_units = { s: "normalized", q: "mm" };
+  loop.display_coordinate_units = { s: "mm", q: "mm" };
+  const actualDisplayPoints = {
+    pressure_side: [[40.05192294157195, -7.7], [186.90897372733582, 35.753125], [333.76602451309964, 132.925], [480.62307529886345, 231.109375], [627.4801260846273, 277.6]],
+    leading_edge: [[40.05192294157195, -7.7], [34.60720045381796, -5.444722215], [32.351922732689424, 0], [34.60720045381796, 5.444722215], [40.05192294157195, 7.7]],
+    suction_side: [[40.05192294157195, 7.7], [186.90897372733582, 52.371875], [333.76602451309964, 149.075], [480.62307529886345, 244.765625], [627.4801260846273, 286.4]],
+    trailing_edge: [[627.4801260846273, 286.4], [630.5913961729913, 285.111269837], [631.8801262039888, 282], [630.5913961729913, 278.888730163], [627.4801260846273, 277.6]],
+  };
+  for (const [segmentName, points] of Object.entries(actualDisplayPoints)) {
+    loop.segment_references[segmentName].display_points_s_q_mm = points;
+    loop.segment_references[segmentName].display_control_points_s_q_mm = points;
+    loop.segment_references[segmentName].control_points = points.map((point, index) => ({
+      control_point_id: `open-${segmentName}-${index}`,
+      section_segment_id: loop.segment_references[segmentName].section_segment_id,
+      coordinates_s_q: [point[0] / loop.streamwise_metric_scale_mm, point[1]],
+      display_coordinates_s_q_mm: point,
+    }));
+  }
+  return loop;
 }
 
 describe("SectionLoopInspectionView source contract", () => {
@@ -94,6 +140,9 @@ describe("SectionLoopInspectionView source contract", () => {
     assert.match(source, /leading_edge/);
     assert.match(source, /trailing_edge/);
     assert.match(source, /onSelect/);
+    assert.match(source, /display_points_s_q_mm/);
+    assert.match(source, /display_coordinates_s_q_mm/);
+    assert.doesNotMatch(source, /controlPointId:\s*`\$\{segment\.sectionSegmentId\}:cp_\$\{pointIndex\}`/);
     assert.doesNotMatch(source, /onChange/);
     assert.doesNotMatch(source, /drag/);
   });
@@ -126,11 +175,34 @@ describe("SectionLoopInspectionView source contract", () => {
     assert.match(JSON.stringify(tree), /1.25/);
     assert.match(JSON.stringify(tree), /0.008/);
 
+    actualCurves[0].props.onClick();
+    assert.deepEqual(JSON.parse(JSON.stringify(selected)), {
+      sectionSegmentId: "blade_0:span_0:loop:pressure_side",
+      controlPointId: null,
+    });
+
     controlPoints[0].props.onClick();
     assert.deepEqual(JSON.parse(JSON.stringify(selected)), {
       sectionSegmentId: "blade_0:span_0:loop:pressure_side",
-      controlPointId: "blade_0:span_0:loop:pressure_side:cp_0",
+      controlPointId: "pressure-inlet",
     });
+  });
+
+  test("renders millimetric axes and a non-degenerate equal-aspect open-preset loop", () => {
+    const SectionLoopInspectionView = loadComponent(sectionViewPath, "SectionLoopInspectionView");
+    const tree = SectionLoopInspectionView({ loop: actualOpenPresetLoopFixture(), annotationLevel: "all" });
+    const curves = collectElements(tree, (node) => node.type === "polyline" && /actual-section-loop/.test(node.props.className));
+    const coordinates = curves.flatMap((curve) => curve.props.points.split(" ").map((point) => point.split(",").map(Number)));
+    const xs = coordinates.map(([x]) => x);
+    const ys = coordinates.map(([, y]) => y);
+    const drawnWidth = Math.max(...xs) - Math.min(...xs);
+    const drawnHeight = Math.max(...ys) - Math.min(...ys);
+
+    assert.match(JSON.stringify(tree), /S \(mm\)/);
+    assert.match(JSON.stringify(tree), /Q \(mm\)/);
+    assert.ok(drawnWidth > 700, drawnWidth);
+    assert.ok(drawnHeight > 300, drawnHeight);
+    assert.ok(drawnWidth / drawnHeight > 1.8 && drawnWidth / drawnHeight < 2.2, drawnWidth / drawnHeight);
   });
 
   test("keeps join metrics below the top annotation lanes", () => {

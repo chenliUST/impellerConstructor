@@ -225,6 +225,13 @@ def test_validation_rejects_nonclosed_loop_status_and_geometry():
         assert "parameter_inspection_loop_not_closed" in reasons
 
 
+def test_validation_accepts_established_v112_closed_loop_orientation():
+    reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph_for())}
+
+    assert "parameter_inspection_loop_not_closed" not in reasons
+    assert "parameter_inspection_contract_unsupported" not in reasons
+
+
 def test_all_active_presets_expose_service_inspection_contracts(tmp_path):
     service = RuleSynthesisService(tmp_path, model_output_root=tmp_path / "Model Output")
     for preset_id in ACTIVE_PRESETS:

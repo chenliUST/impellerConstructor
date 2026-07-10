@@ -26,7 +26,7 @@ export function InspectionScene({
   manifest = null,
   surfaceGraph = EMPTY_SURFACE_GRAPH,
   layout = "3d",
-  selectedSurfaceId = null,
+  selectedSurfaceIds = [],
   onSelectSurface = null,
   onProjectionError = null,
   visibleLayers = defaultVisibleLayers(),
@@ -43,12 +43,15 @@ export function InspectionScene({
   const sizeRef = useRef({ width: 0, height: 0 });
   const resizeRef = useRef(null);
   const installedSceneRef = useRef(null);
+  const rendererConstructionCountRef = useRef(0);
+  const constructedContextSetRef = useRef(new Set());
   const layoutRef = useRef(layout);
   const onSelectSurfaceRef = useRef(onSelectSurface);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [surfaceCount, setSurfaceCount] = useState(0);
   const [projectionEpoch, setProjectionEpoch] = useState(0);
   const [projectionVersion, setProjectionVersion] = useState(0);
+  const [rendererStats, setRendererStats] = useState({ rendererCount: 0, contextCount: 0 });
 
   layoutRef.current = layout;
   onSelectSurfaceRef.current = onSelectSurface;
@@ -67,6 +70,12 @@ export function InspectionScene({
       meridional: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100000),
     };
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    rendererConstructionCountRef.current += 1;
+    constructedContextSetRef.current.add(renderer.getContext());
+    setRendererStats({
+      rendererCount: rendererConstructionCountRef.current,
+      contextCount: constructedContextSetRef.current.size,
+    });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor("#eef2f0");
@@ -98,6 +107,7 @@ export function InspectionScene({
       "off",
       manifest,
     );
+    const supportProfileGroup = renderMeridionalSupportProfiles(manifest, bounds.center);
     group.traverse((child) => {
       if (!child.isMesh) {
         return;
@@ -109,6 +119,7 @@ export function InspectionScene({
       });
     });
     scene.add(group);
+    scene.add(supportProfileGroup);
     scene.add(new THREE.HemisphereLight("#ffffff", "#8a928e", 2.4));
     const keyLight = new THREE.DirectionalLight("#ffffff", 2.2);
     keyLight.position.set(1200, -1800, 2200);
@@ -241,8 +252,10 @@ export function InspectionScene({
         }
         renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
         renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
+        supportProfileGroup.visible = viewId === "meridional";
         renderer.render(scene, cameras[viewId]);
       }
+      supportProfileGroup.visible = false;
     };
     animate();
 
@@ -255,7 +268,9 @@ export function InspectionScene({
       Object.values(controls).forEach((control) => control.removeEventListener("change", handleControlsChange));
       Object.values(controls).forEach((control) => control.dispose());
       scene.remove(group);
+      scene.remove(supportProfileGroup);
       disposeObject(group);
+      disposeObject(supportProfileGroup);
       renderer.dispose();
       renderer.domElement.remove();
       groupRef.current = null;
@@ -276,11 +291,12 @@ export function InspectionScene({
     if (!group) {
       return;
     }
+    const selectedSurfaceIdSet = new Set(selectedSurfaceIds);
     group.traverse((child) => {
       if (!child.isMesh) {
         return;
       }
-      const selected = child.userData.surfaceId === selectedSurfaceId;
+      const selected = selectedSurfaceIdSet.has(child.userData.surfaceId);
       forEachMaterial(child.material, (material) => {
         material.emissive.set(selected ? SELECTED_EMISSIVE : material.userData.baselineEmissive);
         material.emissiveIntensity = selected
@@ -289,7 +305,7 @@ export function InspectionScene({
         material.opacity = selected ? 1 : material.userData.baselineOpacity;
       });
     });
-  }, [manifest, selectedSurfaceId, surfaceGraph]);
+  }, [manifest, selectedSurfaceIds, surfaceGraph]);
 
   useEffect(() => {
     const group = groupRef.current;
@@ -368,7 +384,8 @@ export function InspectionScene({
       ref: containerRef,
       style: { position: "absolute", inset: 0, overflow: "hidden" },
       "data-testid": "inspection-webgl",
-      "data-renderer-count": "1",
+      "data-renderer-count": String(rendererStats.rendererCount),
+      "data-context-count": String(rendererStats.contextCount),
       "data-scene-surface-count": String(surfaceCount),
     }),
     projectionReady
@@ -445,4 +462,37 @@ function forEachMaterial(material, callback) {
       callback(item);
     }
   }
+}
+
+function renderMeridionalSupportProfiles(manifest, center) {
+  const group = new THREE.Group();
+  group.name = "meridional-support-profiles";
+  group.visible = false;
+  const profiles = manifest?.parameter_inspection?.support_profiles;
+  if (!profiles || typeof profiles !== "object") {
+    return group;
+  }
+  for (const profile of Object.values(profiles)) {
+    const points = profile && Array.isArray(profile.control_points)
+      ? profile.control_points.filter((point) => Array.isArray(point) && point.length >= 2 && point.every(Number.isFinite))
+      : [];
+    if (!points.length) {
+      continue;
+    }
+    const vectors = points.map(([r, z]) => new THREE.Vector3(r - center.x, -center.y, z - center.z));
+    const lineGeometry = new THREE.BufferGeometry().setFromPoints(vectors);
+    const line = new THREE.Line(lineGeometry, new THREE.LineBasicMaterial({ color: "#0f766e" }));
+    line.name = `meridional-support-profile:${profile.id}`;
+    line.userData.inspectionClass = "meridional-support-profile";
+    group.add(line);
+    const controlGeometry = new THREE.BufferGeometry().setFromPoints(vectors);
+    const controls = new THREE.Points(
+      controlGeometry,
+      new THREE.PointsMaterial({ color: "#be123c", size: 8, sizeAttenuation: false }),
+    );
+    controls.name = `meridional-support-control:${profile.id}`;
+    controls.userData.inspectionClass = "meridional-support-control";
+    group.add(controls);
+  }
+  return group;
 }

@@ -1112,6 +1112,16 @@ pre {
   background: #f8fbfa;
 }
 
+.inspection-provenance-badge {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-bottom: 1px solid #cbd8d3;
+  background: #e5ece9;
+  color: #34443f;
+  font-size: 11px;
+  font-weight: 750;
+}
+
 .inspection-workspace-toolbar {
   display: flex;
   min-height: 46px;
@@ -1160,6 +1170,33 @@ pre {
   color: #52635e;
   font-size: 12px;
   font-weight: 700;
+}
+
+.inspection-entity-selectors {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.inspection-entity-selectors label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #52635e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.inspection-entity-selectors select {
+  width: min(150px, 18vw);
+  min-width: 92px;
+  min-height: 30px;
+  border: 1px solid #cbd4cf;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #26332e;
+  font-size: 11px;
 }
 
 .inspection-annotation-control select {
@@ -1310,6 +1347,15 @@ pre {
   .inspection-workspace-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .inspection-entity-selectors {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .inspection-entity-selectors select {
+    width: min(220px, 52vw);
   }
 
   .inspection-workspace-quad {

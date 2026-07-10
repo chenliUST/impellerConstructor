@@ -29,7 +29,7 @@ describe("ParameterInspectionWorkspace source contract", () => {
 
     assert.match(source, /resolveParameterInspection\(manifest\)/);
     assert.match(source, /defaultInspectionSelection\(model\)/);
-    assert.match(source, /mergeInspectionSelection\(current,/);
+    assert.match(source, /reduceInspectionSelection\(model, current,/);
     assert.match(source, /annotationsForView\(model, viewId, annotationLevel, selection\)/);
     assert.match(source, /sectionLoopForSelection\(model, selection\)/);
     assert.match(source, /selectionContextKey:\s*JSON\.stringify\(selection\)/);
@@ -38,6 +38,11 @@ describe("ParameterInspectionWorkspace source contract", () => {
     assert.match(source, /data-testid":\s*"inspection-workspace"/);
     assert.match(source, /inspection-tab-quad/);
     assert.match(source, /data-testid":\s*"inspection-annotation-level"/);
+    assert.match(source, /data-testid":\s*"inspection-blade-selector"/);
+    assert.match(source, /data-testid":\s*"inspection-station-selector"/);
+    assert.match(source, /Resolved manifest \| runtime 1\.1\.3 \| geometry 1\.1\.2/);
+    assert.match(source, /reduceInspectionSelection/);
+    assert.match(source, /selectedSurfaceIdsForSelection/);
   });
 
   test("clears projection errors before selection and tab changes without a passive clear race", () => {
@@ -55,6 +60,8 @@ describe("ParameterInspectionWorkspace source contract", () => {
     assert.doesNotMatch(source, /useEffect\(\(\) => \{\s*setProjectionError\(null\);\s*\}, \[activeTab, generationId, selection\]\)/);
     assert.match(source, /onClick: \(\) => handleTabSelection\(tab\.id\)/);
     assert.match(source, /onClick: \(\) => handleTabSelection\(viewId\)/);
+    assert.doesNotMatch(surfaceSelection, /setActiveTab/);
+    assert.doesNotMatch(sectionSelection, /setActiveTab/);
   });
 
   test("selects stacked Quad at the CSS breakpoint and cleans up matchMedia", () => {

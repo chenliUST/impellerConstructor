@@ -17,7 +17,10 @@ const SEGMENT_ORDER = ["pressure_side", "leading_edge", "suction_side", "trailin
 
 export function SectionLoopInspectionView({ loop, selection = {}, annotationLevel = "key", onSelect }) {
   const segments = sectionSegments(loop);
-  const transform = fitPoints(segments.flatMap((segment) => [...segment.points, ...segment.controlPoints]));
+  const transform = fitPoints(segments.flatMap((segment) => [
+    ...segment.points,
+    ...segment.controls.map((control) => control.point),
+  ]));
   const controlsVisible = annotationLevel === "selected" || annotationLevel === "all";
 
   return h(
@@ -32,7 +35,7 @@ export function SectionLoopInspectionView({ loop, selection = {}, annotationLeve
         "aria-label": loop?.section_loop_id ? `S-Q section loop ${loop.section_loop_id}` : "No S-Q section loop selected",
       },
       renderAxes(),
-      segments.map((segment) => renderActualSegment(segment, transform, selection)),
+      segments.map((segment) => renderActualSegment(segment, transform, selection, onSelect)),
       controlsVisible ? segments.map((segment) => renderControlGeometry(segment, transform, selection, onSelect)) : null,
       renderJoinMetrics(loop?.join_metrics || {}),
       !segments.length ? h("text", { className: "section-loop-empty", x: 500, y: 350, textAnchor: "middle" }, "No section loop selected") : null,
@@ -46,8 +49,10 @@ function sectionSegments(loop) {
   return ordered.map(([segmentName, segment]) => ({
     segmentName,
     sectionSegmentId: segment.section_segment_id || segmentName,
-    points: finitePoints(segment.points_s_q),
-    controlPoints: finitePoints(segment.control_points_s_q),
+    points: finitePoints(segment.display_points_s_q_mm),
+    controls: (Array.isArray(segment.control_points) ? segment.control_points : [])
+      .filter((control) => typeof control?.control_point_id === "string" && finitePoints([control.display_coordinates_s_q_mm]).length)
+      .map((control) => ({ id: control.control_point_id, point: control.display_coordinates_s_q_mm })),
   }));
 }
 
@@ -91,20 +96,31 @@ function renderAxes() {
     { className: "section-loop-axes" },
     h("line", { x1: PADDING, y1: VIEWBOX_HEIGHT - PADDING, x2: VIEWBOX_WIDTH - PADDING, y2: VIEWBOX_HEIGHT - PADDING }),
     h("line", { x1: PADDING, y1: PADDING, x2: PADDING, y2: VIEWBOX_HEIGHT - PADDING }),
-    h("text", { x: VIEWBOX_WIDTH - PADDING, y: VIEWBOX_HEIGHT - 36, textAnchor: "end" }, "S"),
-    h("text", { x: PADDING + 12, y: PADDING + 16 }, "Q"),
+    h("text", { x: VIEWBOX_WIDTH - PADDING, y: VIEWBOX_HEIGHT - 36, textAnchor: "end" }, "S (mm)"),
+    h("text", { x: PADDING + 12, y: PADDING + 16 }, "Q (mm)"),
   );
 }
 
-function renderActualSegment(segment, transform, selection) {
+function renderActualSegment(segment, transform, selection, onSelect) {
   const className = ["actual-section-loop", SEGMENT_CLASS[segment.segmentName] || "section-segment"]
     .concat(selection.sectionSegmentId === segment.sectionSegmentId ? ["selected"] : [])
     .join(" ");
+  const nextSelection = { sectionSegmentId: segment.sectionSegmentId, controlPointId: null };
   return h("polyline", {
     key: `${segment.sectionSegmentId}:actual`,
     className,
     points: pointsAttribute(segment.points, transform),
     fill: "none",
+    role: "button",
+    tabIndex: 0,
+    "aria-label": `Select ${segment.segmentName}`,
+    onClick: () => onSelect?.(nextSelection),
+    onKeyDown: (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        onSelect?.(nextSelection);
+      }
+    },
   });
 }
 
@@ -115,16 +131,17 @@ function renderControlGeometry(segment, transform, selection, onSelect) {
   return h(
     "g",
     { key: `${segment.sectionSegmentId}:control` },
-    h("polyline", { className, points: pointsAttribute(segment.controlPoints, transform), fill: "none" }),
-    segment.controlPoints.map((point, pointIndex) => {
+    h("polyline", { className, points: pointsAttribute(segment.controls.map((control) => control.point), transform), fill: "none" }),
+    segment.controls.map((control, pointIndex) => {
+      const point = control.point;
       const [cx, cy] = transform(point);
-      const isSelected = selection.controlPointId === `${segment.sectionSegmentId}:cp_${pointIndex}`;
+      const isSelected = selection.controlPointId === control.id;
       const nextSelection = {
         sectionSegmentId: segment.sectionSegmentId,
-        controlPointId: `${segment.sectionSegmentId}:cp_${pointIndex}`,
+        controlPointId: control.id,
       };
       return h("circle", {
-        key: `${segment.sectionSegmentId}:cp_${pointIndex}`,
+        key: control.id,
         className: `control-point ${SEGMENT_CLASS[segment.segmentName] || "section-segment"}${isSelected ? " selected" : ""}`,
         cx,
         cy,

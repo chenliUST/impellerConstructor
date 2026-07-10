@@ -7,10 +7,49 @@ import {
   INSPECTION_TABS,
   annotationsForView,
   defaultInspectionSelection,
-  mergeInspectionSelection,
+  normalizeInspectionSelection,
+  reduceInspectionSelection,
   resolveParameterInspection,
   sectionLoopForSelection,
+  selectedSurfaceIdsForSelection,
 } from "./parameterInspectionModel.js";
+
+function segmentFixture(loopId, segmentName, points) {
+  const sectionSegmentId = `${loopId}:${segmentName}`;
+  return {
+    section_segment_id: sectionSegmentId,
+    source_segment_name: segmentName,
+    points_s_q: points,
+    control_points_s_q: points,
+    display_points_s_q_mm: points.map(([s, q]) => [s * 100, q]),
+    display_control_points_s_q_mm: points.map(([s, q]) => [s * 100, q]),
+    control_points: points.map(([s, q], index) => ({
+      control_point_id: `${sectionSegmentId}:stable_${index}_${String(s).replace(".", "_")}_${String(q).replace(".", "_")}`,
+      section_segment_id: sectionSegmentId,
+      coordinates_s_q: [s, q],
+      display_coordinates_s_q_mm: [s * 100, q],
+    })),
+  };
+}
+
+function loopFixture(bladeIndex) {
+  const loopId = `blade_${bladeIndex}:span_0:loop`;
+  return {
+    section_loop_id: loopId,
+    span_station_id: `blade_${bladeIndex}:span_0`,
+    source_coordinate_units: { s: "normalized", q: "mm" },
+    display_coordinate_units: { s: "mm", q: "mm" },
+    streamwise_metric_scale_mm: 100,
+    segment_references: {
+      pressure_side: segmentFixture(loopId, "pressure_side", [[0, -1], [1, -1]]),
+      leading_edge: segmentFixture(loopId, "leading_edge", [[0, -1], [-0.1, 0], [0, 1]]),
+      suction_side: segmentFixture(loopId, "suction_side", [[0, 1], [1, 1]]),
+      trailing_edge: segmentFixture(loopId, "trailing_edge", [[1, 1], [1.1, 0], [1, -1]]),
+    },
+    metrics: { join_status: "PASS" },
+    join_metrics: { pressure_to_leading: { status: "PASS", position_gap_mm: 0 } },
+  };
+}
 
 function manifestFixture() {
   const contract = {
@@ -24,56 +63,63 @@ function manifestFixture() {
         surface_ids: ["blade_0_pressure_surface", "blade_0_suction_surface"],
         span_station_ids: ["blade_0:span_0"],
       },
+      blade_1: {
+        blade_instance_id: "blade_1",
+        surface_ids: ["blade_1_pressure_surface", "blade_1_suction_surface"],
+        span_station_ids: ["blade_1:span_0"],
+      },
     },
     surface_references: {
       blade_0_pressure_surface: {
         surface_id: "blade_0_pressure_surface",
         blade_instance_id: "blade_0",
         face_family: "blade_pressure",
+        quality: {},
       },
       blade_0_suction_surface: {
         surface_id: "blade_0_suction_surface",
         blade_instance_id: "blade_0",
         face_family: "blade_suction",
+        quality: {},
+      },
+      blade_1_pressure_surface: {
+        surface_id: "blade_1_pressure_surface",
+        blade_instance_id: "blade_1",
+        face_family: "blade_pressure",
+        quality: {},
+      },
+      blade_1_suction_surface: {
+        surface_id: "blade_1_suction_surface",
+        blade_instance_id: "blade_1",
+        face_family: "blade_suction",
+        quality: {},
       },
     },
     span_stations: {
-      "blade_0:span_0": { span_station_id: "blade_0:span_0", section_loop_id: "blade_0:span_0:loop", h: 0.1 },
+      "blade_0:span_0": { span_station_id: "blade_0:span_0", blade_instance_id: "blade_0", section_loop_id: "blade_0:span_0:loop", h: 0.1 },
+      "blade_1:span_0": { span_station_id: "blade_1:span_0", blade_instance_id: "blade_1", section_loop_id: "blade_1:span_0:loop", h: 0.1 },
     },
     section_loops: {
-      "blade_0:span_0:loop": {
-        section_loop_id: "blade_0:span_0:loop",
-        span_station_id: "blade_0:span_0",
-        segment_references: {
-          pressure_side: {
-            section_segment_id: "blade_0:span_0:loop:pressure_side",
-            points_s_q: [[0, -1], [1, -1]],
-            control_points_s_q: [[0, -1], [1, -1]],
-          },
-          trailing_edge: {
-            section_segment_id: "blade_0:span_0:loop:trailing_edge",
-            points_s_q: [[1, -1], [1.1, 0], [1, 1]],
-            control_points_s_q: [[1, -1], [1.1, 0], [1, 1]],
-          },
-          suction_side: {
-            section_segment_id: "blade_0:span_0:loop:suction_side",
-            points_s_q: [[1, 1], [0, 1]],
-            control_points_s_q: [[1, 1], [0, 1]],
-          },
-          leading_edge: {
-            section_segment_id: "blade_0:span_0:loop:leading_edge",
-            points_s_q: [[0, 1], [-0.1, 0], [0, -1]],
-            control_points_s_q: [[0, 1], [-0.1, 0], [0, -1]],
-          },
-        },
-        metrics: { join_status: "PASS" },
-        join_metrics: { pressure_to_leading: { status: "PASS", position_gap_mm: 0 } },
+      "blade_0:span_0:loop": loopFixture(0),
+      "blade_1:span_0:loop": loopFixture(1),
+    },
+    support_profiles: {
+      hub_profile: {
+        id: "hub_profile",
+        coordinate_system: "rz_meridional_mm",
+        control_points: [[150, 400], [330, 50], [580, 0]],
       },
     },
-    support_profiles: {},
     resolved_dimensions: {
       thickness_min_mm: { requested_value: 6.8, resolved_value: 6.8, unit: "mm", requested_unit: "mm" },
       thickness_max_mm: { requested_value: 18, resolved_value: 18, unit: "mm", requested_unit: "mm" },
+      main_blade_count: { requested_value: 1, resolved_value: 1, unit: "count", requested_unit: "count" },
+      splitter_blade_count: { requested_value: 1, resolved_value: 1, unit: "count", requested_unit: "count" },
+      splitter_passage_fraction: { requested_value: 0.5, resolved_value: 0.5, unit: "pitch fraction", requested_unit: "pitch fraction" },
+    },
+    continuity_measurements: {
+      "blade_0:span_0:loop": { pressure_to_leading: { status: "PASS" } },
+      "blade_1:span_0:loop": { pressure_to_leading: { status: "PASS" } },
     },
   };
   return {
@@ -86,6 +132,8 @@ function manifestFixture() {
         surfaces: [
           { id: "blade_0_pressure_surface", uv_grid: [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]] },
           { id: "blade_0_suction_surface", uv_grid: [[[0, 0, 1], [1, 0, 1]], [[0, 1, 1], [1, 1, 1]]] },
+          { id: "blade_1_pressure_surface", uv_grid: [[[0, 0, 2], [1, 0, 2]], [[0, 1, 2], [1, 1, 2]]] },
+          { id: "blade_1_suction_surface", uv_grid: [[[0, 0, 3], [1, 0, 3]], [[0, 1, 3], [1, 1, 3]]] },
         ],
       },
     },
@@ -99,7 +147,8 @@ describe("parameter inspection model", () => {
   });
 
   test("resolves one matched manifest and rejects stale evidence", () => {
-    assert.equal(resolveParameterInspection(manifestFixture()).status, "ready");
+    const resolved = resolveParameterInspection(manifestFixture());
+    assert.equal(resolved.status, "ready", resolved.errorCode);
     const stale = manifestFixture();
     stale.geometry.surface_graph.generation_id = "g2";
     assert.equal(resolveParameterInspection(stale).errorCode, "parameter_inspection_generation_id_mismatch");
@@ -111,7 +160,7 @@ describe("parameter inspection model", () => {
   test("selects the first blade and station without mutation", () => {
     const model = resolveParameterInspection(manifestFixture());
     const selection = defaultInspectionSelection(model);
-    const updated = mergeInspectionSelection(selection, { surfaceId: "blade_0_pressure_surface" });
+    const updated = reduceInspectionSelection(model, selection, { surfaceId: "blade_0_pressure_surface" });
     assert.equal(selection.surfaceId, null);
     assert.equal(updated.surfaceId, "blade_0_pressure_surface");
     assert.equal(sectionLoopForSelection(model, updated).section_loop_id, "blade_0:span_0:loop");
@@ -126,32 +175,30 @@ describe("parameter inspection model", () => {
 
   test("selected surface excludes sibling surfaces on the same blade", () => {
     const model = resolveParameterInspection(manifestFixture());
-    const selection = mergeInspectionSelection(defaultInspectionSelection(model), {
+    const selection = reduceInspectionSelection(model, defaultInspectionSelection(model), {
       surfaceId: "blade_0_pressure_surface",
     });
 
     assert.deepEqual(
-      annotationsForView(model, "3d", "selected", selection).map((annotation) => annotation.id),
+      annotationsForView(model, "3d", "selected", selection)
+        .filter((annotation) => annotation.anchor.kind === "surface")
+        .map((annotation) => annotation.id),
       ["3d:blade_0_pressure_surface"],
     );
   });
 
   test("selected section segment excludes siblings while retaining key annotations", () => {
     const model = resolveParameterInspection(manifestFixture());
-    const selection = mergeInspectionSelection(defaultInspectionSelection(model), {
+    const selection = reduceInspectionSelection(model, defaultInspectionSelection(model), {
       sectionSegmentId: "blade_0:span_0:loop:pressure_side",
     });
 
     const annotations = annotationsForView(model, "s_q", "selected", selection);
     assert.deepEqual(
-      annotations.map((annotation) => annotation.id),
-      [
-        "s_q:thickness_min_mm",
-        "s_q:thickness_max_mm",
-        "s_q:blade_0:span_0:loop:pressure_side",
-      ],
+      annotations.filter((annotation) => annotation.level === "all").map((annotation) => annotation.id),
+      ["s_q:blade_0:span_0:loop:pressure_side"],
     );
-    const pressureSide = annotations.at(-1);
+    const pressureSide = annotations.find((annotation) => annotation.level === "all");
     assert.equal(pressureSide.label, "Pressure Side");
     assert.equal(pressureSide.anchor.sectionSegmentId, "blade_0:span_0:loop:pressure_side");
     assert.equal(pressureSide.selection.sectionSegmentId, "blade_0:span_0:loop:pressure_side");
@@ -159,7 +206,7 @@ describe("parameter inspection model", () => {
 
   test("decorates key selected and all levels with deterministic selected flags", () => {
     const model = resolveParameterInspection(manifestFixture());
-    const selection = mergeInspectionSelection(defaultInspectionSelection(model), {
+    const selection = reduceInspectionSelection(model, defaultInspectionSelection(model), {
       sectionSegmentId: "blade_0:span_0:loop:pressure_side",
     });
 
@@ -167,7 +214,8 @@ describe("parameter inspection model", () => {
     assert.ok(keyAnnotations.every((annotation) => annotation.selected === false));
 
     const selectedAnnotations = annotationsForView(model, "s_q", "selected", selection);
-    assert.deepEqual(selectedAnnotations.map((annotation) => annotation.selected), [false, false, true]);
+    assert.equal(selectedAnnotations.filter((annotation) => annotation.level === "all").length, 1);
+    assert.equal(selectedAnnotations.find((annotation) => annotation.level === "all").selected, true);
 
     const allAnnotations = annotationsForView(model, "s_q", "all", selection);
     assert.equal(allAnnotations.find((annotation) => annotation.label === "Pressure Side").selected, true);
@@ -189,7 +237,9 @@ describe("parameter inspection model", () => {
     };
 
     assert.deepEqual(
-      annotationsForView(model, "3d", "selected", selection).map((annotation) => annotation.id),
+      annotationsForView(model, "3d", "selected", selection)
+        .filter((annotation) => annotation.level === "all")
+        .map((annotation) => annotation.id),
       ["3d:blade_0_pressure_surface", "3d:blade_0_suction_surface"],
     );
   });
@@ -201,16 +251,119 @@ describe("parameter inspection model", () => {
 
     for (const viewId of ["3d", "top"]) {
       assert.deepEqual(
-        annotationsForView(model, viewId, "selected", selection).map((annotation) => annotation.id),
+        annotationsForView(model, viewId, "selected", selection)
+          .filter((annotation) => annotation.anchor.kind === "surface")
+          .map((annotation) => annotation.id),
         [`${viewId}:blade_0_pressure_surface`, `${viewId}:blade_0_suction_surface`],
       );
     }
+    assert.ok(annotationsForView(model, "3d", "selected", selection).some((annotation) => annotation.anchor.kind === "span_station"));
+  });
+
+  test("normalizes cross-blade surface picks and clears dependent identities", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const selected = reduceInspectionSelection(model, defaultInspectionSelection(model), {
+      sectionSegmentId: "blade_0:span_0:loop:pressure_side",
+      controlPointId: "blade_0:span_0:loop:pressure_side:stable_0_0_-1",
+    });
+    const crossBlade = reduceInspectionSelection(model, selected, { surfaceId: "blade_1_suction_surface" });
+
+    assert.deepEqual(crossBlade, {
+      bladeId: "blade_1",
+      surfaceId: "blade_1_suction_surface",
+      spanStationId: "blade_1:span_0",
+      sectionSegmentId: null,
+      controlPointId: null,
+    });
+  });
+
+  test("switches stations through the owning blade and maps segments to face families", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const stationSelection = reduceInspectionSelection(model, defaultInspectionSelection(model), {
+      spanStationId: "blade_1:span_0",
+    });
+    assert.equal(stationSelection.bladeId, "blade_1");
+    assert.equal(sectionLoopForSelection(model, stationSelection).section_loop_id, "blade_1:span_0:loop");
+
+    const segmentSelection = reduceInspectionSelection(model, stationSelection, {
+      sectionSegmentId: "blade_1:span_0:loop:pressure_side",
+    });
+    assert.equal(segmentSelection.surfaceId, "blade_1_pressure_surface");
+    assert.deepEqual(selectedSurfaceIdsForSelection(model, segmentSelection), ["blade_1_pressure_surface"]);
+    assert.deepEqual(
+      selectedSurfaceIdsForSelection(model, reduceInspectionSelection(model, segmentSelection, { bladeId: "blade_0" })),
+      ["blade_0_pressure_surface", "blade_0_suction_surface"],
+    );
+  });
+
+  test("normalizer removes invalid dependent ids without mutating input", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const input = {
+      bladeId: "blade_0",
+      surfaceId: "blade_1_pressure_surface",
+      spanStationId: "missing_station",
+      sectionSegmentId: "missing_segment",
+      controlPointId: "missing_control",
+    };
+    const normalized = normalizeInspectionSelection(model, input);
+
+    assert.equal(input.surfaceId, "blade_1_pressure_surface");
+    assert.deepEqual(normalized, defaultInspectionSelection(model));
+  });
+
+  test("deeply rejects malformed containers ids references controls and closure", () => {
+    const cases = [];
+    const wrongContainer = manifestFixture();
+    wrongContainer.parameter_inspection.blade_instances = null;
+    cases.push([wrongContainer, "parameter_inspection_contract_unsupported"]);
+    const wrongArray = manifestFixture();
+    wrongArray.parameter_inspection.section_loops = [];
+    cases.push([wrongArray, "parameter_inspection_contract_unsupported"]);
+    const extraSurface = manifestFixture();
+    extraSurface.geometry.surface_graph.surfaces.push({ id: "extra_surface", uv_grid: [] });
+    cases.push([extraSurface, "parameter_inspection_surface_reference_missing"]);
+    const invalidLoopReference = manifestFixture();
+    invalidLoopReference.parameter_inspection.section_loops["blade_0:span_0:loop"].span_station_id = "blade_1:span_0";
+    cases.push([invalidLoopReference, "parameter_inspection_station_reference_missing"]);
+    const malformedControl = manifestFixture();
+    malformedControl.parameter_inspection.section_loops["blade_0:span_0:loop"].segment_references.pressure_side.control_points[0] = null;
+    cases.push([malformedControl, "parameter_inspection_contract_unsupported"]);
+    const duplicateControl = manifestFixture();
+    const controls = duplicateControl.parameter_inspection.section_loops["blade_0:span_0:loop"].segment_references.pressure_side.control_points;
+    controls[1].control_point_id = controls[0].control_point_id;
+    cases.push([duplicateControl, "parameter_inspection_contract_unsupported"]);
+    const stringCoordinate = manifestFixture();
+    stringCoordinate.parameter_inspection.section_loops["blade_0:span_0:loop"].segment_references.pressure_side.control_points[0].coordinates_s_q[0] = "0";
+    cases.push([stringCoordinate, "parameter_inspection_contract_unsupported"]);
+    const nonclosed = manifestFixture();
+    nonclosed.parameter_inspection.section_loops["blade_0:span_0:loop"].metrics.join_status = "FAIL";
+    cases.push([nonclosed, "parameter_inspection_loop_not_closed"]);
+
+    for (const [manifest, errorCode] of cases) {
+      assert.doesNotThrow(() => resolveParameterInspection(manifest));
+      assert.equal(resolveParameterInspection(manifest).errorCode, errorCode);
+    }
+  });
+
+  test("key annotations provide useful evidence in every geometric view", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const selection = defaultInspectionSelection(model);
+    for (const viewId of ["3d", "top", "meridional"]) {
+      const keyAnnotations = annotationsForView(model, viewId, "key", selection);
+      assert.ok(keyAnnotations.length > 0, viewId);
+      assert.ok(keyAnnotations.every((annotation) => annotation.level === "key"), viewId);
+    }
+    assert.match(annotationsForView(model, "top", "key", selection).map(({ label }) => label).join(" "), /Blade Count/);
+    assert.match(annotationsForView(model, "meridional", "key", selection).map(({ label }) => label).join(" "), /Hub Profile/);
   });
 
   test("active display names identify v1.1.3 while backend preset ids remain stable", () => {
     for (const preset of presets) {
       assert.match(preset.name, /v1\.1\.3/i);
       assert.match(preset.summary, /V1\.1\.3/);
+      assert.match(preset.summary, /runtime/i);
+      assert.match(preset.summary, /inspection/i);
+      assert.match(preset.summary, /canonical V1\.1\.2/i);
       assert.ok(preset.tags.includes("v1.1.3"));
       assert.match(preset.presetId, /_v1_1$/);
     }

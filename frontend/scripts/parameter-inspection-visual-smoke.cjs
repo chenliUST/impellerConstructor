@@ -35,26 +35,50 @@ async function main() {
     await canvas.waitFor({ state: "visible", timeout: 300000 });
     await page.waitForFunction(() => {
       const element = document.querySelector('[data-testid="inspection-webgl"]');
-      return Number(element?.getAttribute("data-scene-surface-count")) > 0;
+      return Number(element?.getAttribute("data-scene-surface-count")) > 0
+        && Number(element?.getAttribute("data-renderer-count")) > 0
+        && Number(element?.getAttribute("data-context-count")) > 0;
     }, { timeout: 300000 });
 
     const rendererCount = await canvas.getAttribute("data-renderer-count");
+    const contextCount = await canvas.getAttribute("data-context-count");
     const surfaceCount = await canvas.getAttribute("data-scene-surface-count");
     const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
     assert.equal(rendererCount, "1");
+    assert.equal(contextCount, "1");
     assert.ok(Number(surfaceCount) > 0);
+
+    const workspace = page.locator('[data-testid="inspection-workspace"]');
+    const bladeSelector = page.locator('[data-testid="inspection-blade-selector"]');
+    const bladeOptions = await bladeSelector.locator("option").evaluateAll((options) => options.map((option) => option.value));
+    assert.ok(bladeOptions.length > 1, "cross-blade smoke requires at least two blades");
+    await bladeSelector.selectOption(bladeOptions[1]);
+    await page.waitForFunction((bladeId) =>
+      document.querySelector('[data-testid="inspection-workspace"]')?.getAttribute("data-selected-blade-id") === bladeId,
+    bladeOptions[1]);
+    assert.ok(Number(await workspace.getAttribute("data-selected-surface-count")) > 1);
+
+    const stationSelector = page.locator('[data-testid="inspection-station-selector"]');
+    const stationOptions = await stationSelector.locator("option").evaluateAll((options) => options.map((option) => option.value));
+    assert.ok(stationOptions.length > 1, "station smoke requires at least two span stations");
+    await stationSelector.selectOption(stationOptions.at(-1));
+    assert.equal(await workspace.getAttribute("data-selected-station-id"), stationOptions.at(-1));
+
+    const annotationSelector = page.locator('[data-testid="inspection-annotation-level"]');
+    await annotationSelector.selectOption("all");
+    assert.equal(await annotationSelector.inputValue(), "all");
 
     const canvasBuffer = await canvas.screenshot();
     const ratio = nonBackgroundRatio(canvasBuffer);
     assert.ok(ratio >= 0.05, `inspection canvas ratio ${ratio} is below 0.05`);
-    await page.locator('[data-testid="inspection-workspace"]').screenshot({
+    await workspace.screenshot({
       path: path.join(outputDir, "desktop-3d.png"),
     });
     console.log("parameter inspection desktop 3D: PASS");
 
     await page.locator('[data-testid="inspection-tab-quad"]').click();
     await page.locator('[data-testid="inspection-workspace"][data-active-tab="quad"]').waitFor();
-    await page.locator('[data-testid="inspection-workspace"]').screenshot({
+    await workspace.screenshot({
       path: path.join(outputDir, "desktop-quad.png"),
     });
     console.log("parameter inspection desktop Quad: PASS");
@@ -62,11 +86,14 @@ async function main() {
     await page.setViewportSize({ width: 768, height: 1100 });
     await page.locator('[data-testid="inspection-tab-s_q"]').click();
     await page.locator('[data-testid="inspection-workspace"][data-active-tab="s_q"]').waitFor();
-    await page.locator('[data-testid="inspection-workspace"]').screenshot({
+    assert.equal(await bladeSelector.inputValue(), bladeOptions[1]);
+    assert.equal(await annotationSelector.inputValue(), "all");
+    await workspace.screenshot({
       path: path.join(outputDir, "narrow-s-q.png"),
     });
     console.log("parameter inspection narrow S-Q: PASS");
     console.log(`inspection renderer count: ${rendererCount}`);
+    console.log(`inspection context count: ${contextCount}`);
     console.log(`inspection scene surface count: ${surfaceCount}`);
     console.log(`browser device pixel ratio: ${devicePixelRatio}`);
     console.log(`inspection canvas non-background ratio: ${ratio.toFixed(4)}`);
