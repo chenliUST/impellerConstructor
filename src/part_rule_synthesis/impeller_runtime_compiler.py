@@ -276,6 +276,11 @@ def _v11_runtime_defaults(
         "geometry_patch_version": preset.get("geometry_patch_version", "1.1.2"),
         "runtime_release_version": RUNTIME_RELEASE_VERSION,
         "parameter_inspection_contract_version": INSPECTION_CONTRACT_VERSION,
+        "parameter_inspection_capabilities": [
+            "engineering_feature_geometry",
+            "engineering_dimensions",
+            "s_q_blade_synchronized_selection",
+        ],
         "math_parameterization": preset.get("math_parameterization", V11_2_MATH_PARAMETERIZATION),
         "source_kernel": preset.get("source_kernel", V11_SOURCE_KERNEL),
         "transition_geometry_status": preset.get(

@@ -79,7 +79,12 @@ def validate_parameter_inspection_contract(
     if has_parameter_groups != has_parameters:
         return [{"reason": "parameter_inspection_contract_unsupported"}]
     if has_parameter_groups and not _engineering_records_are_well_formed(
-        contract["parameter_groups"], contract["parameters"]
+        contract["parameter_groups"],
+        contract["parameters"],
+        blade_instances,
+        span_stations,
+        section_loops,
+        support_profiles,
     ):
         return [{"reason": "parameter_inspection_contract_unsupported"}]
 
@@ -116,6 +121,19 @@ def validate_parameter_inspection_contract(
                     "section_loop_id": loop.get("section_loop_id"),
                 }
             )
+    if has_parameters:
+        if any(
+            not _selection_scope_is_valid(
+                parameter["selection_scope"],
+                blade_instances,
+                span_stations,
+                section_loops,
+                support_profiles,
+            )
+            for parameter in contract["parameters"]
+        ):
+            failures.append({"reason": "parameter_inspection_contract_unsupported"})
+        failures.extend(_validate_engineering_parameters(contract["parameters"]))
     return failures
 
 
@@ -229,6 +247,7 @@ def build_parameter_inspection_contract(surface_graph: Mapping[str, Any]) -> dic
         }
     resolved_dimensions = _resolved_dimensions(surface_graph, canonical)
     parameter_groups, parameters = _engineering_parameter_records(
+        surface_graph,
         canonical,
         blade_instances,
         span_stations,
@@ -293,7 +312,14 @@ def _inspection_parameter(
     }
 
 
-def _engineering_records_are_well_formed(parameter_groups: Any, parameters: Any) -> bool:
+def _engineering_records_are_well_formed(
+    parameter_groups: Any,
+    parameters: Any,
+    blade_instances: Mapping[str, Any],
+    span_stations: Mapping[str, Any],
+    section_loops: Mapping[str, Any],
+    support_profiles: Mapping[str, Any],
+) -> bool:
     if not isinstance(parameter_groups, list) or not parameter_groups or not isinstance(parameters, list):
         return False
     group_ids: set[str] = set()
@@ -417,13 +443,61 @@ def _dimension_definition_is_well_formed(definition: Any) -> bool:
     if not required_fields <= set(definition) or definition.get("kind") not in ENGINEERING_DIMENSION_KINDS:
         return False
     tolerance = definition.get("tolerance")
-    return (
+    if not (
         _nonempty_string(definition.get("unit"))
         and _finite_number(tolerance)
         and float(tolerance) >= 0.0
         and _coordinate_array(definition.get("measurement_points"), minimum_count=2)
         and _engineering_value_is_finite(definition)
-    )
+    ):
+        return False
+    kind = definition["kind"]
+    points = definition["measurement_points"]
+    if kind == "angular":
+        return (
+            _coordinate_vector(definition.get("reference_direction"))
+            and _coordinate_vector(definition.get("measured_direction"))
+            and _vector_norm(definition["reference_direction"]) > 1.0e-9
+            and _vector_norm(definition["measured_direction"]) > 1.0e-9
+        )
+    if kind == "arc_height":
+        return len(points) >= 3 and _distance(points[0], points[1]) > 1.0e-9
+    if kind != "control_coordinate":
+        return _distance(points[0], points[1]) > 1.0e-9
+    return True
+
+
+def _selection_scope_is_valid(
+    scope: Mapping[str, Any],
+    blade_instances: Mapping[str, Any],
+    span_stations: Mapping[str, Any],
+    section_loops: Mapping[str, Any],
+    support_profiles: Mapping[str, Any],
+) -> bool:
+    profile_id = scope.get("support_profile_id")
+    if profile_id is not None and profile_id not in support_profiles:
+        return False
+    blade_id = scope.get("blade_instance_id")
+    if blade_id is not None and blade_id not in blade_instances:
+        return False
+    station_id = scope.get("span_station_id")
+    if station_id is not None:
+        station = span_stations.get(station_id)
+        if station is None or (blade_id is not None and station.get("blade_instance_id") != blade_id):
+            return False
+    loop_id = scope.get("section_loop_id")
+    if loop_id is not None:
+        loop = section_loops.get(loop_id)
+        if loop is None or (station_id is not None and loop.get("span_station_id") != station_id):
+            return False
+    segment_id = scope.get("section_segment_id")
+    if segment_id is not None:
+        if loop_id is None or not any(
+            segment.get("section_segment_id") == segment_id
+            for segment in section_loops[loop_id].get("segment_references", {}).values()
+        ):
+            return False
+    return True
 
 
 def _coordinate_vector(value: Any) -> bool:
@@ -443,7 +517,77 @@ def _coordinate_array(value: Any, *, minimum_count: int = 1) -> bool:
     )
 
 
+def _distance(left: Sequence[float], right: Sequence[float]) -> float:
+    return math.sqrt(
+        sum((float(right_axis) - float(left_axis)) ** 2 for left_axis, right_axis in zip(left, right))
+    )
+
+
+def _vector_norm(vector: Sequence[float]) -> float:
+    return math.sqrt(sum(float(axis) ** 2 for axis in vector))
+
+
+def _angle_degrees(reference_direction: Sequence[float], measured_direction: Sequence[float]) -> float:
+    denominator = _vector_norm(reference_direction) * _vector_norm(measured_direction)
+    if denominator <= 1.0e-9:
+        raise ValueError("parameter_inspection_dimension_degenerate")
+    cosine = sum(
+        float(reference_axis) * float(measured_axis)
+        for reference_axis, measured_axis in zip(reference_direction, measured_direction)
+    ) / denominator
+    return math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+
+
+def _point_line_distance(point: Sequence[float], start: Sequence[float], end: Sequence[float]) -> float:
+    baseline = [float(right) - float(left) for left, right in zip(start, end)]
+    baseline_length = _vector_norm(baseline)
+    if baseline_length <= 1.0e-9:
+        raise ValueError("parameter_inspection_dimension_degenerate")
+    offset = [float(coordinate) - float(origin) for coordinate, origin in zip(point, start)]
+    projection = sum(component * direction for component, direction in zip(offset, baseline)) / baseline_length
+    perpendicular = [component - projection * direction / baseline_length for component, direction in zip(offset, baseline)]
+    return _vector_norm(perpendicular)
+
+
+def _measure_dimension(definition: Mapping[str, Any]) -> float:
+    kind = definition["kind"]
+    points = definition["measurement_points"]
+    if kind in {"linear", "radial", "diameter", "ordinate", "control_coordinate"}:
+        return _distance(points[0], points[1]) * (2.0 if kind == "diameter" else 1.0)
+    if kind == "angular":
+        return _angle_degrees(definition["reference_direction"], definition["measured_direction"])
+    if kind == "arc_height":
+        return _point_line_distance(points[2], points[0], points[1])
+    raise ValueError("parameter_inspection_dimension_kind_unsupported")
+
+
+def _validate_engineering_parameters(parameters: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for parameter in parameters:
+        parameter_id = parameter.get("parameter_id")
+        if not isinstance(parameter_id, str) or not parameter_id or parameter_id in seen:
+            failures.append(
+                {"reason": "parameter_inspection_parameter_id_invalid", "parameter_id": parameter_id}
+            )
+            continue
+        seen.add(parameter_id)
+        definition = parameter.get("dimension_definition")
+        if definition is not None:
+            measured = _measure_dimension(definition)
+            tolerance = float(definition.get("tolerance", 1.0e-6))
+            if abs(measured - float(parameter["resolved_value"])) > tolerance:
+                failures.append(
+                    {
+                        "reason": "parameter_inspection_dimension_value_mismatch",
+                        "parameter_id": parameter_id,
+                    }
+                )
+    return failures
+
+
 def _engineering_parameter_records(
+    surface_graph: Mapping[str, Any],
     canonical: Mapping[str, Any],
     blade_instances: Mapping[str, Any],
     span_stations: Mapping[str, Any],
@@ -651,7 +795,434 @@ def _engineering_parameter_records(
                 order=len(parameters),
             )
         )
+    _append_complete_engineering_parameters(
+        parameters,
+        surface_graph,
+        canonical,
+        blade_instances,
+        span_stations,
+        section_loops,
+    )
     return groups, parameters
+
+
+def _append_complete_engineering_parameters(
+    parameters: list[dict[str, Any]],
+    surface_graph: Mapping[str, Any],
+    canonical: Mapping[str, Any],
+    blade_instances: Mapping[str, Any],
+    span_stations: Mapping[str, Any],
+    section_loops: Mapping[str, Any],
+) -> None:
+    def append(**kwargs: Any) -> None:
+        parameters.append(_inspection_parameter(order=len(parameters), **kwargs))
+
+    profiles = canonical.get("support_profiles", {})
+    for profile_key, profile_id, group_id, prefix, label in (
+        ("hub_profile", "hub_profile", "hub", "hub.profile", "Hub profile"),
+        (
+            "tip_or_shroud_profile",
+            "tip_or_shroud_profile",
+            "tip_or_shroud",
+            "tip_or_shroud.profile",
+            "Tip or shroud profile",
+        ),
+    ):
+        profile = profiles.get(profile_key)
+        if not isinstance(profile, Mapping):
+            continue
+        curve = copy.deepcopy(dict(profile))
+        curve["id"] = f"{prefix}.degree:curve"
+        append(
+            parameter_id=f"{prefix}.degree",
+            group_id=group_id,
+            label=f"{label} degree",
+            requested_value=profile.get("degree"),
+            resolved_value=profile.get("degree"),
+            unit="degree",
+            applicable_views=["meridional", "blade_3d"],
+            feature_geometry=[curve],
+            dimension_definition=None,
+            selection_scope={"support_profile_id": profile_id},
+        )
+        for index, point in enumerate(profile.get("control_points", [])):
+            if not _coordinate_vector(point):
+                continue
+            for axis, axis_index in (("r", 0), ("z", 1)):
+                parameter_id = f"{prefix}.control.{index}.{axis}"
+                append(
+                    parameter_id=parameter_id,
+                    group_id=group_id,
+                    label=f"{label} control {index} {axis}",
+                    requested_value=point[axis_index],
+                    resolved_value=abs(float(point[axis_index])),
+                    unit="mm",
+                    applicable_views=["meridional", "blade_3d"],
+                    feature_geometry=[
+                        {
+                            "kind": "control_point",
+                            "id": f"{parameter_id}:control_point",
+                            "coordinate_system": "rz_meridional_mm",
+                            "coordinates": copy.deepcopy(point),
+                        }
+                    ],
+                    dimension_definition=_coordinate_dimension(point, axis_index, "mm"),
+                    selection_scope={"support_profile_id": profile_id},
+                )
+
+    surface_by_id = {
+        surface.get("id"): surface
+        for surface in surface_graph.get("surfaces", [])
+        if isinstance(surface, Mapping) and _nonempty_string(surface.get("id"))
+    }
+    main_directions = _blade_anchor_directions(blade_instances, surface_by_id, "main")
+    append(
+        parameter_id="blade.main.count",
+        group_id="blade_placement",
+        label="Main blade count",
+        requested_value=len(main_directions),
+        resolved_value=len(main_directions),
+        unit="count",
+        applicable_views=["top", "blade_3d"],
+        feature_geometry=[_axis_feature("blade.main.count:axis", [1.0, 0.0])],
+        dimension_definition=None,
+        selection_scope={},
+    )
+    if len(main_directions) >= 2:
+        append(
+            parameter_id="blade.angular_pitch",
+            group_id="blade_placement",
+            label="Angular pitch",
+            requested_value=_angle_degrees(main_directions[0], main_directions[1]),
+            resolved_value=_angle_degrees(main_directions[0], main_directions[1]),
+            unit="deg",
+            applicable_views=["top", "blade_3d"],
+            feature_geometry=[
+                _axis_feature("blade.angular_pitch:reference", main_directions[0]),
+                _axis_feature("blade.angular_pitch:measured", main_directions[1]),
+            ],
+            dimension_definition=_angular_dimension(main_directions[0], main_directions[1]),
+            selection_scope={},
+        )
+    splitter_directions = _blade_anchor_directions(blade_instances, surface_by_id, "splitter")
+    if main_directions and splitter_directions:
+        splitter_value: Any = _angle_degrees(main_directions[0], splitter_directions[0])
+        splitter_definition: Mapping[str, Any] | None = _angular_dimension(
+            main_directions[0], splitter_directions[0]
+        )
+    else:
+        splitter_value = "not_applicable"
+        splitter_definition = None
+    append(
+        parameter_id="blade.splitter.phase",
+        group_id="blade_placement",
+        label="Splitter phase",
+        requested_value=splitter_value,
+        resolved_value=splitter_value,
+        unit="deg" if splitter_definition else "status",
+        applicable_views=["top", "blade_3d"],
+        feature_geometry=[_axis_feature("blade.splitter.phase:axis", main_directions[0] if main_directions else [1.0, 0.0])],
+        dimension_definition=splitter_definition,
+        selection_scope={},
+    )
+
+    for station_id, station in span_stations.items():
+        loop_id = station["section_loop_id"]
+        loop = section_loops[loop_id]
+        blade_id = station["blade_instance_id"]
+        scope = {
+            "blade_instance_id": blade_id,
+            "span_station_id": station_id,
+            "section_loop_id": loop_id,
+        }
+        station_index = station["source_loop_index"]
+        point = _station_reference_point(loop)
+        pose_parameter_id = f"blade:{blade_id}:pose.station.{station_index}"
+        append(
+            parameter_id=pose_parameter_id,
+            group_id="spanwise_pose",
+            label=f"Spanwise station {station_index}",
+            requested_value=station.get("h"),
+            resolved_value=station.get("h"),
+            unit="span fraction",
+            applicable_views=["s_q", "blade_3d"],
+            feature_geometry=[
+                {
+                    "kind": "local_frame",
+                    "id": f"{pose_parameter_id}:frame",
+                    "coordinate_system": "s_q_mm",
+                    "origin": point,
+                    "s_axis": [1.0, 0.0],
+                    "q_axis": [0.0, 1.0],
+                }
+            ],
+            dimension_definition=None,
+            selection_scope=scope,
+        )
+        for segment_name, segment in loop["segment_references"].items():
+            segment_id = segment["section_segment_id"]
+            # The first generated control anchors each section segment's editable coordinate evidence.
+            for index, record in enumerate(segment["control_points"][:1]):
+                coordinates = record["display_coordinates_s_q_mm"]
+                for axis, axis_index in (("s", 0), ("q", 1)):
+                    parameter_id = (
+                        f"blade:{blade_id}:station:{station_id}:section:{segment_name}:control:{index}:{axis}"
+                    )
+                    append(
+                        parameter_id=parameter_id,
+                        group_id="section_loop",
+                        label=f"{segment_name} control {index} {axis}",
+                        requested_value=coordinates[axis_index],
+                        resolved_value=abs(float(coordinates[axis_index])),
+                        unit="mm",
+                        applicable_views=["s_q", "blade_3d"],
+                        feature_geometry=[
+                            {
+                                "kind": "control_point",
+                                "id": f"{parameter_id}:control_point",
+                                "coordinate_system": "s_q_mm",
+                                "coordinates": copy.deepcopy(coordinates),
+                            }
+                        ],
+                        dimension_definition=_coordinate_dimension(coordinates, axis_index, "mm"),
+                        selection_scope={
+                            **scope,
+                            "section_segment_id": segment_id,
+                            "source_control_point_id": record["control_point_id"],
+                        },
+                    )
+            if segment_name not in {"leading_edge", "trailing_edge"}:
+                continue
+            points = segment["display_points_s_q_mm"]
+            sagitta_points = [copy.deepcopy(points[0]), copy.deepcopy(points[-1]), copy.deepcopy(points[len(points) // 2])]
+            parameter_id = f"blade:{blade_id}:station:{station_id}:section:{segment_name}:sagitta"
+            append(
+                parameter_id=parameter_id,
+                group_id="section_loop",
+                label=f"{segment_name} sagitta",
+                requested_value=_point_line_distance(sagitta_points[2], sagitta_points[0], sagitta_points[1]),
+                resolved_value=_point_line_distance(sagitta_points[2], sagitta_points[0], sagitta_points[1]),
+                unit="mm",
+                applicable_views=["s_q", "blade_3d"],
+                feature_geometry=[
+                    {
+                        "kind": "polyline",
+                        "id": f"{parameter_id}:curve",
+                        "coordinate_system": "s_q_mm",
+                        "points": copy.deepcopy(points),
+                    }
+                ],
+                dimension_definition={
+                    "kind": "arc_height",
+                    "measurement_points": sagitta_points,
+                    "unit": "mm",
+                    "tolerance": 1.0e-6,
+                },
+                selection_scope={**scope, "section_segment_id": segment_id},
+            )
+
+    _append_attachment_parameters(parameters, blade_instances, span_stations, section_loops, surface_by_id)
+    _append_shroud_thickness_parameter(parameters, surface_by_id)
+
+
+def _coordinate_dimension(point: Sequence[float], axis_index: int, unit: str) -> dict[str, Any]:
+    origin = copy.deepcopy(list(point))
+    origin[axis_index] = 0.0
+    return {
+        "kind": "control_coordinate",
+        "measurement_points": [origin, copy.deepcopy(list(point))],
+        "unit": unit,
+        "tolerance": 1.0e-6,
+    }
+
+
+def _axis_feature(primitive_id: str, direction: Sequence[float]) -> dict[str, Any]:
+    return {
+        "kind": "reference_axis",
+        "id": primitive_id,
+        "coordinate_system": "xy_mm",
+        "origin": [0.0, 0.0],
+        "direction": copy.deepcopy(list(direction)),
+    }
+
+
+def _angular_dimension(reference_direction: Sequence[float], measured_direction: Sequence[float]) -> dict[str, Any]:
+    return {
+        "kind": "angular",
+        "measurement_points": [[0.0, 0.0], [1.0, 0.0]],
+        "reference_direction": copy.deepcopy(list(reference_direction)),
+        "measured_direction": copy.deepcopy(list(measured_direction)),
+        "unit": "deg",
+        "tolerance": 1.0e-6,
+    }
+
+
+def _blade_anchor_directions(
+    blade_instances: Mapping[str, Any], surface_by_id: Mapping[str, Mapping[str, Any]], blade_class: str
+) -> list[list[float]]:
+    directions: list[list[float]] = []
+    for blade in blade_instances.values():
+        if blade.get("blade_class") != blade_class:
+            continue
+        surface = next(
+            (
+                surface_by_id[surface_id]
+                for surface_id in blade.get("surface_ids", [])
+                if surface_by_id[surface_id].get("role") == "root_to_hub_attachment"
+            ),
+            None,
+        )
+        if surface is None:
+            continue
+        point = surface.get("uv_grid", [[None]])[-1][0]
+        if not _coordinate_vector(point) or len(point) < 3:
+            continue
+        direction = [float(point[0]), float(point[1])]
+        if _vector_norm(direction) > 1.0e-9:
+            directions.append(direction)
+    return directions
+
+
+def _append_attachment_parameters(
+    parameters: list[dict[str, Any]],
+    blade_instances: Mapping[str, Any],
+    span_stations: Mapping[str, Any],
+    section_loops: Mapping[str, Any],
+    surface_by_id: Mapping[str, Mapping[str, Any]],
+) -> None:
+    def append(**kwargs: Any) -> None:
+        parameters.append(_inspection_parameter(order=len(parameters), **kwargs))
+
+    for blade_id, blade in blade_instances.items():
+        station_ids = blade.get("span_station_ids", [])
+        if not station_ids:
+            continue
+        station_id = station_ids[0]
+        loop_id = span_stations[station_id]["section_loop_id"]
+        scope = {"blade_instance_id": blade_id, "span_station_id": station_id, "section_loop_id": loop_id}
+        blade_index = blade["blade_index"]
+        root_surface = next(
+            (
+                surface_by_id[surface_id]
+                for surface_id in blade["surface_ids"]
+                if surface_by_id[surface_id].get("role") == "root_to_hub_attachment"
+            ),
+            None,
+        )
+        if root_surface is not None:
+            _append_attachment_measurements(append, f"blade:{blade_id}:attachment:root", root_surface, scope, "root")
+        shroud_surface = next(
+            (
+                surface_by_id[surface_id]
+                for surface_id in blade["surface_ids"]
+                if surface_by_id[surface_id].get("role") == "closed_shroud_attachment"
+            ),
+            None,
+        )
+        if shroud_surface is not None:
+            _append_attachment_measurements(
+                append, f"blade:{blade_id}:attachment:shroud", shroud_surface, scope, "shroud"
+            )
+
+
+def _append_attachment_measurements(
+    append: Any,
+    prefix: str,
+    surface: Mapping[str, Any],
+    scope: Mapping[str, Any],
+    attachment: str,
+) -> None:
+    domain_key = "v1_1_root_domain_samples" if attachment == "root" else "v1_1_shroud_domain_samples"
+    source_key, target_key = (
+        ("hub_outer_loop_s_q", "blade_inner_loop_s_q")
+        if attachment == "root"
+        else ("blade_tip_loop_s_q", "shroud_attachment_loop_s_q")
+    )
+    domain = surface.get(domain_key, {})
+    quality = surface.get("v1_1_root_quality", {}) or surface.get("v1_1_tip_quality", {})
+    scale = quality.get("root_streamwise_metric_scale_mm")
+    source = domain.get(source_key, []) if isinstance(domain, Mapping) else []
+    target = domain.get(target_key, []) if isinstance(domain, Mapping) else []
+    if _finite_number(scale) and source and target:
+        width_points = _metric_s_q_points([source[0], target[0]], float(scale))
+        _append_linear_parameter(append, f"{prefix}:width", f"{attachment.title()} attachment width", width_points, scope, "s_q_mm")
+    if attachment == "root":
+        rows = surface.get("uv_grid", [])
+        lift_points = [rows[0][0], rows[-1][0]] if rows and rows[0] and rows[-1] else []
+    else:
+        edges = surface.get("edge_samples", {})
+        lift_points = [edges.get("blade_tip_loop", [None])[0], edges.get("shroud_reference_loop", [None])[0]]
+    if len(lift_points) == 2 and all(_coordinate_vector(point) for point in lift_points):
+        _append_linear_parameter(append, f"{prefix}:lift", f"{attachment.title()} attachment lift", lift_points, scope, "xyz_mm")
+
+
+def _append_linear_parameter(
+    append: Any,
+    parameter_id: str,
+    label: str,
+    points: Sequence[Sequence[float]],
+    scope: Mapping[str, Any],
+    coordinate_system: str,
+) -> None:
+    measured = _distance(points[0], points[1])
+    append(
+        parameter_id=parameter_id,
+        group_id="attachments",
+        label=label,
+        requested_value=measured,
+        resolved_value=measured,
+        unit="mm",
+        applicable_views=["meridional", "blade_3d"],
+        feature_geometry=[
+            {
+                "kind": "point",
+                "id": f"{parameter_id}:start",
+                "coordinate_system": coordinate_system,
+                "coordinates": copy.deepcopy(list(points[0])),
+            },
+            {
+                "kind": "point",
+                "id": f"{parameter_id}:end",
+                "coordinate_system": coordinate_system,
+                "coordinates": copy.deepcopy(list(points[1])),
+            },
+        ],
+        dimension_definition={
+            "kind": "linear",
+            "measurement_points": [copy.deepcopy(list(points[0])), copy.deepcopy(list(points[1]))],
+            "unit": "mm",
+            "tolerance": 1.0e-6,
+        },
+        selection_scope=copy.deepcopy(dict(scope)),
+    )
+
+
+def _append_shroud_thickness_parameter(
+    parameters: list[dict[str, Any]], surface_by_id: Mapping[str, Mapping[str, Any]]
+) -> None:
+    inner = next((surface for surface in surface_by_id.values() if surface.get("role") == "shroud_support"), None)
+    outer = next(
+        (
+            surface
+            for surface in surface_by_id.values()
+            if surface.get("id") == "shroud_outer_material_surface"
+        ),
+        None,
+    )
+    if inner is None or outer is None:
+        return
+    inner_point = inner.get("uv_grid", [[None]])[0][0]
+    outer_point = outer.get("uv_grid", [[None]])[0][0]
+    if not _coordinate_vector(inner_point) or not _coordinate_vector(outer_point):
+        return
+    _append_linear_parameter(
+        lambda **kwargs: parameters.append(_inspection_parameter(order=len(parameters), **kwargs)),
+        "shroud.thickness",
+        "Shroud thickness",
+        [inner_point, outer_point],
+        {},
+        "xyz_mm",
+    )
 
 
 def _station_reference_point(loop: Mapping[str, Any]) -> list[float]:

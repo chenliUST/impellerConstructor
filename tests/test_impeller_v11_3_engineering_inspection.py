@@ -12,6 +12,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
 from part_rule_synthesis.impeller_v11_3_parameter_inspection import (
+    _measure_dimension,
     build_parameter_inspection_contract,
     parameter_inspection_generation_id,
     validate_parameter_inspection_contract,
@@ -97,6 +98,10 @@ def test_validator_rejects_invalid_parameter_groups_and_records():
         lambda value: value["parameters"][0]["feature_geometry"][0]["control_points"][0].__setitem__(0, float("nan")),
         lambda value: thickness_parameter(value)["dimension_definition"].update(kind="unsupported"),
         lambda value: thickness_parameter(value)["dimension_definition"].pop("measurement_points"),
+        lambda value: thickness_parameter(value)["selection_scope"].update(span_station_id="missing_station"),
+        lambda value: thickness_parameter(value)["dimension_definition"].update(
+            measurement_points=[thickness_parameter(value)["dimension_definition"]["measurement_points"][0]] * 2
+        ),
         lambda value: thickness_parameter(value)["dimension_definition"]["measurement_points"][1].append(0.0),
     ]
 
@@ -135,4 +140,89 @@ def test_validator_accepts_legacy_contract_without_additive_engineering_records(
     del malformed_contract["parameters"]
     assert validate_parameter_inspection_contract(graph, malformed_contract) == [
         {"reason": "parameter_inspection_contract_unsupported"}
+    ]
+
+
+def test_open_and_closed_contracts_cover_constructor_parameters_with_generated_evidence():
+    required_parameter_fragments = {
+        "hub.profile.degree",
+        "hub.profile.control.0.r",
+        "hub.profile.control.0.z",
+        "blade.main.count",
+        "blade.angular_pitch",
+        "blade.splitter.phase",
+        "pose.station.0",
+        "section:pressure_side:control:0",
+        "section:suction_side:control:0",
+        "section:leading_edge:sagitta",
+        "section:trailing_edge:sagitta",
+        "attachment:root:width",
+        "attachment:root:lift",
+    }
+
+    for preset_id in ("radial_open_reference_v1_1", "radial_closed_reference_v1_1"):
+        contract = graph_for(preset_id)["parameter_inspection"]
+        parameter_ids = {parameter["parameter_id"] for parameter in contract["parameters"]}
+
+        assert all(
+            any(fragment in parameter_id for parameter_id in parameter_ids)
+            for fragment in required_parameter_fragments
+        ), preset_id
+
+        control_parameters = [
+            parameter
+            for parameter in contract["parameters"]
+            if ":control:" in parameter["parameter_id"] or ".profile.control." in parameter["parameter_id"]
+        ]
+        assert control_parameters, preset_id
+        assert all(
+            [feature["kind"] for feature in parameter["feature_geometry"]].count("control_point") == 1
+            and parameter["dimension_definition"]["kind"] == "control_coordinate"
+            for parameter in control_parameters
+        ), preset_id
+
+        if preset_id == "radial_closed_reference_v1_1":
+            assert all(
+                any(fragment in parameter_id for parameter_id in parameter_ids)
+                for fragment in ("attachment:shroud:width", "attachment:shroud:lift", "shroud.thickness")
+            )
+
+
+def test_engineering_dimension_records_measure_generated_geometry_and_detect_mutation():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    parameter_by_fragment = {
+        "thickness": thickness_parameter(contract),
+        "sagitta": next(
+            parameter for parameter in contract["parameters"] if ":leading_edge:sagitta" in parameter["parameter_id"]
+        ),
+        "angular": next(parameter for parameter in contract["parameters"] if parameter["parameter_id"] == "blade.angular_pitch"),
+        "ordinate": next(
+            parameter for parameter in contract["parameters"] if parameter["parameter_id"] == "hub.profile.control.0.r"
+        ),
+        "lift": next(parameter for parameter in contract["parameters"] if ":attachment:root:lift" in parameter["parameter_id"]),
+    }
+
+    for parameter in parameter_by_fragment.values():
+        definition = parameter["dimension_definition"]
+        assert abs(_measure_dimension(definition) - parameter["resolved_value"]) <= definition["tolerance"]
+
+    malformed = deepcopy(contract)
+    thickness_parameter(malformed)["dimension_definition"]["measurement_points"][1][0] += 1.0
+    assert validate_parameter_inspection_contract(graph, malformed) == [
+        {
+            "reason": "parameter_inspection_dimension_value_mismatch",
+            "parameter_id": thickness_parameter(contract)["parameter_id"],
+        }
+    ]
+
+
+def test_runtime_advertises_additive_engineering_inspection_capabilities():
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v1_1")
+
+    assert runtime["geometry_version"] == "1.1"
+    assert runtime["parameter_inspection_capabilities"] == [
+        "engineering_feature_geometry",
+        "engineering_dimensions",
+        "s_q_blade_synchronized_selection",
     ]
