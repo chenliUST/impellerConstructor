@@ -259,12 +259,15 @@ describe("SectionLoopInspectionView source contract", () => {
 });
 
 describe("ParameterAnnotationOverlay source contract", () => {
-  test("declares deterministic leader and label classes without mutation callbacks", () => {
+  test("declares clickable label rows without geometry leader lines", () => {
     assert.equal(existsSync(overlayPath), true, "ParameterAnnotationOverlay.js should exist");
 
     const source = readFileSync(overlayPath, "utf-8");
-    assert.match(source, /inspection-leader/);
+    assert.doesNotMatch(source, /inspection-leader/);
     assert.match(source, /inspection-label/);
+    assert.match(source, /onSelectAnnotation/);
+    assert.match(source, /aria-pressed/);
+    assert.match(source, /event\.key === "Enter"/);
     assert.match(source, /clipPath/);
     assert.match(source, /sort\(.*id/);
     assert.doesNotMatch(source, /onChange/);
@@ -275,8 +278,9 @@ describe("ParameterAnnotationOverlay source contract", () => {
     assert.match(styles, /inspection-label-region/);
   });
 
-  test("sorts colliding labels into slots and preserves requested and resolved values", () => {
+  test("sorts labels into slots, preserves values, and toggles actionable rows", () => {
     const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
+    const selected = [];
     const tree = ParameterAnnotationOverlay({
       annotations: [
         {
@@ -288,6 +292,7 @@ describe("ParameterAnnotationOverlay source contract", () => {
           unit: "mm",
           anchor: { id: "second" },
           selected: true,
+          targetSurfaceIds: ["surface-b"],
         },
         {
           id: "a",
@@ -297,21 +302,30 @@ describe("ParameterAnnotationOverlay source contract", () => {
           resolvedValue: 6.8,
           unit: "mm",
           anchor: { id: "first" },
+          targetSurfaceIds: [],
         },
       ],
-      projectAnchor: () => ({ x: 320, y: 140 }),
+      selectedAnnotationId: "b",
+      onSelectAnnotation: (annotation) => selected.push(annotation.id),
     });
 
     const leaders = collectElements(tree, (node) => node.type === "line");
     const labels = collectElements(tree, (node) => node.type === "text");
+    const buttons = collectElements(tree, (node) => node.props?.role === "button");
 
-    assert.equal(leaders.length, 2);
+    assert.equal(leaders.length, 0);
     assert.equal(labels.length, 2);
-    assert.equal(leaders[1].props.y2 - leaders[0].props.y2, 28);
+    assert.equal(labels[1].props.y - labels[0].props.y, 28);
     assert.match(visibleText(labels[0]), /Thickness min: 6.8 mm/);
     assert.match(visibleText(labels[1]), /Thickness max: 20 mm -> 18 mm/);
-    assert.match(leaders[1].props.className, /selected/);
     assert.match(labels[1].props.className, /selected/);
+    assert.equal(buttons.length, 1);
+    assert.equal(buttons[0].props["aria-pressed"], true);
+    buttons[0].props.onClick();
+    let prevented = false;
+    buttons[0].props.onKeyDown({ key: "Enter", preventDefault: () => { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.deepEqual(selected, ["b", "b"]);
   });
 
   test("compacts structured values while preserving their full text in titles", () => {
@@ -349,25 +363,24 @@ describe("ParameterAnnotationOverlay source contract", () => {
     }));
     const tree = ParameterAnnotationOverlay({
       annotations,
-      projectAnchor: () => ({ x: 40, y: 40 }),
+      selectedAnnotationId: "z",
       viewportWidth: 240,
       viewportHeight: 84,
     });
 
-    const leaders = collectElements(tree, (node) => node.type === "line");
     const labels = collectElements(tree, (node) => node.type === "text");
     const selectedLabel = labels.find((label) => /selected/.test(label.props.className));
     const selectedTitle = collectElements(selectedLabel, (node) => node.type === "title")[0];
 
     assert.ok(labels.length <= 3);
-    assert.ok(leaders.every((leader) => leader.props.x2 >= 12 && leader.props.x2 <= 228));
-    assert.ok(leaders.every((leader) => leader.props.y2 >= 14 && leader.props.y2 <= 70));
+    assert.ok(labels.every((label) => label.props.x >= 12 && label.props.x <= 228));
+    assert.ok(labels.every((label) => label.props.y >= 0 && label.props.y <= 84));
     assert.ok(selectedLabel, "selected annotation must remain rendered");
     assert.match(visibleText(selectedLabel), /\.\.\.$/);
     assert.match(selectedTitle.props.children.join(""), /long-final-value/);
   });
 
-  test("places selected overflow in unique bounded lanes without overlap", () => {
+  test("retains one active row within bounded overflow slots", () => {
     const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
     const annotations = Array.from({ length: 10 }, (_, index) => ({
       id: `annotation-${String(index).padStart(2, "0")}`,
@@ -375,11 +388,11 @@ describe("ParameterAnnotationOverlay source contract", () => {
       requestedValue: index,
       resolvedValue: index,
       anchor: { index },
-      selected: index < 8,
+      targetSurfaceIds: [`surface-${index}`],
     }));
     const tree = ParameterAnnotationOverlay({
       annotations,
-      projectAnchor: () => ({ x: 150, y: 42 }),
+      selectedAnnotationId: "annotation-07",
       viewportWidth: 300,
       viewportHeight: 84,
     });
@@ -388,16 +401,11 @@ describe("ParameterAnnotationOverlay source contract", () => {
       tree,
       (node) => node.type === "text" && /selected/.test(node.props.className),
     );
-    const selectedLeaders = collectElements(
-      tree,
-      (node) => node.type === "line" && /selected/.test(node.props.className),
-    );
     const coordinates = selectedLabels.map((label) => `${label.props.x},${label.props.y}`);
 
-    assert.equal(selectedLabels.length, 8);
-    assert.equal(selectedLeaders.length, 8);
-    assert.equal(new Set(coordinates).size, 8);
-    assert.ok(new Set(selectedLabels.map((label) => label.props.x)).size >= 3);
+    assert.equal(selectedLabels.length, 1);
+    assert.ok(selectedLabels.length <= 3);
+    assert.equal(new Set(coordinates).size, selectedLabels.length);
     assert.ok(selectedLabels.every((label) => label.props.x >= 0 && label.props.x <= 300));
     assert.ok(selectedLabels.every((label) => label.props.y >= 0 && label.props.y <= 84));
   });

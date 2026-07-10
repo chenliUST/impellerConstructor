@@ -12,7 +12,8 @@ const APPROXIMATE_CHARACTER_WIDTH = 7;
 
 export function ParameterAnnotationOverlay({
   annotations = [],
-  projectAnchor,
+  selectedAnnotationId = null,
+  onSelectAnnotation = null,
   viewportWidth = DEFAULT_VIEWPORT_WIDTH,
   viewportHeight = DEFAULT_VIEWPORT_HEIGHT,
 }) {
@@ -20,7 +21,7 @@ export function ParameterAnnotationOverlay({
     width: positiveDimension(viewportWidth, DEFAULT_VIEWPORT_WIDTH),
     height: positiveDimension(viewportHeight, DEFAULT_VIEWPORT_HEIGHT),
   };
-  const labels = layoutLabels(annotations, projectAnchor, viewport);
+  const labels = layoutLabels(annotations, selectedAnnotationId, viewport);
 
   return h(
     "g",
@@ -41,21 +42,30 @@ export function ParameterAnnotationOverlay({
         ),
       ),
     ),
-    labels.map(({ annotation, anchor, label }) => {
+    labels.map(({ annotation, label }) => {
       const { compactText, fullText } = annotationText(annotation);
       const visibleText = truncateText(compactText, label.maxCharacters);
-      const selectedClass = annotation.selected ? " selected" : "";
+      const active = selectedAnnotationId === annotation.id;
+      const actionable = annotation.targetSurfaceIds?.length > 0;
+      const selectedClass = active ? " selected" : "";
 
       return h(
         "g",
-        { key: annotation.id },
-        h("line", {
-          className: `inspection-leader${selectedClass}`,
-          x1: anchor.x,
-          y1: anchor.y,
-          x2: label.x,
-          y2: label.y,
-        }),
+        {
+          key: annotation.id,
+          className: actionable ? `inspection-label-action${selectedClass}` : undefined,
+          role: actionable ? "button" : undefined,
+          tabIndex: actionable ? 0 : undefined,
+          "aria-pressed": actionable ? active : undefined,
+          "data-annotation-id": annotation.id,
+          onClick: actionable ? () => onSelectAnnotation?.(annotation) : undefined,
+          onKeyDown: actionable ? (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onSelectAnnotation?.(annotation);
+            }
+          } : undefined,
+        },
         h("rect", {
           className: `inspection-label-region${selectedClass}`,
           x: label.x,
@@ -80,26 +90,21 @@ export function ParameterAnnotationOverlay({
   );
 }
 
-function layoutLabels(annotations, projectAnchor, viewport) {
+function layoutLabels(annotations, selectedAnnotationId, viewport) {
   const sorted = [...annotations].sort((left, right) => String(left.id).localeCompare(String(right.id)));
-  const projected = sorted.flatMap((annotation) => {
-    const anchor = resolveAnchor(annotation, projectAnchor);
-    return anchor ? [{ annotation, anchor }] : [];
-  });
   const slotCount = viewportSlotCount(viewport.height);
-  const selectedCount = projected.filter(({ annotation }) => annotation.selected).length;
+  const selectedCount = selectedAnnotationId ? 1 : 0;
   const laneCount = Math.max(1, Math.ceil(selectedCount / slotCount));
   const capacity = laneCount * slotCount;
-  const retained = retainSelectedWithinCapacity(projected, capacity);
+  const retained = retainSelectedWithinCapacity(sorted, capacity, selectedAnnotationId);
 
-  return retained.map(({ annotation, anchor }, index) => {
+  return retained.map((annotation, index) => {
     const lane = Math.floor(index / slotCount);
     const slot = index % slotCount;
     const region = labelRegionForLane(lane, laneCount, viewport.width);
     const height = Math.min(LABEL_HEIGHT, viewport.height);
     return {
       annotation,
-      anchor,
       label: {
         ...region,
         height,
@@ -111,25 +116,20 @@ function layoutLabels(annotations, projectAnchor, viewport) {
   });
 }
 
-function resolveAnchor(annotation, projectAnchor) {
-  const projected = projectAnchor?.(annotation.anchor, annotation) || annotation.anchor;
-  return Number.isFinite(projected?.x) && Number.isFinite(projected?.y) ? projected : null;
-}
-
 function viewportSlotCount(viewportHeight) {
   const availableHeight = Math.max(0, viewportHeight - VERTICAL_PADDING * 2);
   return Math.max(1, Math.floor(availableHeight / SLOT_HEIGHT) + 1);
 }
 
-function retainSelectedWithinCapacity(projected, capacity) {
-  const selected = projected.filter(({ annotation }) => annotation.selected);
-  if (projected.length <= capacity) {
-    return projected;
+function retainSelectedWithinCapacity(annotations, capacity, selectedAnnotationId) {
+  if (annotations.length <= capacity) {
+    return annotations;
   }
-  const remainingCapacity = Math.max(0, capacity - selected.length);
-  const remaining = projected.filter(({ annotation }) => !annotation.selected).slice(0, remainingCapacity);
-  const retainedIds = new Set([...selected, ...remaining].map(({ annotation }) => annotation.id));
-  return projected.filter(({ annotation }) => retainedIds.has(annotation.id));
+  const selected = annotations.find((annotation) => annotation.id === selectedAnnotationId);
+  const remaining = annotations
+    .filter((annotation) => annotation.id !== selectedAnnotationId)
+    .slice(0, capacity - (selected ? 1 : 0));
+  return selected ? [...remaining, selected].sort((left, right) => left.id.localeCompare(right.id)) : remaining;
 }
 
 function labelRegionForLane(lane, laneCount, viewportWidth) {

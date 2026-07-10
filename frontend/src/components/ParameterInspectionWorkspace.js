@@ -29,6 +29,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
   const [activeTab, setActiveTab] = useState("3d");
   const [annotationLevel, setAnnotationLevel] = useState("key");
   const [projectionError, setProjectionError] = useState(null);
+  const [activeAnnotationId, setActiveAnnotationId] = useState(null);
   const [narrowQuad, setNarrowQuad] = useState(false);
   const model = useMemo(() => resolveParameterInspection(manifest), [manifest]);
   const [selection, setSelection] = useState(() => defaultInspectionSelection(model));
@@ -36,6 +37,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
 
   useLayoutEffect(() => {
     setProjectionError(null);
+    setActiveAnnotationId(null);
     setSelection(defaultInspectionSelection(model));
     setActiveTab("3d");
   }, [generationId]);
@@ -64,10 +66,17 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
     () => selectedSurfaceIdsForSelection(model, selection),
     [model, selection],
   );
+  const activeAnnotation = Object.values(annotationsByView)
+    .flat()
+    .find((annotation) => annotation.id === activeAnnotationId);
+  const displayedSurfaceIds = activeAnnotation?.targetSurfaceIds?.length
+    ? activeAnnotation.targetSurfaceIds
+    : selectedSurfaceIds;
   const quadLayout = narrowQuad ? "quad_stacked" : "quad";
 
   function handleSurfaceSelection(surfaceId) {
     setProjectionError(null);
+    setActiveAnnotationId(null);
     const reference = model.indices.surfaces[surfaceId];
     if (reference?.inspectable === true) {
       setSelection((current) => reduceInspectionSelection(model, current, { surfaceId }));
@@ -76,22 +85,35 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
 
   function handleSectionSelection(nextSelection) {
     setProjectionError(null);
+    setActiveAnnotationId(null);
     setSelection((current) => reduceInspectionSelection(model, current, nextSelection));
   }
 
   function handleBladeSelection(bladeId) {
     setProjectionError(null);
+    setActiveAnnotationId(null);
     setSelection((current) => reduceInspectionSelection(model, current, { bladeId }));
   }
 
   function handleStationSelection(spanStationId) {
     setProjectionError(null);
+    setActiveAnnotationId(null);
     setSelection((current) => reduceInspectionSelection(model, current, { spanStationId }));
   }
 
   function handleTabSelection(viewId) {
     setProjectionError(null);
+    setActiveAnnotationId(null);
     setActiveTab(viewId);
+  }
+
+  function handleAnnotationSelection(annotation) {
+    setActiveAnnotationId((current) => current === annotation.id ? null : annotation.id);
+  }
+
+  function handleAnnotationLevel(level) {
+    setActiveAnnotationId(null);
+    setAnnotationLevel(level);
   }
 
   if (model.status === "empty" && model.errorCode === EMPTY_INSPECTION_ERROR) {
@@ -118,7 +140,8 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
       "data-active-tab": activeTab,
       "data-selected-blade-id": selection.bladeId || "",
       "data-selected-station-id": selection.spanStationId || "",
-      "data-selected-surface-count": String(selectedSurfaceIds.length),
+      "data-selected-surface-count": String(displayedSurfaceIds.length),
+      "data-selected-annotation-id": activeAnnotationId || "",
     },
     h("div", { className: "inspection-provenance-badge", "data-testid": "inspection-provenance" }, "Resolved manifest | runtime 1.1.3 | geometry 1.1.2"),
     h(
@@ -188,7 +211,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
             {
               value: annotationLevel,
               "data-testid": "inspection-annotation-level",
-              onInput: (event) => setAnnotationLevel(event.target.value),
+              onInput: (event) => handleAnnotationLevel(event.target.value),
             },
             ANNOTATION_LEVELS.map((level) => h("option", { key: level, value: level }, level)),
           ),
@@ -206,9 +229,11 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
           onProjectionError: setProjectionError,
           onSelectSurface: handleSurfaceSelection,
           onSelectSection: handleSectionSelection,
+          onSelectAnnotation: handleAnnotationSelection,
+          selectedAnnotationId: activeAnnotationId,
           selectedLoop,
           selection,
-          selectedSurfaceIds,
+          selectedSurfaceIds: displayedSurfaceIds,
           quadLayout,
           viewMode,
           visibleLayers,
@@ -219,6 +244,8 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
             annotationLevel,
             loop: selectedLoop,
             onSelect: handleSectionSelection,
+            onSelectAnnotation: handleAnnotationSelection,
+            selectedAnnotationId: activeAnnotationId,
             selection,
           })
         : h(
@@ -228,12 +255,14 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
               manifest,
               surfaceGraph: model.inspectionSurfaceGraph,
               layout: activeTab,
-              selectedSurfaceIds,
+              selectedSurfaceIds: displayedSurfaceIds,
               onSelectSurface: handleSurfaceSelection,
               onProjectionError: setProjectionError,
               visibleLayers,
               viewMode,
               annotationsByView,
+              selectedAnnotationId: activeAnnotationId,
+              onSelectAnnotation: handleAnnotationSelection,
               selectionContextKey: JSON.stringify(selection),
             }),
           ),
@@ -249,6 +278,8 @@ function renderQuadView({
   onProjectionError,
   onSelectSurface,
   onSelectSection,
+  onSelectAnnotation,
+  selectedAnnotationId,
   selectedLoop,
   selection,
   selectedSurfaceIds,
@@ -272,6 +303,8 @@ function renderQuadView({
         visibleLayers,
         viewMode,
         annotationsByView,
+        selectedAnnotationId,
+        onSelectAnnotation,
         selectionContextKey: JSON.stringify(selection),
       }),
     ),
@@ -296,6 +329,8 @@ function renderQuadView({
               annotationLevel,
               loop: selectedLoop,
               onSelect: onSelectSection,
+              onSelectAnnotation,
+              selectedAnnotationId,
               selection,
             })
           : null,
@@ -304,7 +339,7 @@ function renderQuadView({
   );
 }
 
-function renderSectionLoopPane({ annotations, annotationLevel, loop, onSelect, selection }) {
+function renderSectionLoopPane({ annotations, annotationLevel, loop, onSelect, onSelectAnnotation, selectedAnnotationId, selection }) {
   return h(
     "div",
     { className: "inspection-section-loop-pane" },
@@ -321,20 +356,17 @@ function renderSectionLoopPane({ annotations, annotationLevel, loop, onSelect, s
         className: "inspection-section-annotations",
         viewBox: "0 0 1000 700",
         preserveAspectRatio: "none",
-        "aria-hidden": "true",
+        "aria-label": "S-Q inspection parameters",
       },
       h(ParameterAnnotationOverlay, {
         annotations,
-        projectAnchor: sectionAnnotationRailAnchor,
+        selectedAnnotationId,
+        onSelectAnnotation,
         viewportWidth: 1000,
         viewportHeight: 700,
       }),
     ),
   );
-}
-
-function sectionAnnotationRailAnchor(anchor) {
-  return anchor?.kind === "section_segment" ? { x: 760, y: 56 } : { x: 18, y: 56 };
 }
 
 function viewLabel(viewId) {

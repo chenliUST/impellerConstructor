@@ -33,6 +33,8 @@ export function InspectionScene({
   visibleLayers = defaultVisibleLayers(),
   viewMode = "combined",
   annotationsByView = {},
+  selectedAnnotationId = null,
+  onSelectAnnotation = null,
   selectionContextKey = "",
 }) {
   const containerRef = useRef(null);
@@ -411,11 +413,12 @@ export function InspectionScene({
                 overflow: "hidden",
                 pointerEvents: "none",
               },
-              "aria-hidden": "true",
+              "aria-label": `${viewId} inspection parameters`,
             },
             h(ParameterAnnotationOverlay, {
               annotations: annotationsByView[viewId] || [],
-              projectAnchor: projectionForView(viewId),
+              selectedAnnotationId,
+              onSelectAnnotation,
               viewportWidth: rect.width,
               viewportHeight: rect.height,
             }),
