@@ -127,6 +127,104 @@ def test_validation_rejects_malformed_nested_contract_values():
         assert "parameter_inspection_contract_unsupported" in reasons
 
 
+def test_validation_rejects_null_and_wrong_nested_containers_without_raising():
+    baseline = graph_for()
+    mutations = [
+        lambda contract: contract.__setitem__("blade_instances", None),
+        lambda contract: contract.__setitem__("surface_references", []),
+        lambda contract: contract.__setitem__("span_stations", "stations"),
+        lambda contract: contract.__setitem__("section_loops", []),
+        lambda contract: contract.__setitem__("support_profiles", []),
+        lambda contract: contract.__setitem__("resolved_dimensions", None),
+    ]
+
+    for mutate in mutations:
+        graph = deepcopy(baseline)
+        mutate(graph["parameter_inspection"])
+        reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+        assert "parameter_inspection_contract_unsupported" in reasons
+
+
+def test_validation_requires_equal_surface_id_sets_for_missing_and_extra_ids():
+    baseline = graph_for()
+    for mutate in (
+        lambda references: references.pop(next(iter(references))),
+        lambda references: references.__setitem__(
+            "extra_surface",
+            {"surface_id": "extra_surface", "blade_instance_id": None, "face_family": "reference"},
+        ),
+    ):
+        graph = deepcopy(baseline)
+        mutate(graph["parameter_inspection"]["surface_references"])
+        reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+        assert "parameter_inspection_surface_reference_missing" in reasons
+
+
+def test_validation_rejects_invalid_bidirectional_blade_station_loop_references():
+    baseline = graph_for()
+    mutations = [
+        (
+            lambda contract: contract["blade_instances"]["blade_0"]["span_station_ids"].append("missing_station"),
+            "parameter_inspection_station_reference_missing",
+        ),
+        (
+            lambda contract: contract["blade_instances"]["blade_0"]["surface_ids"].append("missing_surface"),
+            "parameter_inspection_surface_reference_missing",
+        ),
+        (
+            lambda contract: contract["span_stations"]["blade_0:span_0"].__setitem__("blade_instance_id", "blade_1"),
+            "parameter_inspection_station_reference_missing",
+        ),
+        (
+            lambda contract: contract["section_loops"]["blade_0:span_0:loop"].__setitem__(
+                "span_station_id", "blade_0:span_1"
+            ),
+            "parameter_inspection_station_reference_missing",
+        ),
+    ]
+
+    for mutate, expected_reason in mutations:
+        graph = deepcopy(baseline)
+        mutate(graph["parameter_inspection"])
+        reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+        assert expected_reason in reasons
+
+
+def test_validation_rejects_malformed_or_duplicate_control_records():
+    baseline = graph_for()
+    loop = next(iter(baseline["parameter_inspection"]["section_loops"].values()))
+    segment = loop["segment_references"]["pressure_side"]
+    malformed_graph = deepcopy(baseline)
+    malformed_loop = next(iter(malformed_graph["parameter_inspection"]["section_loops"].values()))
+    malformed_loop["segment_references"]["pressure_side"]["control_points"] = [None]
+    duplicate_graph = deepcopy(baseline)
+    duplicate_loop = next(iter(duplicate_graph["parameter_inspection"]["section_loops"].values()))
+    duplicate_controls = duplicate_loop["segment_references"]["pressure_side"]["control_points"]
+    duplicate_controls[1]["control_point_id"] = duplicate_controls[0]["control_point_id"]
+
+    assert segment["control_points"]
+    for graph in (malformed_graph, duplicate_graph):
+        reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+        assert "parameter_inspection_contract_unsupported" in reasons
+
+
+def test_validation_rejects_nonclosed_loop_status_and_geometry():
+    baseline = graph_for()
+    status_graph = deepcopy(baseline)
+    status_loop = next(iter(status_graph["parameter_inspection"]["section_loops"].values()))
+    status_loop["metrics"]["join_status"] = "FAIL"
+    geometry_graph = deepcopy(baseline)
+    geometry_loop = next(iter(geometry_graph["parameter_inspection"]["section_loops"].values()))
+    geometry_loop["segment_references"]["leading_edge"]["points_s_q"][0][0] += 0.25
+    geometry_loop["segment_references"]["leading_edge"]["display_points_s_q_mm"][0][0] += (
+        0.25 * geometry_loop["streamwise_metric_scale_mm"]
+    )
+
+    for graph in (status_graph, geometry_graph):
+        reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+        assert "parameter_inspection_loop_not_closed" in reasons
+
+
 def test_all_active_presets_expose_service_inspection_contracts(tmp_path):
     service = RuleSynthesisService(tmp_path, model_output_root=tmp_path / "Model Output")
     for preset_id in ACTIVE_PRESETS:

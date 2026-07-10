@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from copy import deepcopy
+from math import hypot
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -10,7 +11,10 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
-from part_rule_synthesis.impeller_v11_3_parameter_inspection import parameter_inspection_generation_id
+from part_rule_synthesis.impeller_v11_3_parameter_inspection import (
+    build_parameter_inspection_contract,
+    parameter_inspection_generation_id,
+)
 from part_rule_synthesis.impeller_v11_surface_family import build_v11_surface_graph
 
 
@@ -77,6 +81,101 @@ def test_generation_id_ignores_reference_only_helper_sampling():
     helper["uv_grid"] = []
 
     assert parameter_inspection_generation_id(edited) == graph["generation_id"]
+
+
+def test_generation_id_hashes_visible_hub_and_shroud_sampling():
+    for preset_id, role in (
+        ("radial_open_reference_v1_1", "hub_support"),
+        ("radial_closed_reference_v1_1", "shroud_support"),
+    ):
+        graph = graph_for(preset_id)
+        edited = deepcopy(graph)
+        surface = next(
+            surface
+            for surface in edited["surfaces"]
+            if surface.get("role") == role and surface.get("display", {}).get("visible_by_default") is True
+        )
+        surface["uv_grid"][0][0][0] += 0.125
+
+        assert parameter_inspection_generation_id(edited) != graph["generation_id"], preset_id
+
+
+def test_generation_id_hashes_section_samples_and_controls_without_self_reference():
+    graph = graph_for()
+    loop_edited = deepcopy(graph)
+    loop_edited["blade_to_blade_loop_family"]["blades"][0]["loops"][0]["segments"]["pressure_side"][
+        "points_s_q"
+    ][1][1] += 0.125
+    control_edited = deepcopy(graph)
+    control_edited["blade_to_blade_loop_family"]["blades"][0]["loops"][0]["segments"]["pressure_side"][
+        "control_points_s_q"
+    ][1][1] += 0.125
+    self_reference_edited = deepcopy(graph)
+    self_reference_edited["generation_id"] = "stale"
+    self_reference_edited["parameter_inspection"]["generation_id"] = "also-stale"
+
+    assert parameter_inspection_generation_id(loop_edited) != graph["generation_id"]
+    assert parameter_inspection_generation_id(control_edited) != graph["generation_id"]
+    assert parameter_inspection_generation_id(self_reference_edited) == graph["generation_id"]
+
+
+def test_reference_uv_exemption_requires_explicit_hidden_reference_metadata():
+    graph = graph_for()
+    edited = deepcopy(graph)
+    helper = next(surface for surface in edited["surfaces"] if surface["id"] == "tip_reference_surface")
+    helper["uv_grid"] = []
+    helper["surface_flags"].pop("reference_only")
+    helper["display"].pop("reference_only")
+
+    assert parameter_inspection_generation_id(edited) != graph["generation_id"]
+
+
+def test_section_loop_exposes_physical_display_units_and_authoritative_scale():
+    graph = graph_for()
+    source_loop = graph["blade_to_blade_loop_family"]["blades"][0]["loops"][0]
+    station = next(iter(graph["parameter_inspection"]["span_stations"].values()))
+    loop = graph["parameter_inspection"]["section_loops"][station["section_loop_id"]]
+    hub_controls = graph["canonical_nurbs_parameterization"]["support_profiles"]["hub_profile"]["control_points"]
+    profile_polyline_length = sum(
+        hypot(right[0] - left[0], right[1] - left[1])
+        for left, right in zip(hub_controls, hub_controls[1:])
+    )
+
+    assert loop["source_coordinate_units"] == {"s": "normalized", "q": "mm"}
+    assert loop["display_coordinate_units"] == {"s": "mm", "q": "mm"}
+    assert loop["streamwise_metric_scale_mm"] == source_loop["streamwise_metric_scale_mm"]
+    assert loop["streamwise_metric_scale_mm"] == profile_polyline_length
+    segment = loop["segment_references"]["pressure_side"]
+    assert segment["display_points_s_q_mm"][0] == [
+        segment["points_s_q"][0][0] * loop["streamwise_metric_scale_mm"],
+        segment["points_s_q"][0][1],
+    ]
+
+
+def test_control_point_ids_are_authoritative_unique_and_stable_under_reorder():
+    graph = graph_for()
+    baseline = build_parameter_inspection_contract(graph)
+    reordered_graph = deepcopy(graph)
+    source_controls = reordered_graph["blade_to_blade_loop_family"]["blades"][0]["loops"][0]["segments"][
+        "pressure_side"
+    ]["control_points_s_q"]
+    source_controls.reverse()
+    reordered = build_parameter_inspection_contract(reordered_graph)
+    baseline_loop = next(iter(baseline["section_loops"].values()))
+    reordered_loop = next(iter(reordered["section_loops"].values()))
+    baseline_records = baseline_loop["segment_references"]["pressure_side"]["control_points"]
+    reordered_records = reordered_loop["segment_references"]["pressure_side"]["control_points"]
+
+    assert len({record["control_point_id"] for record in baseline_records}) == len(baseline_records)
+    assert {
+        tuple(record["coordinates_s_q"]): record["control_point_id"] for record in baseline_records
+    } == {
+        tuple(record["coordinates_s_q"]): record["control_point_id"] for record in reordered_records
+    }
+    assert all(
+        record["section_segment_id"] == baseline_loop["segment_references"]["pressure_side"]["section_segment_id"]
+        for record in baseline_records
+    )
 
 
 def test_all_active_presets_emit_contracts():
