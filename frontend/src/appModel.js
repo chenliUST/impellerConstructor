@@ -353,7 +353,7 @@ export const presets = [
     presetId: "radial_open_reference_v1_1",
     geometryPatchVersion: "1.1.1",
     name: "Topology first open throughflow v1.1",
-    summary: "Open impeller: V1.1.1 representative throughflow preset aligned with the backend main and splitter population contract.",
+    summary: "Open impeller: V1.1.2 representative throughflow preset aligned with the backend main and splitter population contract.",
     tags: ["open", "topology-first", "v1.1", "representative"],
     metadata: v111Metadata(),
     editableParameters: [
@@ -407,7 +407,7 @@ export const presets = [
     presetId: "radial_closed_reference_v1_1",
     geometryPatchVersion: "1.1.1",
     name: "Topology first closed throughflow v1.1",
-    summary: "Closed impeller: V1.1.1 representative throughflow preset aligned with the backend closed-loop population contract.",
+    summary: "Closed impeller: V1.1.2 representative throughflow preset aligned with the backend closed-loop population contract.",
     tags: ["closed", "topology-first", "v1.1", "representative"],
     metadata: v111Metadata(),
     editableParameters: [
@@ -462,7 +462,7 @@ export const presets = [
     presetId: "nasa_stage37_stator_ring_v1_1",
     geometryPatchVersion: "1.1.1",
     name: "NASA Stage 37 stator ring v1.1",
-    summary: "Representative public axial stator-ring approximation migrated to the V1.1.1 blade-to-blade loop surface-family contract.",
+    summary: "Representative public axial stator-ring approximation migrated to the V1.1.2 canonical blade-to-blade loop surface-family contract.",
     tags: ["public-data", "axial", "stator", "stage37", "v1.1"],
     metadata: v111Metadata(),
     editableParameters: [
@@ -527,7 +527,7 @@ export const presets = [
     presetId: "rr_ultrafan_cti_fan_v1_1",
     geometryPatchVersion: "1.1.1",
     name: "RR UltraFan CTi fan v1.1",
-    summary: "Representative public UltraFan CTi fan approximation migrated to the V1.1.1 blade-to-blade loop surface-family contract.",
+    summary: "Representative public UltraFan CTi fan approximation migrated to the V1.1.2 canonical blade-to-blade loop surface-family contract.",
     tags: ["public-data", "axial", "fan", "ultrafan", "v1.1"],
     metadata: v111Metadata(),
     editableParameters: [
@@ -591,7 +591,7 @@ export const presets = [
     presetId: "public_rocket_turbopump_inducer_v1_1",
     geometryPatchVersion: "1.1.1",
     name: "Public rocket turbopump inducer v1.1",
-    summary: "Representative public liquid-rocket turbopump inducer approximation migrated to the V1.1.1 blade-to-blade loop surface-family contract.",
+    summary: "Representative public liquid-rocket turbopump inducer approximation migrated to the V1.1.2 canonical blade-to-blade loop surface-family contract.",
     tags: ["public-data", "axial", "inducer", "pump", "v1.1"],
     metadata: v111Metadata(),
     editableParameters: [

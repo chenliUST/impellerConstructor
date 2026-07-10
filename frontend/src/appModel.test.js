@@ -64,6 +64,7 @@ describe("impeller frontend model", () => {
       ],
     );
     assert.ok(presets.every((preset) => preset.geometryPatchVersion === "1.1.2"));
+    assert.ok(presets.every((preset) => preset.summary.includes("V1.1.2")));
   });
 
   test("v1.1.2 parameter panel schema follows preset editableParameters", () => {
