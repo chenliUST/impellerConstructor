@@ -965,6 +965,120 @@ pre {
   color: #52635e;
 }
 
+.section-loop-inspection-view {
+  min-width: 0;
+  min-height: 420px;
+}
+
+.section-loop-inspection-svg {
+  display: block;
+  width: 100%;
+  min-width: 320px;
+  min-height: 420px;
+  border: 1px solid #cbd8d3;
+  border-radius: 6px;
+  background: #f8fbfa;
+}
+
+.section-loop-axes line {
+  stroke: #8aa49a;
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.section-loop-axes text,
+.section-loop-join-metrics text,
+.section-loop-empty {
+  fill: #34443f;
+  font: 14px Arial, sans-serif;
+  font-weight: 700;
+}
+
+.section-loop-join-metrics text {
+  font-size: 12px;
+}
+
+.actual-section-loop,
+.control-polygon,
+.control-point,
+.inspection-leader {
+  vector-effect: non-scaling-stroke;
+}
+
+.actual-section-loop {
+  fill: none;
+  stroke-width: 3;
+}
+
+.actual-section-loop.pressure-side,
+.control-point.pressure-side {
+  stroke: #1769aa;
+}
+
+.actual-section-loop.suction-side,
+.control-point.suction-side {
+  stroke: #198754;
+}
+
+.actual-section-loop.leading-edge,
+.control-point.leading-edge {
+  stroke: #ca6702;
+}
+
+.actual-section-loop.trailing-edge,
+.control-point.trailing-edge {
+  stroke: #ba3d3d;
+}
+
+.actual-section-loop.selected {
+  stroke-width: 4.5;
+}
+
+.control-polygon {
+  fill: none;
+  stroke: #697c73;
+  stroke-width: 1.4;
+  stroke-dasharray: 7 5;
+}
+
+.control-point {
+  fill: #ffffff;
+  stroke: #17231f;
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+
+.control-point.selected,
+.control-point:focus-visible {
+  fill: #ffd166;
+  stroke-width: 2.5;
+  outline: none;
+}
+
+.inspection-leader {
+  stroke: #526b61;
+  stroke-width: 1.2;
+}
+
+.inspection-label {
+  fill: #17231f;
+  stroke: #f8fbfa;
+  stroke-width: 5px;
+  paint-order: stroke;
+  font: 12px Arial, sans-serif;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.inspection-leader.selected {
+  stroke: #b4512a;
+  stroke-width: 2;
+}
+
+.inspection-label.selected {
+  fill: #8e3d1e;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: minmax(340px, 420px) minmax(420px, 1fr);
