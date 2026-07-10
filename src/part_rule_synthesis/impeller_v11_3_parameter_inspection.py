@@ -4,11 +4,29 @@ import copy
 import hashlib
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 RUNTIME_RELEASE_VERSION = "1.1.3"
 INSPECTION_CONTRACT_VERSION = "1.1.3"
+
+ENGINEERING_FEATURE_KINDS = {
+    "nurbs_curve",
+    "polyline",
+    "control_point",
+    "point",
+    "local_frame",
+    "reference_axis",
+}
+ENGINEERING_DIMENSION_KINDS = {
+    "linear",
+    "radial",
+    "diameter",
+    "angular",
+    "arc_height",
+    "ordinate",
+    "control_coordinate",
+}
 
 
 def validate_parameter_inspection_contract(
@@ -201,6 +219,14 @@ def build_parameter_inspection_contract(surface_graph: Mapping[str, Any]) -> dic
             "surface_ids": blade_surface_ids,
             "span_station_ids": station_ids,
         }
+    resolved_dimensions = _resolved_dimensions(surface_graph, canonical)
+    parameter_groups, parameters = _engineering_parameter_records(
+        canonical,
+        blade_instances,
+        span_stations,
+        section_loops,
+        resolved_dimensions,
+    )
     return {
         "contract_version": INSPECTION_CONTRACT_VERSION,
         "generation_id": generation_id,
@@ -211,12 +237,267 @@ def build_parameter_inspection_contract(surface_graph: Mapping[str, Any]) -> dic
         "span_stations": span_stations,
         "section_loops": section_loops,
         "support_profiles": copy.deepcopy(canonical.get("support_profiles", {})),
-        "resolved_dimensions": _resolved_dimensions(surface_graph, canonical),
+        "resolved_dimensions": resolved_dimensions,
         "continuity_measurements": {
             loop_id: copy.deepcopy(loop["join_metrics"])
             for loop_id, loop in section_loops.items()
         },
+        "parameter_groups": parameter_groups,
+        "parameters": parameters,
     }
+
+
+def _parameter_group(group_id: str, label: str, order: int, *, collapsed: bool = True) -> dict[str, Any]:
+    return {
+        "group_id": group_id,
+        "label": label,
+        "order": order,
+        "collapsed": collapsed,
+    }
+
+
+def _inspection_parameter(
+    *,
+    parameter_id: str,
+    group_id: str,
+    label: str,
+    requested_value: Any,
+    resolved_value: Any,
+    unit: str,
+    applicable_views: Sequence[str],
+    feature_geometry: Sequence[Mapping[str, Any]],
+    dimension_definition: Mapping[str, Any] | None,
+    selection_scope: Mapping[str, Any],
+    order: int,
+) -> dict[str, Any]:
+    return {
+        "parameter_id": parameter_id,
+        "group_id": group_id,
+        "label": label,
+        "requested_value": copy.deepcopy(requested_value),
+        "resolved_value": copy.deepcopy(resolved_value),
+        "unit": unit,
+        "applicable_views": list(applicable_views),
+        "feature_geometry": copy.deepcopy(list(feature_geometry)),
+        "dimension_definition": copy.deepcopy(dimension_definition),
+        "selection_scope": copy.deepcopy(dict(selection_scope)),
+        "order": order,
+    }
+
+
+def _engineering_parameter_records(
+    canonical: Mapping[str, Any],
+    blade_instances: Mapping[str, Any],
+    span_stations: Mapping[str, Any],
+    section_loops: Mapping[str, Any],
+    resolved_dimensions: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    groups = [
+        _parameter_group("hub", "Hub", 0),
+        _parameter_group("tip_or_shroud", "Tip or Shroud", 1),
+        _parameter_group("blade_placement", "Blade Placement", 2),
+        _parameter_group("spanwise_pose", "Spanwise Pose", 3),
+        _parameter_group("section_loop", "Section Loop", 4),
+        _parameter_group("attachments", "Attachments", 5),
+        _parameter_group("inspection_results", "Inspection Results", 6),
+    ]
+    parameters: list[dict[str, Any]] = []
+    profiles = canonical.get("support_profiles", {})
+    for group_id, profile_id, label in (
+        ("hub", "hub_profile", "Hub profile"),
+        ("tip_or_shroud", "tip_or_shroud_profile", "Tip or shroud profile"),
+    ):
+        profile = profiles.get(profile_id)
+        if not isinstance(profile, Mapping):
+            continue
+        parameter_id = f"{profile_id}.curve"
+        feature = copy.deepcopy(dict(profile))
+        feature["id"] = f"{parameter_id}:curve"
+        parameters.append(
+            _inspection_parameter(
+                parameter_id=parameter_id,
+                group_id=group_id,
+                label=label,
+                requested_value=profile.get("control_points"),
+                resolved_value=profile.get("control_points"),
+                unit="mm",
+                applicable_views=["meridional", "blade_3d"],
+                feature_geometry=[feature],
+                dimension_definition=None,
+                selection_scope={"support_profile_id": profile_id},
+                order=len(parameters),
+            )
+        )
+
+    for dimension_id, label in (("main_blade_count", "Main blade count"), ("angular_pitch_deg", "Angular pitch")):
+        dimension = resolved_dimensions[dimension_id]
+        parameter_id = f"blade.{dimension_id}"
+        parameters.append(
+            _inspection_parameter(
+                parameter_id=parameter_id,
+                group_id="blade_placement",
+                label=label,
+                requested_value=dimension["requested_value"],
+                resolved_value=dimension["resolved_value"],
+                unit=dimension["unit"],
+                applicable_views=["top", "blade_3d"],
+                feature_geometry=[
+                    {
+                        "kind": "reference_axis",
+                        "id": f"{parameter_id}:axis",
+                        "coordinate_system": "xyz_mm",
+                        "origin": [0.0, 0.0, 0.0],
+                        "direction": [0.0, 0.0, 1.0],
+                    }
+                ],
+                dimension_definition=None,
+                selection_scope={},
+                order=len(parameters),
+            )
+        )
+
+    for station_id, station in span_stations.items():
+        loop_id = station["section_loop_id"]
+        loop = section_loops[loop_id]
+        blade_id = station["blade_instance_id"]
+        point = _station_reference_point(loop)
+        scope = {
+            "blade_instance_id": blade_id,
+            "span_station_id": station_id,
+            "section_loop_id": loop_id,
+        }
+        pose_parameter_id = f"blade:{blade_id}:station:{station_id}:pose"
+        parameters.append(
+            _inspection_parameter(
+                parameter_id=pose_parameter_id,
+                group_id="spanwise_pose",
+                label="Spanwise station",
+                requested_value=station.get("h"),
+                resolved_value=station.get("h"),
+                unit="span fraction",
+                applicable_views=["s_q", "blade_3d"],
+                feature_geometry=[
+                    {
+                        "kind": "local_frame",
+                        "id": f"{pose_parameter_id}:frame",
+                        "coordinate_system": "s_q_mm",
+                        "origin": point,
+                        "s_axis": [1.0, 0.0],
+                        "q_axis": [0.0, 1.0],
+                    }
+                ],
+                dimension_definition=None,
+                selection_scope=scope,
+                order=len(parameters),
+            )
+        )
+        thickness = resolved_dimensions["thickness_max_mm"]
+        thickness_parameter_id = f"blade:{blade_id}:station:{station_id}:thickness"
+        thickness_value = float(thickness["resolved_value"])
+        parameters.append(
+            _inspection_parameter(
+                parameter_id=thickness_parameter_id,
+                group_id="section_loop",
+                label="Blade thickness",
+                requested_value=thickness["requested_value"],
+                resolved_value=thickness["resolved_value"],
+                unit=thickness["unit"],
+                applicable_views=["s_q", "blade_3d"],
+                feature_geometry=[
+                    {
+                        "kind": "point",
+                        "id": f"{thickness_parameter_id}:point",
+                        "coordinate_system": "s_q_mm",
+                        "coordinates": point,
+                    },
+                    {
+                        "kind": "local_frame",
+                        "id": f"{thickness_parameter_id}:frame",
+                        "coordinate_system": "s_q_mm",
+                        "origin": point,
+                        "s_axis": [1.0, 0.0],
+                        "q_axis": [0.0, 1.0],
+                    },
+                ],
+                dimension_definition={
+                    "kind": "linear",
+                    "measurement_points": [point, [point[0], point[1] + thickness_value]],
+                    "unit": thickness["unit"],
+                    "tolerance": 1.0e-6,
+                },
+                selection_scope=scope,
+                order=len(parameters),
+            )
+        )
+        join_parameter_id = f"blade:{blade_id}:station:{station_id}:join_status"
+        parameters.append(
+            _inspection_parameter(
+                parameter_id=join_parameter_id,
+                group_id="inspection_results",
+                label="Section loop continuity",
+                requested_value=loop["metrics"].get("join_status"),
+                resolved_value=loop["metrics"].get("join_status"),
+                unit="status",
+                applicable_views=["s_q", "blade_3d"],
+                feature_geometry=[
+                    {
+                        "kind": "polyline",
+                        "id": f"{join_parameter_id}:loop",
+                        "coordinate_system": "s_q_mm",
+                        "points": _section_loop_points(loop),
+                    }
+                ],
+                dimension_definition=None,
+                selection_scope=scope,
+                order=len(parameters),
+            )
+        )
+
+    root_offset = resolved_dimensions["root_offset_mm"]
+    for blade_id, blade in blade_instances.items():
+        station_id = blade["span_station_ids"][0]
+        loop_id = span_stations[station_id]["section_loop_id"]
+        parameter_id = f"blade:{blade_id}:attachment:root_offset"
+        parameters.append(
+            _inspection_parameter(
+                parameter_id=parameter_id,
+                group_id="attachments",
+                label="Root offset",
+                requested_value=root_offset["requested_value"],
+                resolved_value=root_offset["resolved_value"],
+                unit=root_offset["unit"],
+                applicable_views=["meridional", "blade_3d"],
+                feature_geometry=[
+                    {
+                        "kind": "point",
+                        "id": f"{parameter_id}:point",
+                        "coordinate_system": "s_q_mm",
+                        "coordinates": _station_reference_point(section_loops[loop_id]),
+                    }
+                ],
+                dimension_definition=None,
+                selection_scope={
+                    "blade_instance_id": blade_id,
+                    "span_station_id": station_id,
+                    "section_loop_id": loop_id,
+                },
+                order=len(parameters),
+            )
+        )
+    return groups, parameters
+
+
+def _station_reference_point(loop: Mapping[str, Any]) -> list[float]:
+    pressure = loop["segment_references"]["pressure_side"]["display_points_s_q_mm"]
+    return copy.deepcopy(pressure[len(pressure) // 2])
+
+
+def _section_loop_points(loop: Mapping[str, Any]) -> list[list[float]]:
+    return [
+        point
+        for segment in loop["segment_references"].values()
+        for point in segment["display_points_s_q_mm"]
+    ]
 
 
 def _blade_instance_id(blade_index: Any) -> str | None:
