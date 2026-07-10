@@ -7,6 +7,7 @@ import vm from "node:vm";
 const root = resolve(import.meta.dirname, "..", "..");
 const sectionViewPath = resolve(root, "src/components/SectionLoopInspectionView.js");
 const overlayPath = resolve(root, "src/components/ParameterAnnotationOverlay.js");
+const stylesPath = resolve(root, "src/styles.css");
 
 function loadComponent(path, exportName) {
   const source = readFileSync(path, "utf-8")
@@ -140,10 +141,14 @@ describe("ParameterAnnotationOverlay source contract", () => {
     const source = readFileSync(overlayPath, "utf-8");
     assert.match(source, /inspection-leader/);
     assert.match(source, /inspection-label/);
+    assert.match(source, /clipPath/);
     assert.match(source, /sort\(.*id/);
     assert.doesNotMatch(source, /onChange/);
     assert.doesNotMatch(source, /onMutate/);
     assert.doesNotMatch(source, /onEdit/);
+
+    const styles = readFileSync(stylesPath, "utf-8");
+    assert.match(styles, /inspection-label-region/);
   });
 
   test("sorts colliding labels into slots and preserves requested and resolved values", () => {
@@ -235,7 +240,73 @@ describe("ParameterAnnotationOverlay source contract", () => {
     assert.ok(leaders.every((leader) => leader.props.y2 >= 14 && leader.props.y2 <= 70));
     assert.ok(selectedLabel, "selected annotation must remain rendered");
     assert.match(visibleText(selectedLabel), /\.\.\.$/);
-    assert.ok(visibleText(selectedLabel).length <= 16);
     assert.match(selectedTitle.props.children.join(""), /long-final-value/);
+  });
+
+  test("places selected overflow in unique bounded lanes without overlap", () => {
+    const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
+    const annotations = Array.from({ length: 10 }, (_, index) => ({
+      id: `annotation-${String(index).padStart(2, "0")}`,
+      label: `Annotation ${index}`,
+      requestedValue: index,
+      resolvedValue: index,
+      anchor: { index },
+      selected: index < 8,
+    }));
+    const tree = ParameterAnnotationOverlay({
+      annotations,
+      projectAnchor: () => ({ x: 150, y: 42 }),
+      viewportWidth: 300,
+      viewportHeight: 84,
+    });
+
+    const selectedLabels = collectElements(
+      tree,
+      (node) => node.type === "text" && /selected/.test(node.props.className),
+    );
+    const selectedLeaders = collectElements(
+      tree,
+      (node) => node.type === "line" && /selected/.test(node.props.className),
+    );
+    const coordinates = selectedLabels.map((label) => `${label.props.x},${label.props.y}`);
+
+    assert.equal(selectedLabels.length, 8);
+    assert.equal(selectedLeaders.length, 8);
+    assert.equal(new Set(coordinates).size, 8);
+    assert.ok(new Set(selectedLabels.map((label) => label.props.x)).size >= 3);
+    assert.ok(selectedLabels.every((label) => label.props.x >= 0 && label.props.x <= 300));
+    assert.ok(selectedLabels.every((label) => label.props.y >= 0 && label.props.y <= 84));
+  });
+
+  test("hard clips wide-glyph labels to a bounded region and preserves the full title", () => {
+    const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
+    const wideValue = "W".repeat(160);
+    const tree = ParameterAnnotationOverlay({
+      annotations: [{
+        id: "wide-glyph",
+        label: `Wide ${wideValue}`,
+        requestedValue: wideValue,
+        resolvedValue: wideValue,
+        anchor: { id: "wide-glyph" },
+        selected: true,
+      }],
+      projectAnchor: () => ({ x: 90, y: 35 }),
+      viewportWidth: 180,
+      viewportHeight: 70,
+    });
+
+    const label = collectElements(tree, (node) => node.type === "text")[0];
+    const title = collectElements(label, (node) => node.type === "title")[0];
+    const clipPath = collectElements(tree, (node) => node.type === "clipPath")[0];
+    assert.ok(clipPath, "wide labels require an SVG clip path");
+    const clipRect = collectElements(clipPath, (node) => node.type === "rect")[0];
+    assert.ok(clipRect, "clip path requires a bounded rectangle");
+
+    assert.equal(label.props.clipPath, `url(#${clipPath.props.id})`);
+    assert.ok(clipRect.props.x >= 0);
+    assert.ok(clipRect.props.y >= 0);
+    assert.ok(clipRect.props.x + clipRect.props.width <= 180);
+    assert.ok(clipRect.props.y + clipRect.props.height <= 70);
+    assert.match(title.props.children.join(""), new RegExp(wideValue));
   });
 });

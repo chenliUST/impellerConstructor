@@ -1060,6 +1060,15 @@ pre {
   stroke-width: 1.2;
 }
 
+.inspection-label-region {
+  fill: #f8fbfa;
+  fill-opacity: 0.94;
+  stroke: #cbd8d3;
+  stroke-width: 1;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
 .inspection-label {
   fill: #17231f;
   stroke: #f8fbfa;
@@ -1073,6 +1082,11 @@ pre {
 .inspection-leader.selected {
   stroke: #b4512a;
   stroke-width: 2;
+}
+
+.inspection-label-region.selected {
+  fill: #fff4ee;
+  stroke: #b4512a;
 }
 
 .inspection-label.selected {

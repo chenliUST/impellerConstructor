@@ -6,7 +6,8 @@ const DEFAULT_VIEWPORT_WIDTH = 1000;
 const DEFAULT_VIEWPORT_HEIGHT = 700;
 const HORIZONTAL_PADDING = 12;
 const VERTICAL_PADDING = 14;
-const MIN_LABEL_WIDTH = 84;
+const LABEL_HEIGHT = 22;
+const LANE_GAP = 8;
 const APPROXIMATE_CHARACTER_WIDTH = 7;
 
 export function ParameterAnnotationOverlay({
@@ -24,6 +25,22 @@ export function ParameterAnnotationOverlay({
   return h(
     "g",
     { className: "parameter-annotation-overlay" },
+    h(
+      "defs",
+      null,
+      labels.map(({ label }) =>
+        h(
+          "clipPath",
+          { key: label.clipId, id: label.clipId, clipPathUnits: "userSpaceOnUse" },
+          h("rect", {
+            x: label.x,
+            y: label.y - label.height / 2,
+            width: label.width,
+            height: label.height,
+          }),
+        ),
+      ),
+    ),
     labels.map(({ annotation, anchor, label }) => {
       const { compactText, fullText } = annotationText(annotation);
       const visibleText = truncateText(compactText, label.maxCharacters);
@@ -39,9 +56,22 @@ export function ParameterAnnotationOverlay({
           x2: label.x,
           y2: label.y,
         }),
+        h("rect", {
+          className: `inspection-label-region${selectedClass}`,
+          x: label.x,
+          y: label.y - label.height / 2,
+          width: label.width,
+          height: label.height,
+          rx: 2,
+        }),
         h(
           "text",
-          { className: `inspection-label${selectedClass}`, x: label.x + 6, y: label.y + 4 },
+          {
+            className: `inspection-label${selectedClass}`,
+            x: label.x + Math.min(6, label.width / 2),
+            y: label.y + 4,
+            clipPath: `url(#${label.clipId})`,
+          },
           h("title", null, fullText),
           visibleText,
         ),
@@ -51,27 +81,31 @@ export function ParameterAnnotationOverlay({
 }
 
 function layoutLabels(annotations, projectAnchor, viewport) {
-  const slots = new Set();
   const sorted = [...annotations].sort((left, right) => String(left.id).localeCompare(String(right.id)));
   const projected = sorted.flatMap((annotation) => {
     const anchor = resolveAnchor(annotation, projectAnchor);
     return anchor ? [{ annotation, anchor }] : [];
   });
   const slotCount = viewportSlotCount(viewport.height);
-  const retained = retainSelectedWithinCapacity(projected, slotCount);
+  const selectedCount = projected.filter(({ annotation }) => annotation.selected).length;
+  const laneCount = Math.max(1, Math.ceil(selectedCount / slotCount));
+  const capacity = laneCount * slotCount;
+  const retained = retainSelectedWithinCapacity(projected, capacity);
 
-  return retained.map(({ annotation, anchor }) => {
-    const desiredSlot = desiredViewportSlot(anchor.y, viewport.height, slotCount);
-    const slot = nextAvailableSlot(desiredSlot, slots, slotCount);
-    slots.add(slot);
-    const x = labelRailX(anchor.x, viewport.width);
+  return retained.map(({ annotation, anchor }, index) => {
+    const lane = Math.floor(index / slotCount);
+    const slot = index % slotCount;
+    const region = labelRegionForLane(lane, laneCount, viewport.width);
+    const height = Math.min(LABEL_HEIGHT, viewport.height);
     return {
       annotation,
       anchor,
       label: {
-        x,
-        y: VERTICAL_PADDING + slot * SLOT_HEIGHT,
-        maxCharacters: maxVisibleCharacters(x, viewport.width),
+        ...region,
+        height,
+        y: labelYForSlot(slot, viewport.height, height),
+        clipId: clipIdFor(annotation.id, index),
+        maxCharacters: maxVisibleCharacters(region.width),
       },
     };
   });
@@ -89,41 +123,39 @@ function viewportSlotCount(viewportHeight) {
 
 function retainSelectedWithinCapacity(projected, capacity) {
   const selected = projected.filter(({ annotation }) => annotation.selected);
-  if (projected.length <= capacity || selected.length >= capacity) {
-    return selected.length >= capacity ? selected : projected;
+  if (projected.length <= capacity) {
+    return projected;
   }
-  const remaining = projected.filter(({ annotation }) => !annotation.selected).slice(0, capacity - selected.length);
+  const remainingCapacity = Math.max(0, capacity - selected.length);
+  const remaining = projected.filter(({ annotation }) => !annotation.selected).slice(0, remainingCapacity);
   const retainedIds = new Set([...selected, ...remaining].map(({ annotation }) => annotation.id));
   return projected.filter(({ annotation }) => retainedIds.has(annotation.id));
 }
 
-function desiredViewportSlot(anchorY, viewportHeight, slotCount) {
-  const clampedY = clamp(anchorY, VERTICAL_PADDING, Math.max(VERTICAL_PADDING, viewportHeight - VERTICAL_PADDING));
-  return clamp(Math.round((clampedY - VERTICAL_PADDING) / SLOT_HEIGHT), 0, slotCount - 1);
+function labelRegionForLane(lane, laneCount, viewportWidth) {
+  const inset = Math.min(HORIZONTAL_PADDING, viewportWidth / 4);
+  const availableWidth = Math.max(1, viewportWidth - inset * 2);
+  const laneWidth = availableWidth / laneCount;
+  const gap = Math.min(LANE_GAP, Math.max(0, laneWidth - 1));
+  return {
+    x: inset + lane * laneWidth,
+    width: Math.max(1, laneWidth - gap),
+  };
 }
 
-function nextAvailableSlot(desiredSlot, slots, slotCount) {
-  for (let slot = desiredSlot; slot < slotCount; slot += 1) {
-    if (!slots.has(slot)) {
-      return slot;
-    }
-  }
-  for (let slot = 0; slot < desiredSlot; slot += 1) {
-    if (!slots.has(slot)) {
-      return slot;
-    }
-  }
-  return desiredSlot;
+function labelYForSlot(slot, viewportHeight, labelHeight) {
+  const minimumY = labelHeight / 2;
+  const maximumY = Math.max(minimumY, viewportHeight - labelHeight / 2);
+  return clamp(VERTICAL_PADDING + slot * SLOT_HEIGHT, minimumY, maximumY);
 }
 
-function labelRailX(anchorX, viewportWidth) {
-  const maximumRail = Math.max(HORIZONTAL_PADDING, viewportWidth - HORIZONTAL_PADDING - MIN_LABEL_WIDTH);
-  const preferredRail = anchorX < viewportWidth / 2 ? viewportWidth * 0.62 : viewportWidth * 0.08;
-  return clamp(preferredRail, HORIZONTAL_PADDING, maximumRail);
+function clipIdFor(annotationId, index) {
+  const safeId = String(annotationId).replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "annotation";
+  return `inspection-label-clip-${safeId}-${index}`;
 }
 
-function maxVisibleCharacters(labelX, viewportWidth) {
-  const availableWidth = Math.max(28, viewportWidth - HORIZONTAL_PADDING - labelX - 6);
+function maxVisibleCharacters(labelWidth) {
+  const availableWidth = Math.max(7, labelWidth - 12);
   return Math.max(4, Math.floor(availableWidth / APPROXIMATE_CHARACTER_WIDTH));
 }
 
