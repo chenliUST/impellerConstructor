@@ -16,8 +16,8 @@ This is a frontend inspection-layer hardening change. It does not change V1.1.2 
 - Do not show `isSurfaceUvWire` overlays in Parameter inspection.
 - Add black contour overlays with `THREE.EdgesGeometry` over the existing generated surface geometry.
 - Use an angle threshold so smooth tessellation and UV subdivisions do not become visible lines.
-- Keep ordinary contours thin and selected contours thicker.
-- Highlight selected geometry with a pale yellow fill and black contour. Do not restore the former green/orange inspection palette in this workspace.
+- Render ordinary geometry with white fill and black contour.
+- Highlight selected geometry by inversion: black fill and white contour. Do not restore the former green/orange inspection palette in this workspace.
 - Preserve depth testing so hidden contours do not show through the part.
 
 This is a white-surface/black-contour technical view, not a transparent triangle wireframe and not a screen-space silhouette post-process.
