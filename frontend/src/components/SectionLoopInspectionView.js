@@ -43,8 +43,9 @@ export function SectionLoopInspectionView({ loop, selection = {}, annotationLeve
 function sectionSegments(loop) {
   const entries = Object.entries(loop?.segment_references || {});
   const ordered = entries.sort(([left], [right]) => segmentRank(left) - segmentRank(right) || left.localeCompare(right));
-  return ordered.map(([sectionSegmentId, segment]) => ({
-    section_segment_id: segment.section_segment_id || sectionSegmentId,
+  return ordered.map(([segmentName, segment]) => ({
+    segmentName,
+    sectionSegmentId: segment.section_segment_id || segmentName,
     points: finitePoints(segment.points_s_q),
     controlPoints: finitePoints(segment.control_points_s_q),
   }));
@@ -96,11 +97,11 @@ function renderAxes() {
 }
 
 function renderActualSegment(segment, transform, selection) {
-  const className = ["actual-section-loop", SEGMENT_CLASS[segment.section_segment_id] || "section-segment"]
-    .concat(selection.sectionSegmentId === segment.section_segment_id ? ["selected"] : [])
+  const className = ["actual-section-loop", SEGMENT_CLASS[segment.segmentName] || "section-segment"]
+    .concat(selection.sectionSegmentId === segment.sectionSegmentId ? ["selected"] : [])
     .join(" ");
   return h("polyline", {
-    key: `${segment.section_segment_id}:actual`,
+    key: `${segment.sectionSegmentId}:actual`,
     className,
     points: pointsAttribute(segment.points, transform),
     fill: "none",
@@ -108,29 +109,29 @@ function renderActualSegment(segment, transform, selection) {
 }
 
 function renderControlGeometry(segment, transform, selection, onSelect) {
-  const className = ["control-polygon", SEGMENT_CLASS[segment.section_segment_id] || "section-segment"]
-    .concat(selection.sectionSegmentId === segment.section_segment_id ? ["selected"] : [])
+  const className = ["control-polygon", SEGMENT_CLASS[segment.segmentName] || "section-segment"]
+    .concat(selection.sectionSegmentId === segment.sectionSegmentId ? ["selected"] : [])
     .join(" ");
   return h(
     "g",
-    { key: `${segment.section_segment_id}:control` },
+    { key: `${segment.sectionSegmentId}:control` },
     h("polyline", { className, points: pointsAttribute(segment.controlPoints, transform), fill: "none" }),
     segment.controlPoints.map((point, pointIndex) => {
       const [cx, cy] = transform(point);
-      const isSelected = selection.controlPointId === `${segment.section_segment_id}:cp_${pointIndex}`;
+      const isSelected = selection.controlPointId === `${segment.sectionSegmentId}:cp_${pointIndex}`;
       const nextSelection = {
-        sectionSegmentId: segment.section_segment_id,
-        controlPointId: `${segment.section_segment_id}:cp_${pointIndex}`,
+        sectionSegmentId: segment.sectionSegmentId,
+        controlPointId: `${segment.sectionSegmentId}:cp_${pointIndex}`,
       };
       return h("circle", {
-        key: `${segment.section_segment_id}:cp_${pointIndex}`,
-        className: `control-point ${SEGMENT_CLASS[segment.section_segment_id] || "section-segment"}${isSelected ? " selected" : ""}`,
+        key: `${segment.sectionSegmentId}:cp_${pointIndex}`,
+        className: `control-point ${SEGMENT_CLASS[segment.segmentName] || "section-segment"}${isSelected ? " selected" : ""}`,
         cx,
         cy,
         r: 7,
         role: "button",
         tabIndex: 0,
-        "aria-label": `${segment.section_segment_id} control point ${pointIndex + 1}`,
+        "aria-label": `${segment.segmentName} control point ${pointIndex + 1}`,
         onClick: () => onSelect?.(nextSelection),
         onKeyDown: (event) => {
           if (event.key === "Enter" || event.key === " ") {

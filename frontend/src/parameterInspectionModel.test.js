@@ -45,13 +45,23 @@ function manifestFixture() {
         section_loop_id: "blade_0:span_0:loop",
         span_station_id: "blade_0:span_0",
         segment_references: {
-          pressure_side: { points_s_q: [[0, -1], [1, -1]], control_points_s_q: [[0, -1], [1, -1]] },
+          pressure_side: {
+            section_segment_id: "blade_0:span_0:loop:pressure_side",
+            points_s_q: [[0, -1], [1, -1]],
+            control_points_s_q: [[0, -1], [1, -1]],
+          },
           trailing_edge: {
+            section_segment_id: "blade_0:span_0:loop:trailing_edge",
             points_s_q: [[1, -1], [1.1, 0], [1, 1]],
             control_points_s_q: [[1, -1], [1.1, 0], [1, 1]],
           },
-          suction_side: { points_s_q: [[1, 1], [0, 1]], control_points_s_q: [[1, 1], [0, 1]] },
+          suction_side: {
+            section_segment_id: "blade_0:span_0:loop:suction_side",
+            points_s_q: [[1, 1], [0, 1]],
+            control_points_s_q: [[1, 1], [0, 1]],
+          },
           leading_edge: {
+            section_segment_id: "blade_0:span_0:loop:leading_edge",
             points_s_q: [[0, 1], [-0.1, 0], [0, -1]],
             control_points_s_q: [[0, 1], [-0.1, 0], [0, -1]],
           },
@@ -129,16 +139,42 @@ describe("parameter inspection model", () => {
   test("selected section segment excludes siblings while retaining key annotations", () => {
     const model = resolveParameterInspection(manifestFixture());
     const selection = mergeInspectionSelection(defaultInspectionSelection(model), {
-      sectionSegmentId: "pressure_side",
+      sectionSegmentId: "blade_0:span_0:loop:pressure_side",
     });
 
+    const annotations = annotationsForView(model, "s_q", "selected", selection);
     assert.deepEqual(
-      annotationsForView(model, "s_q", "selected", selection).map((annotation) => annotation.id),
+      annotations.map((annotation) => annotation.id),
       [
         "s_q:thickness_min_mm",
         "s_q:thickness_max_mm",
         "s_q:blade_0:span_0:loop:pressure_side",
       ],
+    );
+    const pressureSide = annotations.at(-1);
+    assert.equal(pressureSide.label, "Pressure Side");
+    assert.equal(pressureSide.anchor.sectionSegmentId, "blade_0:span_0:loop:pressure_side");
+    assert.equal(pressureSide.selection.sectionSegmentId, "blade_0:span_0:loop:pressure_side");
+  });
+
+  test("decorates key selected and all levels with deterministic selected flags", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const selection = mergeInspectionSelection(defaultInspectionSelection(model), {
+      sectionSegmentId: "blade_0:span_0:loop:pressure_side",
+    });
+
+    const keyAnnotations = annotationsForView(model, "s_q", "key", selection);
+    assert.ok(keyAnnotations.every((annotation) => annotation.selected === false));
+
+    const selectedAnnotations = annotationsForView(model, "s_q", "selected", selection);
+    assert.deepEqual(selectedAnnotations.map((annotation) => annotation.selected), [false, false, true]);
+
+    const allAnnotations = annotationsForView(model, "s_q", "all", selection);
+    assert.equal(allAnnotations.find((annotation) => annotation.label === "Pressure Side").selected, true);
+    assert.ok(
+      allAnnotations
+        .filter((annotation) => annotation.level === "all" && annotation.label !== "Pressure Side")
+        .every((annotation) => annotation.selected === false),
     );
   });
 

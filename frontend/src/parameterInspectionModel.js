@@ -73,12 +73,15 @@ export function annotationsForView(model, viewId, level, selection) {
     return [];
   }
 
-  const annotations = annotationsForViewId(model, viewId, selection);
+  const annotations = annotationsForViewId(model, viewId, selection).map((annotation) => ({
+    ...annotation,
+    selected: annotationMatchesSelection(annotation, selection),
+  }));
   if (level === "key") {
     return annotations.filter((annotation) => annotation.level === "key");
   }
   if (level === "selected") {
-    return annotations.filter((annotation) => annotation.level === "key" || annotationMatchesSelection(annotation, selection));
+    return annotations.filter((annotation) => annotation.level === "key" || annotation.selected);
   }
   return level === "all" ? annotations : [];
 }
@@ -146,17 +149,18 @@ function sectionAnnotations(model, selection) {
     return dimensions;
   }
 
-  const segments = Object.entries(loop.segment_references || {}).map(([segmentId, segment]) =>
-    annotation({
+  const segments = Object.entries(loop.segment_references || {}).map(([segmentId, segment]) => {
+    const sectionSegmentId = segment.section_segment_id || segmentId;
+    return annotation({
       id: `s_q:${loop.section_loop_id}:${segmentId}`,
       level: "all",
       label: titleCase(segmentId),
       requestedValue: segment.points_s_q,
       resolvedValue: segment.control_points_s_q,
-      anchor: { kind: "section_segment", sectionLoopId: loop.section_loop_id, sectionSegmentId: segmentId },
-      selection: { spanStationId: loop.span_station_id, sectionSegmentId: segmentId },
-    }),
-  );
+      anchor: { kind: "section_segment", sectionLoopId: loop.section_loop_id, sectionSegmentId },
+      selection: { spanStationId: loop.span_station_id, sectionSegmentId },
+    });
+  });
   return [...dimensions, ...segments];
 }
 

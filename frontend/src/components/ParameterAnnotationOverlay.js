@@ -2,22 +2,31 @@ import React from "react";
 
 const h = React.createElement;
 const SLOT_HEIGHT = 28;
-const VIEWPORT_MIDPOINT = 500;
-const LEFT_LABEL_RAIL = 120;
-const RIGHT_LABEL_RAIL = 720;
+const DEFAULT_VIEWPORT_WIDTH = 1000;
+const DEFAULT_VIEWPORT_HEIGHT = 700;
+const HORIZONTAL_PADDING = 12;
+const VERTICAL_PADDING = 14;
+const MIN_LABEL_WIDTH = 84;
+const APPROXIMATE_CHARACTER_WIDTH = 7;
 
-export function ParameterAnnotationOverlay({ annotations = [], projectAnchor }) {
-  const labels = layoutLabels(annotations, projectAnchor);
+export function ParameterAnnotationOverlay({
+  annotations = [],
+  projectAnchor,
+  viewportWidth = DEFAULT_VIEWPORT_WIDTH,
+  viewportHeight = DEFAULT_VIEWPORT_HEIGHT,
+}) {
+  const viewport = {
+    width: positiveDimension(viewportWidth, DEFAULT_VIEWPORT_WIDTH),
+    height: positiveDimension(viewportHeight, DEFAULT_VIEWPORT_HEIGHT),
+  };
+  const labels = layoutLabels(annotations, projectAnchor, viewport);
 
   return h(
     "g",
     { className: "parameter-annotation-overlay" },
     labels.map(({ annotation, anchor, label }) => {
-      const resolvedText = `${annotation.resolvedValue}${annotation.unit ? ` ${annotation.unit}` : ""}`;
-      const requestedText = `${annotation.requestedValue}${annotation.requestedUnit ? ` ${annotation.requestedUnit}` : ""}`;
-      const formattedValue = annotation.requestedValue === annotation.resolvedValue
-        ? `${annotation.label}: ${resolvedText}`
-        : `${annotation.label}: ${requestedText} -> ${resolvedText}`;
+      const { compactText, fullText } = annotationText(annotation);
+      const visibleText = truncateText(compactText, label.maxCharacters);
       const selectedClass = annotation.selected ? " selected" : "";
 
       return h(
@@ -30,31 +39,41 @@ export function ParameterAnnotationOverlay({ annotations = [], projectAnchor }) 
           x2: label.x,
           y2: label.y,
         }),
-        h("text", { className: `inspection-label${selectedClass}`, x: label.x + 6, y: label.y + 4 }, formattedValue),
+        h(
+          "text",
+          { className: `inspection-label${selectedClass}`, x: label.x + 6, y: label.y + 4 },
+          h("title", null, fullText),
+          visibleText,
+        ),
       );
     }),
   );
 }
 
-function layoutLabels(annotations, projectAnchor) {
+function layoutLabels(annotations, projectAnchor, viewport) {
   const slots = new Set();
   const sorted = [...annotations].sort((left, right) => String(left.id).localeCompare(String(right.id)));
-  return sorted.flatMap((annotation) => {
+  const projected = sorted.flatMap((annotation) => {
     const anchor = resolveAnchor(annotation, projectAnchor);
-    if (!anchor) {
-      return [];
-    }
-    const desiredSlot = Math.max(0, Math.round(anchor.y / SLOT_HEIGHT));
-    const slot = nextAvailableSlot(desiredSlot, slots);
+    return anchor ? [{ annotation, anchor }] : [];
+  });
+  const slotCount = viewportSlotCount(viewport.height);
+  const retained = retainSelectedWithinCapacity(projected, slotCount);
+
+  return retained.map(({ annotation, anchor }) => {
+    const desiredSlot = desiredViewportSlot(anchor.y, viewport.height, slotCount);
+    const slot = nextAvailableSlot(desiredSlot, slots, slotCount);
     slots.add(slot);
-    return [{
+    const x = labelRailX(anchor.x, viewport.width);
+    return {
       annotation,
       anchor,
       label: {
-        x: anchor.x < VIEWPORT_MIDPOINT ? RIGHT_LABEL_RAIL : LEFT_LABEL_RAIL,
-        y: slot * SLOT_HEIGHT + SLOT_HEIGHT / 2,
+        x,
+        y: VERTICAL_PADDING + slot * SLOT_HEIGHT,
+        maxCharacters: maxVisibleCharacters(x, viewport.width),
       },
-    }];
+    };
   });
 }
 
@@ -63,10 +82,105 @@ function resolveAnchor(annotation, projectAnchor) {
   return Number.isFinite(projected?.x) && Number.isFinite(projected?.y) ? projected : null;
 }
 
-function nextAvailableSlot(desiredSlot, slots) {
-  let slot = desiredSlot;
-  while (slots.has(slot)) {
-    slot += 1;
+function viewportSlotCount(viewportHeight) {
+  const availableHeight = Math.max(0, viewportHeight - VERTICAL_PADDING * 2);
+  return Math.max(1, Math.floor(availableHeight / SLOT_HEIGHT) + 1);
+}
+
+function retainSelectedWithinCapacity(projected, capacity) {
+  const selected = projected.filter(({ annotation }) => annotation.selected);
+  if (projected.length <= capacity || selected.length >= capacity) {
+    return selected.length >= capacity ? selected : projected;
   }
-  return slot;
+  const remaining = projected.filter(({ annotation }) => !annotation.selected).slice(0, capacity - selected.length);
+  const retainedIds = new Set([...selected, ...remaining].map(({ annotation }) => annotation.id));
+  return projected.filter(({ annotation }) => retainedIds.has(annotation.id));
+}
+
+function desiredViewportSlot(anchorY, viewportHeight, slotCount) {
+  const clampedY = clamp(anchorY, VERTICAL_PADDING, Math.max(VERTICAL_PADDING, viewportHeight - VERTICAL_PADDING));
+  return clamp(Math.round((clampedY - VERTICAL_PADDING) / SLOT_HEIGHT), 0, slotCount - 1);
+}
+
+function nextAvailableSlot(desiredSlot, slots, slotCount) {
+  for (let slot = desiredSlot; slot < slotCount; slot += 1) {
+    if (!slots.has(slot)) {
+      return slot;
+    }
+  }
+  for (let slot = 0; slot < desiredSlot; slot += 1) {
+    if (!slots.has(slot)) {
+      return slot;
+    }
+  }
+  return desiredSlot;
+}
+
+function labelRailX(anchorX, viewportWidth) {
+  const maximumRail = Math.max(HORIZONTAL_PADDING, viewportWidth - HORIZONTAL_PADDING - MIN_LABEL_WIDTH);
+  const preferredRail = anchorX < viewportWidth / 2 ? viewportWidth * 0.62 : viewportWidth * 0.08;
+  return clamp(preferredRail, HORIZONTAL_PADDING, maximumRail);
+}
+
+function maxVisibleCharacters(labelX, viewportWidth) {
+  const availableWidth = Math.max(28, viewportWidth - HORIZONTAL_PADDING - labelX - 6);
+  return Math.max(4, Math.floor(availableWidth / APPROXIMATE_CHARACTER_WIDTH));
+}
+
+function annotationText(annotation) {
+  const compactResolvedText = withUnit(compactValue(annotation.resolvedValue), annotation.unit);
+  const compactRequestedText = withUnit(compactValue(annotation.requestedValue), annotation.requestedUnit);
+  const fullResolvedText = withUnit(fullValue(annotation.resolvedValue), annotation.unit);
+  const fullRequestedText = withUnit(fullValue(annotation.requestedValue), annotation.requestedUnit);
+  const valuesMatch = annotation.requestedValue === annotation.resolvedValue;
+  return {
+    compactText: valuesMatch
+      ? `${annotation.label}: ${compactResolvedText}`
+      : `${annotation.label}: ${compactRequestedText} -> ${compactResolvedText}`,
+    fullText: valuesMatch
+      ? `${annotation.label}: ${fullResolvedText}`
+      : `${annotation.label}: ${fullRequestedText} -> ${fullResolvedText}`,
+  };
+}
+
+function compactValue(value) {
+  if (Array.isArray(value)) {
+    return `[${value.length} ${value.length === 1 ? "item" : "items"}]`;
+  }
+  if (value && typeof value === "object") {
+    const fieldCount = Object.keys(value).length;
+    return `{${fieldCount} ${fieldCount === 1 ? "field" : "fields"}}`;
+  }
+  return String(value);
+}
+
+function fullValue(value) {
+  if (value && typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function withUnit(value, unit) {
+  return unit ? `${value} ${unit}` : value;
+}
+
+function truncateText(value, maxCharacters) {
+  if (value.length <= maxCharacters) {
+    return value;
+  }
+  return maxCharacters <= 3 ? ".".repeat(maxCharacters) : `${value.slice(0, maxCharacters - 3)}...`;
+}
+
+function positiveDimension(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
 }
