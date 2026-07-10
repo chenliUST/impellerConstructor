@@ -292,6 +292,23 @@ docs/evidence/2026-07-10-impeller-v1-1-2-insight-log.md
 docs/evidence/2026-07-10-impeller-v1-1-2-canonical-nurbs-parameterization-evidence.md
 ```
 
+### V1.1.3 - Graphical Parameter Inspection
+
+- Separates the runtime release and inspection contract (`1.1.3`) from the unchanged geometry patch and canonical payload (`1.1.2`).
+- Replaces the text-only Parameter views presentation with read-only full-size 3D, Top, Meridional, and S-Q views plus a maximizable Quad overview.
+- Uses one shared WebGL renderer and generated scene for all geometric inspection viewports.
+- Adds generated-geometry selection, deterministic annotation levels, S-Q section-loop/control inspection, and explicit stale-generation rejection.
+- Keeps all five active V1.1 preset IDs and V1.1.2 geometry assertions unchanged.
+
+Evidence and design:
+
+```text
+docs/superpowers/specs/2026-07-10-impeller-v1-1-3-graphical-parameter-inspection-design.md
+docs/evidence/2026-07-10-impeller-v1-1-3-semantic-change-log.md
+docs/evidence/2026-07-10-impeller-v1-1-3-insight-log.md
+docs/evidence/2026-07-10-impeller-v1-1-3-graphical-parameter-inspection-evidence.md
+```
+
 ## How To Run A Specific Version
 
 In Python tests or scripts:
