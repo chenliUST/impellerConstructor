@@ -304,3 +304,60 @@ def test_validator_rejects_angular_dimension_vectors_with_different_dimensions()
     assert validate_parameter_inspection_contract(graph, malformed) == [
         {"reason": "parameter_inspection_contract_unsupported"}
     ]
+
+
+def test_validator_binds_loop_evidence_to_generated_graph_not_mutable_contract_loops():
+    graph = graph_for()
+    malformed = deepcopy(graph["parameter_inspection"])
+    parameter = next(item for item in malformed["parameters"] if ":control:0:s" in item["parameter_id"])
+    scope = parameter["selection_scope"]
+    loop = malformed["section_loops"][scope["section_loop_id"]]
+    segment = next(
+        segment
+        for segment in loop["segment_references"].values()
+        if segment["section_segment_id"] == scope["section_segment_id"]
+    )
+    source = next(
+        record for record in segment["control_points"] if record["control_point_id"] == scope["source_control_point_id"]
+    )
+    source["display_coordinates_s_q_mm"][0] += 1.0
+    segment["display_control_points_s_q_mm"][0][0] += 1.0
+    parameter["feature_geometry"][0]["coordinates"][0] += 1.0
+    parameter["dimension_definition"]["measurement_points"][1][0] += 1.0
+    parameter["resolved_value"] = _measure_dimension(parameter["dimension_definition"])
+
+    assert validate_parameter_inspection_contract(graph, malformed) == [
+        {"reason": "parameter_inspection_contract_unsupported"}
+    ]
+
+
+def test_validator_binds_placement_shroud_and_sagitta_features_to_generated_graph():
+    graph = graph_for("radial_closed_reference_v1_1")
+    contract = graph["parameter_inspection"]
+    mutations = [
+        lambda parameter: parameter.update(resolved_value=parameter["resolved_value"] + 1),
+        lambda parameter: (
+            parameter["feature_geometry"][1].update(direction=[0.0, 1.0]),
+            parameter["dimension_definition"].update(measured_direction=[0.0, 1.0]),
+            parameter.update(resolved_value=_measure_dimension(parameter["dimension_definition"])),
+        ),
+        lambda parameter: (
+            parameter["feature_geometry"][1]["coordinates"].__setitem__(0, parameter["feature_geometry"][1]["coordinates"][0] + 1),
+            parameter["dimension_definition"]["measurement_points"][1].__setitem__(0, parameter["dimension_definition"]["measurement_points"][1][0] + 1),
+            parameter.update(resolved_value=_measure_dimension(parameter["dimension_definition"])),
+        ),
+        lambda parameter: parameter["feature_geometry"][0]["points"].__setitem__(1, [999.0, 999.0]),
+    ]
+    parameter_ids = [
+        "blade.main.count",
+        "blade.angular_pitch",
+        "shroud.thickness",
+        next(item["parameter_id"] for item in contract["parameters"] if ":leading_edge:sagitta" in item["parameter_id"]),
+    ]
+
+    for parameter_id, mutate in zip(parameter_ids, mutations):
+        malformed = deepcopy(contract)
+        mutate(next(item for item in malformed["parameters"] if item["parameter_id"] == parameter_id))
+        assert validate_parameter_inspection_contract(graph, malformed) == [
+            {"reason": "parameter_inspection_contract_unsupported"}
+        ]

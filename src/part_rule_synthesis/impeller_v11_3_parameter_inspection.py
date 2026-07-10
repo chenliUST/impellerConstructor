@@ -134,7 +134,7 @@ def validate_parameter_inspection_contract(
         ):
             failures.append({"reason": "parameter_inspection_contract_unsupported"})
         measurement_failures = _validate_engineering_parameters(contract["parameters"])
-        if not measurement_failures and not _engineering_parameters_match_source_geometry(
+        if not failures and not measurement_failures and not _engineering_parameters_match_source_geometry(
             surface_graph,
             contract["parameters"],
             span_stations,
@@ -540,7 +540,7 @@ def _engineering_parameters_match_source_geometry(
         parameter_id = parameter["parameter_id"]
         source_control_point_id = scope.get("source_control_point_id")
         if source_control_point_id is not None and not _section_control_matches_source(
-            parameter, scope, section_loops
+            parameter, scope, surface_graph
         ):
             return False
         if "source_profile_control_index" in scope and not _profile_control_matches_source(
@@ -552,49 +552,46 @@ def _engineering_parameters_match_source_geometry(
         ):
             return False
         if ":pose.station." in parameter_id and not _station_parameter_matches_source(
-            parameter, scope, span_stations, section_loops
+            parameter, scope, surface_graph
         ):
             return False
         if parameter_id.endswith(":thickness") and not _thickness_parameter_matches_source(
-            parameter, scope, section_loops
+            parameter, scope, surface_graph
         ):
             return False
         if ":sagitta" in parameter_id and not _sagitta_parameter_matches_source(
-            parameter, scope, section_loops
+            parameter, scope, surface_graph
         ):
             return False
         if "source_attachment_measurement" in scope and not _attachment_parameter_matches_source(
             parameter, scope, surfaces
         ):
             return False
+        if parameter_id in {"blade.main.count", "blade.angular_pitch", "blade.splitter.phase"} and not _placement_parameter_matches_source(
+            parameter, surface_graph
+        ):
+            return False
+        if parameter_id == "shroud.thickness" and not _shroud_thickness_matches_source(parameter, surfaces):
+            return False
     return True
 
 
 def _section_control_matches_source(
-    parameter: Mapping[str, Any], scope: Mapping[str, Any], section_loops: Mapping[str, Any]
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surface_graph: Mapping[str, Any]
 ) -> bool:
-    loop = section_loops.get(scope.get("section_loop_id"))
+    loop = _generated_loop(surface_graph, scope)
     if loop is None:
         return False
-    segment = next(
-        (
-            record
-            for record in loop.get("segment_references", {}).values()
-            if record.get("section_segment_id") == scope.get("section_segment_id")
-        ),
-        None,
-    )
-    record = next(
-        (
-            item
-            for item in (segment or {}).get("control_points", [])
-            if item.get("control_point_id") == scope.get("source_control_point_id")
-        ),
-        None,
-    )
-    if record is None:
+    segment = loop.get("segments", {}).get(scope.get("source_segment_name"))
+    metric_scale = loop.get("streamwise_metric_scale_mm")
+    if not isinstance(segment, Mapping) or not _finite_number(metric_scale):
         return False
-    coordinates = record["display_coordinates_s_q_mm"]
+    index = scope.get("source_control_index")
+    controls = segment.get("control_points_s_q", [])
+    if not isinstance(index, int) or index < 0 or index >= len(controls):
+        return False
+    source_coordinates = controls[index]
+    coordinates = _metric_s_q_points([source_coordinates], float(metric_scale))[0]
     axis_index = 0 if parameter["parameter_id"].endswith(":s") else 1
     feature = parameter["feature_geometry"]
     return (
@@ -640,29 +637,32 @@ def _profile_curve_matches_source(
 
 
 def _station_parameter_matches_source(
-    parameter: Mapping[str, Any], scope: Mapping[str, Any], span_stations: Mapping[str, Any], section_loops: Mapping[str, Any]
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surface_graph: Mapping[str, Any]
 ) -> bool:
-    station = span_stations.get(scope.get("span_station_id"))
-    loop = section_loops.get(scope.get("section_loop_id"))
+    loop = _generated_loop(surface_graph, scope)
     features = parameter["feature_geometry"]
     return (
-        station is not None
-        and loop is not None
-        and scope.get("source_station_index") == station.get("source_loop_index")
-        and parameter["resolved_value"] == station.get("h")
+        loop is not None
+        and parameter["resolved_value"] == loop.get("h")
         and len(features) == 1
         and features[0].get("kind") == "local_frame"
-        and features[0].get("origin") == _station_reference_point(loop)
+        and features[0].get("origin") == _generated_station_reference_point(loop)
     )
 
 
 def _thickness_parameter_matches_source(
-    parameter: Mapping[str, Any], scope: Mapping[str, Any], section_loops: Mapping[str, Any]
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surface_graph: Mapping[str, Any]
 ) -> bool:
-    loop = section_loops.get(scope.get("section_loop_id"))
+    loop = _generated_loop(surface_graph, scope)
     if loop is None:
         return False
-    endpoints = _section_thickness_endpoints(loop)
+    scale = loop.get("streamwise_metric_scale_mm")
+    if not _finite_number(scale):
+        return False
+    pressure = _metric_s_q_points(loop["segments"]["pressure_side"]["points_s_q"], float(scale))
+    suction = _metric_s_q_points(loop["segments"]["suction_side"]["points_s_q"], float(scale))
+    sample_index = min(len(pressure), len(suction)) // 2
+    endpoints = [pressure[sample_index], suction[sample_index]]
     features = [feature.get("coordinates") for feature in parameter["feature_geometry"] if feature.get("kind") == "point"]
     return (
         features == endpoints
@@ -672,24 +672,90 @@ def _thickness_parameter_matches_source(
 
 
 def _sagitta_parameter_matches_source(
-    parameter: Mapping[str, Any], scope: Mapping[str, Any], section_loops: Mapping[str, Any]
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surface_graph: Mapping[str, Any]
 ) -> bool:
-    loop = section_loops.get(scope.get("section_loop_id"))
-    segment = next(
-        (
-            record
-            for record in (loop or {}).get("segment_references", {}).values()
-            if record.get("section_segment_id") == scope.get("section_segment_id")
-        ),
-        None,
-    )
-    if segment is None:
+    loop = _generated_loop(surface_graph, scope)
+    if loop is None or not _finite_number(loop.get("streamwise_metric_scale_mm")):
         return False
-    points = segment["display_points_s_q_mm"]
+    segment = loop.get("segments", {}).get(scope.get("source_segment_name"))
+    if not isinstance(segment, Mapping):
+        return False
+    points = _metric_s_q_points(segment["points_s_q"], float(loop["streamwise_metric_scale_mm"]))
     expected = [points[0], points[-1], points[len(points) // 2]]
     return (
-        parameter["dimension_definition"].get("measurement_points") == expected
+        parameter["feature_geometry"][0].get("points") == points
+        and parameter["feature_geometry"][0].get("kind") == "polyline"
+        and parameter["feature_geometry"][0].get("points") == points
+        and parameter["dimension_definition"].get("measurement_points") == expected
         and parameter["resolved_value"] == _point_line_distance(expected[2], expected[0], expected[1])
+    )
+
+
+def _generated_loop(surface_graph: Mapping[str, Any], scope: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    blade_id = scope.get("blade_instance_id")
+    station_index = scope.get("source_station_index")
+    if not isinstance(blade_id, str) or not blade_id.startswith("blade_") or not isinstance(station_index, int):
+        return None
+    try:
+        blade_index = int(blade_id.removeprefix("blade_"))
+        return surface_graph["blade_to_blade_loop_family"]["blades"][blade_index]["loops"][station_index]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _generated_station_reference_point(loop: Mapping[str, Any]) -> list[float]:
+    scale = loop.get("streamwise_metric_scale_mm")
+    pressure = loop.get("segments", {}).get("pressure_side", {}).get("points_s_q", [])
+    if not _finite_number(scale) or not pressure:
+        return []
+    return _metric_s_q_points(pressure, float(scale))[len(pressure) // 2]
+
+
+def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_graph: Mapping[str, Any]) -> bool:
+    blades = surface_graph.get("blade_to_blade_loop_family", {}).get("blades", [])
+    main_count = sum(1 for blade in blades if blade.get("blade_class") == "main")
+    main_directions = _graph_blade_anchor_directions(surface_graph, "main")
+    splitter_directions = _graph_blade_anchor_directions(surface_graph, "splitter")
+    parameter_id = parameter["parameter_id"]
+    if parameter_id == "blade.main.count":
+        return parameter["resolved_value"] == main_count and parameter["selection_scope"].get("source_geometry_kind") == "blade_population"
+    if parameter_id == "blade.angular_pitch":
+        expected = _angular_dimension(main_directions[0], main_directions[1]) if len(main_directions) >= 2 else None
+        return expected is not None and parameter["dimension_definition"] == expected and parameter["resolved_value"] == _measure_dimension(expected)
+    if parameter_id == "blade.splitter.phase":
+        if main_directions and splitter_directions:
+            expected = _angular_dimension(main_directions[0], splitter_directions[0])
+            return parameter["dimension_definition"] == expected and parameter["resolved_value"] == _measure_dimension(expected)
+        return parameter["resolved_value"] == "not_applicable"
+    return False
+
+
+def _graph_blade_anchor_directions(surface_graph: Mapping[str, Any], blade_class: str) -> list[list[float]]:
+    blades = surface_graph.get("blade_to_blade_loop_family", {}).get("blades", [])
+    surfaces = {surface.get("id"): surface for surface in surface_graph.get("surfaces", []) if isinstance(surface, Mapping)}
+    directions: list[list[float]] = []
+    for blade_index, blade in enumerate(blades):
+        if blade.get("blade_class") != blade_class:
+            continue
+        surface = surfaces.get(f"blade_{blade_index}_root_attachment_surface")
+        point = surface.get("uv_grid", [[None]])[-1][0] if surface else None
+        if _coordinate_vector(point) and len(point) >= 3:
+            directions.append([float(point[0]), float(point[1])])
+    return directions
+
+
+def _shroud_thickness_matches_source(parameter: Mapping[str, Any], surfaces: Mapping[str, Mapping[str, Any]]) -> bool:
+    inner = surfaces.get(parameter["selection_scope"].get("source_shroud_inner_surface_id"))
+    outer = surfaces.get(parameter["selection_scope"].get("source_shroud_outer_surface_id"))
+    if inner is None or outer is None:
+        return False
+    points = [inner.get("uv_grid", [[None]])[0][0], outer.get("uv_grid", [[None]])[0][0]]
+    features = [feature.get("coordinates") for feature in parameter["feature_geometry"] if feature.get("kind") == "point"]
+    return (
+        all(_coordinate_vector(point) for point in points)
+        and features == points
+        and parameter["dimension_definition"].get("measurement_points") == points
+        and parameter["resolved_value"] == _distance(*points)
     )
 
 
@@ -894,6 +960,7 @@ def _engineering_parameter_records(
             "blade_instance_id": blade_id,
             "span_station_id": station_id,
             "section_loop_id": loop_id,
+            "source_station_index": station["source_loop_index"],
         }
         pose_parameter_id = f"blade:{blade_id}:station:{station_id}:pose"
         parameters.append(
@@ -1117,7 +1184,7 @@ def _append_complete_engineering_parameters(
         applicable_views=["top", "blade_3d"],
         feature_geometry=[_axis_feature("blade.main.count:axis", [1.0, 0.0])],
         dimension_definition=None,
-        selection_scope={},
+        selection_scope={"source_geometry_kind": "blade_population"},
     )
     if len(main_directions) >= 2:
         append(
@@ -1133,7 +1200,7 @@ def _append_complete_engineering_parameters(
                 _axis_feature("blade.angular_pitch:measured", main_directions[1]),
             ],
             dimension_definition=_angular_dimension(main_directions[0], main_directions[1]),
-            selection_scope={},
+            selection_scope={"source_geometry_kind": "blade_placement"},
         )
     splitter_directions = _blade_anchor_directions(blade_instances, surface_by_id, "splitter")
     if main_directions and splitter_directions:
@@ -1154,7 +1221,7 @@ def _append_complete_engineering_parameters(
         applicable_views=["top", "blade_3d"],
         feature_geometry=[_axis_feature("blade.splitter.phase:axis", main_directions[0] if main_directions else [1.0, 0.0])],
         dimension_definition=splitter_definition,
-        selection_scope={},
+        selection_scope={"source_geometry_kind": "blade_placement"},
     )
 
     for station_id, station in span_stations.items():
@@ -1219,6 +1286,8 @@ def _append_complete_engineering_parameters(
                         selection_scope={
                             **scope,
                             "section_segment_id": segment_id,
+                            "source_segment_name": segment_name,
+                            "source_control_index": index,
                             "source_control_point_id": record["control_point_id"],
                         },
                     )
@@ -1249,7 +1318,11 @@ def _append_complete_engineering_parameters(
                     "unit": "mm",
                     "tolerance": 1.0e-6,
                 },
-                selection_scope={**scope, "section_segment_id": segment_id},
+                selection_scope={
+                    **scope,
+                    "section_segment_id": segment_id,
+                    "source_segment_name": segment_name,
+                },
             )
 
     _append_attachment_parameters(parameters, blade_instances, span_stations, section_loops, surface_by_id)
@@ -1492,7 +1565,10 @@ def _append_shroud_thickness_parameter(
         "shroud.thickness",
         "Shroud thickness",
         [inner_point, outer_point],
-        {},
+        {
+            "source_shroud_inner_surface_id": inner["id"],
+            "source_shroud_outer_surface_id": outer["id"],
+        },
         "xyz_mm",
     )
 
