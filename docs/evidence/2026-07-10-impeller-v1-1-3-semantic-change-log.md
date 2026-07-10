@@ -22,7 +22,11 @@ canonical_payload_version = 1.1.2
 - The central graphics workspace adds read-only `3D`, `Top`, `Meridional`, `S-Q`, and `Quad` inspection views.
 - One shared WebGL renderer and generated scene serve 3D, top, and meridional views.
 - S-Q uses the resolved selected section loop, canonical control geometry, and continuity measurements.
+- S-Q publishes normalized source coordinates separately from deterministic metric display coordinates; equal-aspect display uses `S (mm)` and `Q (mm)`.
 - Selection and deterministic `key`, `selected`, and `all` annotation subsets are shared across views.
+- Blade, station, segment, control-point, and surface-family selection is normalized through explicit contract relationships.
+- Control points carry authoritative, stable IDs and ownership records from the backend.
+- Contract validation is deep and bidirectional, including exact surface sets, loop closure, nested controls, and blade/station/loop references.
 - Service manifests expose the V1.1.3 parameter-inspection contract and a generation ID that rejects stale inspectable geometry.
 
 ## What Does Not Change
@@ -35,4 +39,4 @@ canonical_payload_version = 1.1.2
 
 ## Compatibility Boundary
 
-Generation IDs remain sensitive to canonical payloads and manufactured/inspectable UV geometry. UV sampling on surfaces already classified as helper or reference-only is excluded from the hash so the established V1.1 helper-surface validation exemption remains unchanged.
+Generation IDs cover every source field that affects visible or inspectable evidence, including manufactured hub/shroud surfaces, section-loop samples and controls, dimensions, policies, and quality evidence. A UV grid is exempt only when explicit metadata marks the surface both reference-only and hidden/non-rendered. Categorical roles such as `hub_support` and `shroud_support` are never exemptions. The generation ID and derived inspection payload are excluded from their own hash input to avoid self-reference.

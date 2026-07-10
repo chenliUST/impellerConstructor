@@ -4,7 +4,13 @@ Date: 2026-07-10
 
 Branch: `impeller-v1.1.2-acceptance-hardening`
 
-Acceptance fix commit: `a4f64f0 fix: close inspection acceptance regressions`
+Hardening commits:
+
+```text
+31e780e fix: harden v1.1.3 inspection contract
+bb2e7f3 fix: complete v1.1.3 inspection hardening
+69a8f71 fix: finalize inspection smoke evidence
+```
 
 ## Version Contract
 
@@ -16,45 +22,107 @@ geometry_patch_version = 1.1.2
 canonical_payload_version = 1.1.2
 ```
 
-V1.1.3 is a runtime and read-only inspection release. Geometry and canonical semantics remain V1.1.2.
+V1.1.3 changes runtime and read-only inspection behavior only. V1.1.2 geometry construction and canonical semantics remain authoritative.
 
-## Clean Services
+## Independently Reviewed Findings Addressed
 
-Existing listeners were inspected through `Get-NetTCPConnection` and `Win32_Process`; only processes whose command lines matched the project Uvicorn and Python HTTP server commands were stopped.
+- Provenance now hashes all visible/inspectable source evidence, including hub/shroud surfaces and loop/control data. Only explicitly hidden, reference-only helper UV sampling is exempt, and hash input is non-self-referential.
+- Each S-Q loop exposes source coordinates, physical coordinate units, a geometry-derived streamwise metric scale, and metric display points. Equal-aspect display labels both axes in millimetres.
+- A pure relationship-aware selection reducer synchronizes blade, station, segment, control, and face-family state across tabs and views.
+- Backend and frontend validators deeply reject malformed containers, nested records, unequal surface sets, invalid references, duplicate/foreign controls, and nonclosed loops through explicit failure states.
+- Default key annotations cover core dimension/population/pose/profile evidence in 3D, Top, and Meridional. Meridional support geometry is rendered only when supplied by the contract.
+- Backend control-point records have authoritative stable IDs; frontend code consumes them without index-derived IDs.
+- The preset summary and workspace badge report runtime/inspection 1.1.3 and canonical/geometry 1.1.2.
+
+## Fresh Post-Hardening Backend Checks
+
+Focused provenance, physical display, and stable-control subset:
 
 ```text
-backend  = http://127.0.0.1:8061  PID 1000   /api/presets/impeller = HTTP 200
-frontend = http://127.0.0.1:5199  PID 28804  / = HTTP 200
+5 passed, 5 deselected in 113.78s (0:01:53)
+```
+
+Resolved dimension/population/pose evidence:
+
+```text
+1 passed in 6.47s
+```
+
+Corrected loop orientation and nonclosed-loop rejection:
+
+```text
+2 passed in 26.64s
+```
+
+The requested combined V1.1.3/service/acceptance command was started after the hardening commits but interrupted before pytest produced a final result. It is not reported as passing.
+
+## Historical Backend Matrix
+
+The following fresh results were recorded by Task 7 before the hardening commits and were not rerun under the user's final instruction:
+
+```text
+V1.1.3 contract/service group: 15 passed in 483.00s (0:08:02)
+V1.1.2 regression group:      24 passed in 244.39s (0:04:04)
+V1.1 regression group:        37 passed in 11.67s
+surface/export group:         34 passed in 348.44s (0:05:48)
+geometry/export group:        55 passed in 4.02s
+historical matrix total:     165 passed, 0 failed
+API acceptance:               38 passed in 431.78s (0:07:11)
+```
+
+## Fresh Frontend Verification
+
+Focused command:
+
+```powershell
+node --test src/parameterInspectionModel.test.js src/inspectionSceneModel.test.js src/components/ParameterInspectionWorkspace.test.js src/components/InspectionScene.test.js src/components/SectionLoopInspectionView.test.js
+```
+
+```text
+tests 60
+suites 6
+pass 60
+fail 0
+cancelled 0
+skipped 0
+todo 0
+duration_ms 187.0399
+```
+
+Full command: `cd frontend; npm.cmd test`
+
+```text
+tests 185
+suites 17
+pass 185
+fail 0
+cancelled 0
+skipped 0
+todo 0
+duration_ms 269.8592
 ```
 
 ## Browser And Pixel Acceptance
 
-The supplied runtime had Playwright 1.61.1 but its pnpm hoist link and Chromium revision were absent. Existing bundled packages were used by setting `NODE_PATH`; Chromium revision 1228 was installed with the bundled Playwright CLI. No project dependency was added.
-
-Successful smoke command:
-
-```powershell
-$env:CODEX_NODE_MODULES='C:\Users\CHEN Li\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules'
-$env:NODE_PATH='C:\Users\CHEN Li\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\node_modules\.pnpm\node_modules'
-& 'C:\Users\CHEN Li\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' frontend/scripts/parameter-inspection-visual-smoke.cjs
-```
-
-Final result after the visual fix:
+The final bundled Node/Playwright smoke result was:
 
 ```text
 parameter inspection desktop 3D: PASS
 parameter inspection desktop Quad: PASS
+narrow toolbar bounds: {"workspaceBox":{"x":14,"y":502.09375,"width":740,"height":730.1875},"annotationBox":{"x":91.59375,"y":647.09375,"width":653.40625,"height":30},"sectionPaneBox":{"x":15,"y":679.65625,"width":738,"height":551.625}}
 parameter inspection narrow S-Q: PASS
 inspection renderer count: 1
+inspection context count: 1
 inspection scene surface count: 101
 browser device pixel ratio: 1
-inspection canvas non-background ratio: 0.1440
-wall time: 167.7s
+inspection canvas non-background ratio: 0.1979
 ```
 
-The PNG threshold was `nonBackgroundRatio >= 0.05`; observed `0.1440` passed.
+Duration: `143.3s`. Pixel threshold: `nonBackgroundRatio >= 0.05`.
 
-Screenshots:
+The smoke exercised cross-blade and span-station selection, the `All` annotation level, measured renderer/context construction, desktop 3D and Quad, and narrow S-Q bounds. It was rerun while renderer instrumentation and narrow annotation separation were corrected; the latest run has no failure.
+
+Refreshed and visually inspected artifacts:
 
 ```text
 docs/evidence/assets/v1.1.3-parameter-inspection/desktop-3d.png
@@ -62,99 +130,19 @@ docs/evidence/assets/v1.1.3-parameter-inspection/desktop-quad.png
 docs/evidence/assets/v1.1.3-parameter-inspection/narrow-s-q.png
 ```
 
-Visual inspection observations:
+Desktop 3D is nonblank and framed with synchronized selected-surface highlighting. Quad contains four distinct panes with unobscured controls. Narrow S-Q keeps the annotation and continuity rails separate and inside the workspace.
 
-- Desktop 3D: nonblank generated impeller, centered framing, readable toolbar, and orange selected-object outlines over the green generated surfaces.
-- Desktop Quad: four distinct panes are visible: perspective 3D, meridional R-Z, S-Q, and top. The geometric panes retain the same orange selection treatment and expose unobscured maximize controls.
-- Narrow S-Q: the toolbar wraps coherently, key parameter rows remain readable, the actual selected loop is present, and continuity metrics use a separate lower rail with no annotation overlap.
+## Final Services
 
-## Five Active Presets
-
-A fresh graph audit compiled each unchanged active ID and validated its parameter-inspection contract:
+Confirmed from this worktree after verification:
 
 ```text
-radial_open_reference_v1_1: PASS; runtime=1.1.3; geometry=1.1.2; canonical=1.1.2; contract=1.1.3; surfaces=102; generation_match=True
-radial_closed_reference_v1_1: PASS; runtime=1.1.3; geometry=1.1.2; canonical=1.1.2; contract=1.1.3; surfaces=81; generation_match=True
-nasa_stage37_stator_ring_v1_1: PASS; runtime=1.1.3; geometry=1.1.2; canonical=1.1.2; contract=1.1.3; surfaces=285; generation_match=True
-rr_ultrafan_cti_fan_v1_1: PASS; runtime=1.1.3; geometry=1.1.2; canonical=1.1.2; contract=1.1.3; surfaces=114; generation_match=True
-public_rocket_turbopump_inducer_v1_1: PASS; runtime=1.1.3; geometry=1.1.2; canonical=1.1.2; contract=1.1.3; surfaces=24; generation_match=True
+backend  PID 31836  http://127.0.0.1:8061  /api/presets/impeller = HTTP 200
+frontend PID 30920  http://127.0.0.1:5199  / = HTTP 200
 ```
 
-No alias or new active preset ID was introduced.
+## Residual Risk
 
-## Backend Regression Matrix
-
-```powershell
-python -m pytest tests/test_impeller_v11_3_parameter_inspection_contract.py tests/test_impeller_v11_3_service_manifest.py -q
-```
-
-Result: `15 passed in 483.00s (0:08:02)`.
-
-```powershell
-python -m pytest tests/test_impeller_v11_2_canonical_parameterization.py tests/test_impeller_v11_2_preset_translation.py tests/test_impeller_v11_2_active_span_policy.py tests/test_impeller_v11_2_nurbs_loop_caps.py tests/test_impeller_v11_2_surface_graph_compatibility.py -q
-```
-
-Result: `24 passed in 244.39s (0:04:04)`.
-
-```powershell
-python -m pytest tests/test_impeller_v11_resources.py tests/test_impeller_v11_blade_to_blade_loop_domain.py tests/test_impeller_v11_loop_c2_continuity.py tests/test_impeller_v11_main_splitter_domain.py -q
-```
-
-Result: `37 passed in 11.67s`.
-
-```powershell
-python -m pytest tests/test_impeller_v11_six_face_surface_family.py tests/test_impeller_v11_root_attachment_surface.py tests/test_impeller_v11_tip_or_shroud_surface.py tests/test_impeller_v11_mesh_and_export_contract.py -q
-```
-
-Result after the helper-surface compatibility fix: `34 passed in 348.44s (0:05:48)`.
-
-```powershell
-python -m pytest tests/test_impeller_geometry_validation.py tests/test_impeller_bounded_brep_export.py -q
-```
-
-Result: `55 passed in 4.02s`.
-
-Required backend matrix total: `165 passed, 0 failed`.
-
-Additional API acceptance command:
-
-```powershell
-$env:PYTHONPATH='src'; python -m pytest tests/test_acceptance.py -q
-```
-
-Result: `38 passed in 431.78s (0:07:11)`.
-
-## Frontend Regression Suite
-
-```powershell
-Set-Location frontend
-npm.cmd test
-```
-
-Result:
-
-```text
-tests 176
-suites 17
-pass 176
-fail 0
-duration_ms 296.4956
-```
-
-## Acceptance Defects And Fixes
-
-1. The required health URL `/api/presets/impeller` returned 404 because only `/api/impeller-presets` existed. A red API test was added, and the existing handler now serves both routes.
-2. Narrow S-Q continuity labels occupied the same top lanes as parameter annotations. A red component test was added, metrics moved to a bounded lower rail, the focused frontend suite passed 9/9, and fresh PNGs were regenerated and inspected.
-3. The new generation hash made an established V1.1 helper-surface UV exemption fail. A red contract test was added; helper/reference UV sampling is now canonicalized out of the hash while manufactured geometry remains generation-sensitive.
-
-## Residual Limitations
-
-- The smoke covers the active open preset in headless Chromium at device pixel ratio 1; all five presets are covered by backend contract/service tests, not five separate browser screenshots.
-- S is normalized while Q is millimetric in the current generated loop payload. The approved equal-aspect S-Q fit therefore produces a slender loop for the open preset.
-- Review-grade sampled geometry, exact CAD sewing, solver-ready volume meshes, and manufacturing certification remain outside V1.1.3.
-
-## Final Review
-
-The `superpowers:requesting-code-review` gate was applied to the complete V1.1.3 range `53e03d2..89c3266`. This session exposed no reviewer-subagent API, and the installed Codex executable returned Windows `Access is denied`, so an independent reviewer could not be dispatched.
-
-A manual full-range review checked the Task 7 brief, changed-file scope, retired-file absence, renderer construction, read-only callback surface, generation mismatch handling, annotation levels, tests, screenshots, and both Task 7 commits. `git diff --check 53e03d2..89c3266` passed. No Critical or Important finding remained; no post-review code change was required.
+- The full 165-test backend matrix is historical relative to the hardening commits; the post-hardening combined command was interrupted and has no final result.
+- Browser smoke covers the active open preset in headless Chromium at device pixel ratio 1; backend contract tests provide broader preset coverage.
+- Review-grade sampled geometry, sewn production CAD, solver-ready volume meshes, and manufacturing certification remain outside V1.1.3.

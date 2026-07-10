@@ -298,6 +298,11 @@ docs/evidence/2026-07-10-impeller-v1-1-2-canonical-nurbs-parameterization-eviden
 - Replaces the text-only Parameter views presentation with read-only full-size 3D, Top, Meridional, and S-Q views plus a maximizable Quad overview.
 - Uses one shared WebGL renderer and generated scene for all geometric inspection viewports.
 - Adds generated-geometry selection, deterministic annotation levels, S-Q section-loop/control inspection, and explicit stale-generation rejection.
+- Hardens provenance across all visible/inspectable source evidence while retaining only explicit hidden reference-helper UV exemptions.
+- Resolves S-Q to physical millimetric display coordinates, with source coordinates and geometry-derived scale retained in the contract.
+- Adds authoritative stable control-point IDs, deep bidirectional contract validation, and relationship-aware blade/station/segment selection.
+- Adds default key annotations in 3D, Top, and Meridional views, including real support profile/control geometry when supplied.
+- Reports the exact badge `Resolved manifest | runtime 1.1.3 | geometry 1.1.2` and instruments actual renderer/context construction.
 - Keeps all five active V1.1 preset IDs and V1.1.2 geometry assertions unchanged.
 
 Evidence and design:
