@@ -401,3 +401,32 @@ def test_validator_binds_join_results_and_placement_feature_primitives():
         assert validate_parameter_inspection_contract(graph, malformed) == [
             {"reason": "parameter_inspection_contract_unsupported"}
         ]
+
+
+def test_validator_rejects_cross_profile_provenance_and_degree_value_mutations():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    mutations = [
+        ("hub.profile.control.0.r", lambda parameter: parameter["selection_scope"].update(source_profile_id="tip_or_shroud_profile")),
+        ("hub.profile.degree", lambda parameter: parameter.update(resolved_value=parameter["resolved_value"] + 1)),
+    ]
+
+    for parameter_id, mutate in mutations:
+        malformed = deepcopy(contract)
+        mutate(next(item for item in malformed["parameters"] if item["parameter_id"] == parameter_id))
+        assert validate_parameter_inspection_contract(graph, malformed) == [
+            {"reason": "parameter_inspection_contract_unsupported"}
+        ]
+
+
+def test_validator_rejects_cross_blade_attachment_surface_provenance():
+    graph = graph_for("radial_closed_reference_v1_1")
+    contract = graph["parameter_inspection"]
+    parameter = next(item for item in contract["parameters"] if ":attachment:shroud:width" in item["parameter_id"])
+    malformed = deepcopy(contract)
+    target = next(item for item in malformed["parameters"] if item["parameter_id"] == parameter["parameter_id"])
+    target["selection_scope"]["source_attachment_surface_id"] = "blade_1_closed_shroud_attachment_surface"
+
+    assert validate_parameter_inspection_contract(graph, malformed) == [
+        {"reason": "parameter_inspection_contract_unsupported"}
+    ]

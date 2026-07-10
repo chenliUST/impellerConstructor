@@ -557,7 +557,7 @@ def _engineering_parameters_match_source_geometry(
             parameter, scope, support_profiles
         ):
             return False
-        if ":pose.station." in parameter_id and not _station_parameter_matches_source(
+        if (":pose.station." in parameter_id or parameter_id.endswith(":pose")) and not _station_parameter_matches_source(
             parameter, scope, surface_graph
         ):
             return False
@@ -573,7 +573,13 @@ def _engineering_parameters_match_source_geometry(
             parameter, scope, surfaces
         ):
             return False
-        if parameter_id in {"blade.main.count", "blade.angular_pitch", "blade.splitter.phase"} and not _placement_parameter_matches_source(
+        if parameter_id in {
+            "blade.main.count",
+            "blade.angular_pitch",
+            "blade.splitter.phase",
+            "blade.main_blade_count",
+            "blade.angular_pitch_deg",
+        } and not _placement_parameter_matches_source(
             parameter, surface_graph
         ):
             return False
@@ -655,15 +661,21 @@ def _section_control_matches_source(
 def _profile_control_matches_source(
     parameter: Mapping[str, Any], scope: Mapping[str, Any], support_profiles: Mapping[str, Any]
 ) -> bool:
-    profile = support_profiles.get(scope.get("source_profile_id"))
+    profile_id = scope.get("source_profile_id")
+    if profile_id != scope.get("support_profile_id"):
+        return False
+    profile = support_profiles.get(profile_id)
     index = scope.get("source_profile_control_index")
     if not isinstance(index, int) or profile is None or index < 0 or index >= len(profile.get("control_points", [])):
         return False
     coordinates = profile["control_points"][index]
     axis_index = 0 if parameter["parameter_id"].endswith(".r") else 1
     feature = parameter["feature_geometry"]
+    prefix = "hub.profile" if profile_id == "hub_profile" else "tip_or_shroud.profile"
     return (
-        len(feature) == 1
+        parameter["group_id"] == ("hub" if profile_id == "hub_profile" else "tip_or_shroud")
+        and parameter["parameter_id"] == f"{prefix}.control.{index}.{'r' if axis_index == 0 else 'z'}"
+        and len(feature) == 1
         and feature[0].get("kind") == "control_point"
         and feature[0].get("coordinates") == coordinates
         and parameter["dimension_definition"] == _coordinate_dimension(coordinates, axis_index, "mm")
@@ -674,14 +686,24 @@ def _profile_control_matches_source(
 def _profile_curve_matches_source(
     parameter: Mapping[str, Any], scope: Mapping[str, Any], support_profiles: Mapping[str, Any]
 ) -> bool:
-    profile = support_profiles.get(scope.get("source_profile_id"))
+    profile_id = scope.get("source_profile_id")
+    if profile_id != scope.get("support_profile_id"):
+        return False
+    profile = support_profiles.get(profile_id)
     features = parameter["feature_geometry"]
+    prefix = "hub.profile" if profile_id == "hub_profile" else "tip_or_shroud.profile"
+    is_degree = parameter["parameter_id"] == f"{prefix}.degree"
+    is_legacy_curve = parameter["parameter_id"] == f"{profile_id}.curve"
     return (
         profile is not None
+        and (is_degree or is_legacy_curve)
+        and parameter["group_id"] == ("hub" if profile_id == "hub_profile" else "tip_or_shroud")
         and len(features) == 1
         and features[0].get("kind") == "nurbs_curve"
+        and features[0].get("id") == f"{parameter['parameter_id']}:curve"
         and features[0].get("degree") == profile.get("degree")
         and features[0].get("control_points") == profile.get("control_points")
+        and parameter["resolved_value"] == (profile.get("degree") if is_degree else profile.get("control_points"))
     )
 
 
@@ -766,6 +788,28 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
     main_directions = _graph_blade_anchor_directions(surface_graph, "main")
     splitter_directions = _graph_blade_anchor_directions(surface_graph, "splitter")
     parameter_id = parameter["parameter_id"]
+    if parameter_id == "blade.main_blade_count":
+        feature = parameter["feature_geometry"]
+        return (
+            parameter["resolved_value"] == main_count
+            and parameter["selection_scope"].get("source_geometry_kind") == "blade_population"
+            and len(feature) == 1
+            and feature[0].get("kind") == "reference_axis"
+            and feature[0].get("origin") == [0.0, 0.0, 0.0]
+            and feature[0].get("direction") == [0.0, 0.0, 1.0]
+        )
+    if parameter_id == "blade.angular_pitch_deg":
+        expected = _angle_degrees(main_directions[0], main_directions[1]) if len(main_directions) >= 2 else None
+        feature = parameter["feature_geometry"]
+        return (
+            expected is not None
+            and math.isclose(float(parameter["resolved_value"]), expected, rel_tol=0.0, abs_tol=1.0e-9)
+            and parameter["selection_scope"].get("source_geometry_kind") == "blade_placement"
+            and len(feature) == 1
+            and feature[0].get("kind") == "reference_axis"
+            and feature[0].get("origin") == [0.0, 0.0, 0.0]
+            and feature[0].get("direction") == [0.0, 0.0, 1.0]
+        )
     if parameter_id == "blade.main.count":
         feature = parameter["feature_geometry"]
         return (
@@ -876,6 +920,20 @@ def _attachment_parameter_matches_source(
     parameter: Mapping[str, Any], scope: Mapping[str, Any], surfaces: Mapping[str, Mapping[str, Any]]
 ) -> bool:
     surface = surfaces.get(scope.get("source_attachment_surface_id"))
+    blade_id = scope.get("blade_instance_id")
+    measurement = scope.get("source_attachment_measurement")
+    if not isinstance(blade_id, str) or not isinstance(measurement, str) or surface is None:
+        return False
+    attachment = "root" if measurement.startswith("root_") else "shroud"
+    expected_surface_id = (
+        f"{blade_id}_root_attachment_surface"
+        if attachment == "root"
+        else f"{blade_id}_closed_shroud_attachment_surface"
+    )
+    if surface.get("id") != expected_surface_id or parameter["parameter_id"] != (
+        f"blade:{blade_id}:attachment:{attachment}:{measurement.split('_', 1)[1]}"
+    ):
+        return False
     points = _attachment_measurement_points(surface, scope.get("source_attachment_measurement")) if surface else None
     features = [feature.get("coordinates") for feature in parameter["feature_geometry"] if feature.get("kind") == "point"]
     return (
@@ -1059,7 +1117,7 @@ def _engineering_parameter_records(
                     }
                 ],
                 dimension_definition=None,
-                selection_scope={},
+                selection_scope={"source_geometry_kind": "blade_population" if dimension_id == "main_blade_count" else "blade_placement"},
                 order=len(parameters),
             )
         )
@@ -1517,7 +1575,12 @@ def _append_attachment_parameters(
             continue
         station_id = station_ids[0]
         loop_id = span_stations[station_id]["section_loop_id"]
-        scope = {"blade_instance_id": blade_id, "span_station_id": station_id, "section_loop_id": loop_id}
+        scope = {
+            "blade_instance_id": blade_id,
+            "span_station_id": station_id,
+            "section_loop_id": loop_id,
+            "source_station_index": span_stations[station_id]["source_loop_index"],
+        }
         blade_index = blade["blade_index"]
         root_surface = next(
             (
