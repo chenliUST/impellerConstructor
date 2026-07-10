@@ -68,7 +68,8 @@ def validate_parameter_inspection_contract(
     if graph_surface_ids != referenced_surface_ids:
         failures.append({"reason": "parameter_inspection_surface_reference_missing"})
 
-    if not _surface_relationships_are_valid(blade_instances, surface_references):
+    graph_surfaces_by_id = {surface["id"]: surface for surface in graph_surfaces}
+    if not _surface_relationships_are_valid(blade_instances, surface_references, graph_surfaces_by_id):
         failures.append({"reason": "parameter_inspection_surface_reference_missing"})
     if not _station_relationships_are_valid(blade_instances, span_stations, section_loops):
         failures.append({"reason": "parameter_inspection_station_reference_missing"})
@@ -99,13 +100,13 @@ def parameter_inspection_generation_id(surface_graph: Mapping[str, Any]) -> str:
     surfaces = basis.get("surfaces")
     if isinstance(surfaces, list):
         for surface in surfaces:
-            if isinstance(surface, dict) and _is_explicit_hidden_reference_surface(surface):
+            if isinstance(surface, dict) and not _surface_is_inspectable(surface):
                 surface["uv_grid"] = []
     encoded = json.dumps(basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:24]
 
 
-def _is_explicit_hidden_reference_surface(surface: Mapping[str, Any]) -> bool:
+def _surface_is_inspectable(surface: Mapping[str, Any]) -> bool:
     surface_flags = surface.get("surface_flags")
     display = surface.get("display")
     reference_only = (
@@ -114,7 +115,7 @@ def _is_explicit_hidden_reference_surface(surface: Mapping[str, Any]) -> bool:
         isinstance(display, Mapping) and display.get("reference_only") is True
     )
     explicitly_hidden = isinstance(display, Mapping) and display.get("visible_by_default") is False
-    return reference_only and explicitly_hidden
+    return not (reference_only and explicitly_hidden)
 
 
 def build_parameter_inspection_contract(surface_graph: Mapping[str, Any]) -> dict[str, Any]:
@@ -129,6 +130,7 @@ def build_parameter_inspection_contract(surface_graph: Mapping[str, Any]) -> dic
             "blade_index": surface.get("blade_index"),
             "face_family": surface.get("face_family"),
             "role": surface.get("role"),
+            "inspectable": _surface_is_inspectable(surface),
             "quality": copy.deepcopy(
                 surface.get("v1_1_root_quality")
                 or surface.get("v1_1_tip_quality")
@@ -276,6 +278,7 @@ def _string_id_list(value: Any) -> bool:
 def _surface_relationships_are_valid(
     blade_instances: Mapping[str, Any],
     surface_references: Mapping[str, Any],
+    graph_surfaces: Mapping[str, Mapping[str, Any]],
 ) -> bool:
     for blade_id, blade in blade_instances.items():
         surface_ids = blade.get("surface_ids")
@@ -288,7 +291,11 @@ def _surface_relationships_are_valid(
         ):
             return False
     for surface_id, reference in surface_references.items():
-        if not isinstance(reference.get("quality"), Mapping):
+        if (
+            not isinstance(reference.get("quality"), Mapping)
+            or not isinstance(reference.get("inspectable"), bool)
+            or reference["inspectable"] != _surface_is_inspectable(graph_surfaces[surface_id])
+        ):
             return False
         blade_id = reference.get("blade_instance_id")
         if blade_id is None:
@@ -363,7 +370,8 @@ def _loop_record_is_well_formed(
 ) -> bool:
     metric_scale = loop.get("streamwise_metric_scale_mm")
     if (
-        loop.get("source_coordinate_units") != {"s": "normalized", "q": "mm"}
+        not _nonempty_string(loop.get("span_station_id"))
+        or loop.get("source_coordinate_units") != {"s": "normalized", "q": "mm"}
         or loop.get("display_coordinate_units") != {"s": "mm", "q": "mm"}
         or not _finite_number(metric_scale)
         or float(metric_scale) <= 0

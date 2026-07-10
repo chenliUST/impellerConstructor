@@ -4,6 +4,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import {
   inspectionViewportRects,
+  inspectionRendererLifecycle,
   orthographicCameraFrame,
   projectionContextSignature,
   projectionFailureNotificationKey,
@@ -43,15 +44,13 @@ export function InspectionScene({
   const sizeRef = useRef({ width: 0, height: 0 });
   const resizeRef = useRef(null);
   const installedSceneRef = useRef(null);
-  const rendererConstructionCountRef = useRef(0);
-  const constructedContextSetRef = useRef(new Set());
   const layoutRef = useRef(layout);
   const onSelectSurfaceRef = useRef(onSelectSurface);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [surfaceCount, setSurfaceCount] = useState(0);
   const [projectionEpoch, setProjectionEpoch] = useState(0);
   const [projectionVersion, setProjectionVersion] = useState(0);
-  const [rendererStats, setRendererStats] = useState({ rendererCount: 0, contextCount: 0 });
+  const [rendererStats, setRendererStats] = useState(() => inspectionRendererLifecycle.snapshot());
 
   layoutRef.current = layout;
   onSelectSurfaceRef.current = onSelectSurface;
@@ -70,12 +69,8 @@ export function InspectionScene({
       meridional: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100000),
     };
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    rendererConstructionCountRef.current += 1;
-    constructedContextSetRef.current.add(renderer.getContext());
-    setRendererStats({
-      rendererCount: rendererConstructionCountRef.current,
-      contextCount: constructedContextSetRef.current.size,
-    });
+    const releaseRendererLifecycle = inspectionRendererLifecycle.register(renderer);
+    setRendererStats(inspectionRendererLifecycle.snapshot());
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor("#eef2f0");
@@ -272,6 +267,7 @@ export function InspectionScene({
       disposeObject(group);
       disposeObject(supportProfileGroup);
       renderer.dispose();
+      releaseRendererLifecycle();
       renderer.domElement.remove();
       groupRef.current = null;
       camerasRef.current = null;
@@ -384,8 +380,12 @@ export function InspectionScene({
       ref: containerRef,
       style: { position: "absolute", inset: 0, overflow: "hidden" },
       "data-testid": "inspection-webgl",
-      "data-renderer-count": String(rendererStats.rendererCount),
-      "data-context-count": String(rendererStats.contextCount),
+      "data-renderer-count": String(rendererStats.liveRendererCount),
+      "data-context-count": String(rendererStats.liveContextCount),
+      "data-renderer-created-count": String(rendererStats.createdRendererCount),
+      "data-renderer-live-count": String(rendererStats.liveRendererCount),
+      "data-context-created-count": String(rendererStats.createdContextCount),
+      "data-context-live-count": String(rendererStats.liveContextCount),
       "data-scene-surface-count": String(surfaceCount),
     }),
     projectionReady

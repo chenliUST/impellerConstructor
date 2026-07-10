@@ -136,10 +136,12 @@ describe("InspectionScene source contract", () => {
     assert.match(source, /renderer\.dispose\(\)/);
     assert.match(source, /renderer\.domElement\.remove\(\)/);
     assert.match(source, /"data-testid":\s*"inspection-webgl"/);
-    assert.match(source, /rendererConstructionCountRef\.current \+= 1/);
-    assert.match(source, /constructedContextSetRef\.current\.add\(renderer\.getContext\(\)\)/);
-    assert.match(source, /"data-renderer-count":\s*String\(rendererStats\.rendererCount\)/);
-    assert.match(source, /"data-context-count":\s*String\(rendererStats\.contextCount\)/);
+    assert.match(source, /inspectionRendererLifecycle\.register\(renderer\)/);
+    assert.match(source, /releaseRendererLifecycle\(\)/);
+    assert.match(source, /"data-renderer-created-count":/);
+    assert.match(source, /"data-renderer-live-count":/);
+    assert.match(source, /"data-context-created-count":/);
+    assert.match(source, /"data-context-live-count":/);
     assert.match(source, /"data-scene-surface-count":/);
   });
 });

@@ -59,6 +59,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
     [annotationLevel, model, selection],
   );
   const selectedLoop = sectionLoopForSelection(model, selection);
+  const navigationSelection = selection.bladeId ? selection : defaultInspectionSelection(model);
   const selectedSurfaceIds = useMemo(
     () => selectedSurfaceIdsForSelection(model, selection),
     [model, selection],
@@ -68,7 +69,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
   function handleSurfaceSelection(surfaceId) {
     setProjectionError(null);
     const reference = model.indices.surfaces[surfaceId];
-    if (reference) {
+    if (reference?.inspectable === true) {
       setSelection((current) => reduceInspectionSelection(model, current, { surfaceId }));
     }
   }
@@ -152,7 +153,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
           h(
             "select",
             {
-              value: selection.bladeId || "",
+              value: navigationSelection.bladeId || "",
               "data-testid": "inspection-blade-selector",
               onInput: (event) => handleBladeSelection(event.target.value),
             },
@@ -168,11 +169,11 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
           h(
             "select",
             {
-              value: selection.spanStationId || "",
+              value: navigationSelection.spanStationId || "",
               "data-testid": "inspection-station-selector",
               onInput: (event) => handleStationSelection(event.target.value),
             },
-            (model.indices.blades[selection.bladeId]?.span_station_ids || []).map((stationId) => {
+            (model.indices.blades[navigationSelection.bladeId]?.span_station_ids || []).map((stationId) => {
               const station = model.indices.stations[stationId];
               return h("option", { key: stationId, value: stationId }, stationLabel(station));
             }),
@@ -225,7 +226,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
             { className: "inspection-workspace-content inspection-workspace-full" },
             h(InspectionScene, {
               manifest,
-              surfaceGraph: model.surfaceGraph,
+              surfaceGraph: model.inspectionSurfaceGraph,
               layout: activeTab,
               selectedSurfaceIds,
               onSelectSurface: handleSurfaceSelection,
@@ -263,7 +264,7 @@ function renderQuadView({
       { className: "inspection-quad-scene" },
       h(InspectionScene, {
         manifest,
-        surfaceGraph: model.surfaceGraph,
+        surfaceGraph: model.inspectionSurfaceGraph,
         layout: quadLayout,
         selectedSurfaceIds,
         onSelectSurface,

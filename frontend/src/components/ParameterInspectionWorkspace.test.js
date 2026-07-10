@@ -43,6 +43,8 @@ describe("ParameterInspectionWorkspace source contract", () => {
     assert.match(source, /Resolved manifest \| runtime 1\.1\.3 \| geometry 1\.1\.2/);
     assert.match(source, /reduceInspectionSelection/);
     assert.match(source, /selectedSurfaceIdsForSelection/);
+    assert.match(source, /model\.inspectionSurfaceGraph/);
+    assert.match(source, /navigationSelection/);
   });
 
   test("clears projection errors before selection and tab changes without a passive clear race", () => {

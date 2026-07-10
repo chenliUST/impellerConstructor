@@ -75,24 +75,49 @@ function manifestFixture() {
         blade_instance_id: "blade_0",
         face_family: "blade_pressure",
         quality: {},
+        inspectable: true,
       },
       blade_0_suction_surface: {
         surface_id: "blade_0_suction_surface",
         blade_instance_id: "blade_0",
         face_family: "blade_suction",
         quality: {},
+        inspectable: true,
       },
       blade_1_pressure_surface: {
         surface_id: "blade_1_pressure_surface",
         blade_instance_id: "blade_1",
         face_family: "blade_pressure",
         quality: {},
+        inspectable: true,
       },
       blade_1_suction_surface: {
         surface_id: "blade_1_suction_surface",
         blade_instance_id: "blade_1",
         face_family: "blade_suction",
         quality: {},
+        inspectable: true,
+      },
+      hub_support_surface: {
+        surface_id: "hub_support_surface",
+        blade_instance_id: null,
+        face_family: "hub_support",
+        quality: {},
+        inspectable: true,
+      },
+      shroud_support_surface: {
+        surface_id: "shroud_support_surface",
+        blade_instance_id: null,
+        face_family: "shroud_support",
+        quality: {},
+        inspectable: true,
+      },
+      tip_reference_surface: {
+        surface_id: "tip_reference_surface",
+        blade_instance_id: null,
+        face_family: "reference_only",
+        quality: {},
+        inspectable: false,
       },
     },
     span_stations: {
@@ -134,6 +159,9 @@ function manifestFixture() {
           { id: "blade_0_suction_surface", uv_grid: [[[0, 0, 1], [1, 0, 1]], [[0, 1, 1], [1, 1, 1]]] },
           { id: "blade_1_pressure_surface", uv_grid: [[[0, 0, 2], [1, 0, 2]], [[0, 1, 2], [1, 1, 2]]] },
           { id: "blade_1_suction_surface", uv_grid: [[[0, 0, 3], [1, 0, 3]], [[0, 1, 3], [1, 1, 3]]] },
+          { id: "hub_support_surface", role: "hub_support", display: { visible_by_default: true }, uv_grid: [[[-2, -2, -1], [2, -2, -1]], [[-2, 2, -1], [2, 2, -1]]] },
+          { id: "shroud_support_surface", role: "shroud_support", display: { visible_by_default: true }, uv_grid: [[[-3, -3, 4], [3, -3, 4]], [[-3, 3, 4], [3, 3, 4]]] },
+          { id: "tip_reference_surface", role: "open_tip_reference", surface_flags: { reference_only: true }, display: { reference_only: true, visible_by_default: false }, uv_grid: [[[1000, 1000, 1000], [1001, 1000, 1000]], [[1000, 1001, 1000], [1001, 1001, 1000]]] },
         ],
       },
     },
@@ -281,6 +309,63 @@ describe("parameter inspection model", () => {
     });
   });
 
+  test("excludes hidden reference samples from scene input and annotations while retaining visible supports", () => {
+    const baseline = resolveParameterInspection(manifestFixture());
+    const mutatedManifest = manifestFixture();
+    mutatedManifest.geometry.surface_graph.surfaces.find(({ id }) => id === "tip_reference_surface").uv_grid = [
+      [[-1e9, -1e9, -1e9], [1e9, -1e9, -1e9]],
+      [[-1e9, 1e9, 1e9], [1e9, 1e9, 1e9]],
+    ];
+    const mutated = resolveParameterInspection(mutatedManifest);
+
+    assert.equal(baseline.status, "ready");
+    assert.equal(mutated.status, "ready");
+    assert.deepEqual(mutated.inspectionSurfaceGraph, baseline.inspectionSurfaceGraph);
+    assert.deepEqual(
+      baseline.inspectionSurfaceGraph.surfaces.map(({ id }) => id),
+      [
+        "blade_0_pressure_surface",
+        "blade_0_suction_surface",
+        "blade_1_pressure_surface",
+        "blade_1_suction_surface",
+        "hub_support_surface",
+        "shroud_support_surface",
+      ],
+    );
+    for (const viewId of ["3d", "top"]) {
+      const annotationIds = annotationsForView(baseline, viewId, "all", defaultInspectionSelection(baseline))
+        .map(({ id }) => id);
+      assert.ok(annotationIds.includes(`${viewId}:hub_support_surface`));
+      assert.ok(annotationIds.includes(`${viewId}:shroud_support_surface`));
+      assert.ok(!annotationIds.includes(`${viewId}:tip_reference_surface`));
+    }
+  });
+
+  test("selects unowned hub and shroud supports without stale blade dependencies and keeps an S-Q fallback", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const bladeSelection = reduceInspectionSelection(model, defaultInspectionSelection(model), {
+      sectionSegmentId: "blade_1:span_0:loop:pressure_side",
+    });
+
+    for (const [surfaceId, surfaceFamily] of [
+      ["hub_support_surface", "hub_support"],
+      ["shroud_support_surface", "shroud_support"],
+    ]) {
+      const supportSelection = reduceInspectionSelection(model, bladeSelection, { surfaceId });
+      assert.deepEqual(supportSelection, {
+        bladeId: null,
+        surfaceId,
+        surfaceFamily,
+        owner: null,
+        spanStationId: null,
+        sectionSegmentId: null,
+        controlPointId: null,
+      });
+      assert.deepEqual(selectedSurfaceIdsForSelection(model, supportSelection), [surfaceId]);
+      assert.equal(sectionLoopForSelection(model, supportSelection).section_loop_id, "blade_0:span_0:loop");
+    }
+  });
+
   test("switches stations through the owning blade and maps segments to face families", () => {
     const model = resolveParameterInspection(manifestFixture());
     const stationSelection = reduceInspectionSelection(model, defaultInspectionSelection(model), {
@@ -329,6 +414,9 @@ describe("parameter inspection model", () => {
     const invalidLoopReference = manifestFixture();
     invalidLoopReference.parameter_inspection.section_loops["blade_0:span_0:loop"].span_station_id = "blade_1:span_0";
     cases.push([invalidLoopReference, "parameter_inspection_station_reference_missing"]);
+    const malformedLoopStation = manifestFixture();
+    malformedLoopStation.parameter_inspection.section_loops["blade_0:span_0:loop"].span_station_id = [];
+    cases.push([malformedLoopStation, "parameter_inspection_contract_unsupported"]);
     const malformedControl = manifestFixture();
     malformedControl.parameter_inspection.section_loops["blade_0:span_0:loop"].segment_references.pressure_side.control_points[0] = null;
     cases.push([malformedControl, "parameter_inspection_contract_unsupported"]);

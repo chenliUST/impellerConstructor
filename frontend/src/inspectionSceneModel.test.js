@@ -15,6 +15,32 @@ const {
 } = inspectionSceneModel;
 
 describe("inspection scene model", () => {
+  test("renderer lifecycle registry reports cumulative and live renderer-context counts", () => {
+    const registry = inspectionSceneModel.createRendererLifecycleRegistry();
+    const releaseA = registry.register({ getContext: () => ({ id: "context-a" }) });
+    assert.deepEqual(registry.snapshot(), {
+      createdRendererCount: 1,
+      liveRendererCount: 1,
+      createdContextCount: 1,
+      liveContextCount: 1,
+    });
+    releaseA();
+    assert.equal(registry.snapshot().liveRendererCount, 0);
+    assert.equal(registry.snapshot().liveContextCount, 0);
+
+    const releaseB = registry.register({ getContext: () => ({ id: "context-b" }) });
+    assert.deepEqual(registry.snapshot(), {
+      createdRendererCount: 2,
+      liveRendererCount: 1,
+      createdContextCount: 2,
+      liveContextCount: 1,
+    });
+    releaseB();
+    releaseB();
+    assert.equal(registry.snapshot().liveRendererCount, 0);
+    assert.equal(registry.snapshot().liveContextCount, 0);
+  });
+
   test("quad reserves one pane for S-Q and three for shared-scene cameras", () => {
     const rects = inspectionViewportRects(1200, 800, "quad");
 

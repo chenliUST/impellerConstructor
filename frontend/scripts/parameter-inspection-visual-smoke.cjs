@@ -29,6 +29,21 @@ async function captureElement(page, locator, outputPath) {
   await page.screenshot({ path: outputPath, clip, animations: "disabled", timeout: 60000 });
 }
 
+async function rendererLifecycle(locator) {
+  const values = await Promise.all([
+    "data-renderer-created-count",
+    "data-renderer-live-count",
+    "data-context-created-count",
+    "data-context-live-count",
+  ].map((name) => locator.getAttribute(name)));
+  return {
+    createdRenderers: Number(values[0]),
+    liveRenderers: Number(values[1]),
+    createdContexts: Number(values[2]),
+    liveContexts: Number(values[3]),
+  };
+}
+
 async function main() {
   const outputDir = path.resolve("docs/evidence/assets/v1.1.3-parameter-inspection");
   fs.mkdirSync(outputDir, { recursive: true });
@@ -44,16 +59,19 @@ async function main() {
     await page.waitForFunction(() => {
       const element = document.querySelector('[data-testid="inspection-webgl"]');
       return Number(element?.getAttribute("data-scene-surface-count")) > 0
-        && Number(element?.getAttribute("data-renderer-count")) > 0
-        && Number(element?.getAttribute("data-context-count")) > 0;
+        && Number(element?.getAttribute("data-renderer-live-count")) > 0
+        && Number(element?.getAttribute("data-context-live-count")) > 0;
     }, { timeout: 300000 });
 
-    const rendererCount = await canvas.getAttribute("data-renderer-count");
-    const contextCount = await canvas.getAttribute("data-context-count");
+    const initialLifecycle = await rendererLifecycle(canvas);
     const surfaceCount = await canvas.getAttribute("data-scene-surface-count");
     const devicePixelRatio = await page.evaluate(() => window.devicePixelRatio);
-    assert.equal(rendererCount, "1");
-    assert.equal(contextCount, "1");
+    assert.deepEqual(initialLifecycle, {
+      createdRenderers: 1,
+      liveRenderers: 1,
+      createdContexts: 1,
+      liveContexts: 1,
+    });
     assert.ok(Number(surfaceCount) > 0);
 
     const workspace = page.locator('[data-testid="inspection-workspace"]');
@@ -85,6 +103,14 @@ async function main() {
 
     await page.locator('[data-testid="inspection-tab-quad"]').click();
     await page.locator('[data-testid="inspection-workspace"][data-active-tab="quad"]').waitFor();
+    await page.waitForFunction(() =>
+      Number(document.querySelector('[data-testid="inspection-webgl"]')?.getAttribute("data-renderer-created-count")) >= 2,
+    );
+    const quadLifecycle = await rendererLifecycle(canvas);
+    assert.equal(quadLifecycle.liveRenderers, 1);
+    assert.equal(quadLifecycle.liveContexts, 1);
+    assert.ok(quadLifecycle.createdRenderers > initialLifecycle.createdRenderers);
+    assert.ok(quadLifecycle.createdContexts > initialLifecycle.createdContexts);
     await captureElement(page, workspace, path.join(outputDir, "desktop-quad.png"));
     console.log("parameter inspection desktop Quad: PASS");
 
@@ -112,8 +138,16 @@ async function main() {
     assert.equal(await annotationSelector.inputValue(), "all");
     await captureElement(page, workspace, path.join(outputDir, "narrow-s-q.png"));
     console.log("parameter inspection narrow S-Q: PASS");
-    console.log(`inspection renderer count: ${rendererCount}`);
-    console.log(`inspection context count: ${contextCount}`);
+    await page.locator('[data-testid="inspection-tab-3d"]').click();
+    await page.locator('[data-testid="inspection-workspace"][data-active-tab="3d"]').waitFor();
+    await page.waitForFunction((previousCreated) =>
+      Number(document.querySelector('[data-testid="inspection-webgl"]')?.getAttribute("data-renderer-created-count")) > previousCreated,
+    quadLifecycle.createdRenderers);
+    const finalLifecycle = await rendererLifecycle(canvas);
+    assert.equal(finalLifecycle.liveRenderers, 1);
+    assert.equal(finalLifecycle.liveContexts, 1);
+    assert.ok(finalLifecycle.createdContexts > quadLifecycle.createdContexts);
+    console.log(`inspection renderer lifecycle: ${JSON.stringify(finalLifecycle)}`);
     console.log(`inspection scene surface count: ${surfaceCount}`);
     console.log(`browser device pixel ratio: ${devicePixelRatio}`);
     console.log(`inspection canvas non-background ratio: ${ratio.toFixed(4)}`);

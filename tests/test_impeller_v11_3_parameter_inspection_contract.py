@@ -81,6 +81,10 @@ def test_generation_id_ignores_reference_only_helper_sampling():
     helper["uv_grid"] = []
 
     assert parameter_inspection_generation_id(edited) == graph["generation_id"]
+    baseline_contract = build_parameter_inspection_contract(graph)
+    edited_contract = build_parameter_inspection_contract(edited)
+    assert baseline_contract["surface_references"]["tip_reference_surface"]["inspectable"] is False
+    assert edited_contract["surface_references"] == baseline_contract["surface_references"]
 
 
 def test_generation_id_hashes_visible_hub_and_shroud_sampling():
@@ -97,6 +101,7 @@ def test_generation_id_hashes_visible_hub_and_shroud_sampling():
         )
         surface["uv_grid"][0][0][0] += 0.125
 
+        assert graph["parameter_inspection"]["surface_references"][surface["id"]]["inspectable"] is True
         assert parameter_inspection_generation_id(edited) != graph["generation_id"], preset_id
 
 

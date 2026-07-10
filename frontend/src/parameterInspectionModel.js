@@ -44,6 +44,7 @@ export function resolveParameterInspection(manifest) {
     || !mappingRecordsValid(surfaces, "surface_id")
     || !mappingRecordsValid(stations, "span_station_id")
     || !mappingRecordsValid(loops, "section_loop_id")
+    || !Object.values(loops).every((loop) => nonemptyString(loop.span_station_id))
     || !profilesValid(profiles)
     || !dimensionsValid(dimensions)
     || !Array.isArray(surfaceGraph.surfaces)
@@ -79,6 +80,10 @@ export function resolveParameterInspection(manifest) {
     errorCode: null,
     contract,
     surfaceGraph,
+    inspectionSurfaceGraph: {
+      ...surfaceGraph,
+      surfaces: surfaceGraph.surfaces.filter((surface) => surfaces[surface.id]?.inspectable === true),
+    },
     indices: {
       blades,
       surfaces,
@@ -105,6 +110,18 @@ export function defaultInspectionSelection(model) {
 export function normalizeInspectionSelection(model, selection = {}) {
   if (model?.status !== "ready") {
     return { bladeId: null, surfaceId: null, spanStationId: null, sectionSegmentId: null, controlPointId: null };
+  }
+  const selectedSurface = model.indices.surfaces[selection.surfaceId];
+  if (selectedSurface?.inspectable === true && selectedSurface.blade_instance_id == null) {
+    return {
+      bladeId: null,
+      surfaceId: selectedSurface.surface_id,
+      surfaceFamily: selectedSurface.face_family || selectedSurface.role || null,
+      owner: null,
+      spanStationId: null,
+      sectionSegmentId: null,
+      controlPointId: null,
+    };
   }
   const fallback = defaultInspectionSelection(model);
   const bladeId = model.indices.blades[selection.bladeId] ? selection.bladeId : fallback.bladeId;
@@ -152,18 +169,30 @@ export function reduceInspectionSelection(model, selection, patch = {}) {
   }
   if (Object.hasOwn(patch, "surfaceId")) {
     const surface = model.indices?.surfaces?.[patch.surfaceId];
-    if (surface) {
-      const blade = model.indices.blades[surface.blade_instance_id];
-      const sameBlade = next.bladeId === surface.blade_instance_id;
-      next = {
-        bladeId: surface.blade_instance_id,
-        surfaceId: patch.surfaceId,
-        spanStationId: sameBlade && blade.span_station_ids.includes(next.spanStationId)
-          ? next.spanStationId
-          : blade.span_station_ids[0] || null,
-        sectionSegmentId: null,
-        controlPointId: null,
-      };
+    if (surface?.inspectable === true) {
+      if (surface.blade_instance_id == null) {
+        next = {
+          bladeId: null,
+          surfaceId: patch.surfaceId,
+          surfaceFamily: surface.face_family || surface.role || null,
+          owner: null,
+          spanStationId: null,
+          sectionSegmentId: null,
+          controlPointId: null,
+        };
+      } else {
+        const blade = model.indices.blades[surface.blade_instance_id];
+        const sameBlade = next.bladeId === surface.blade_instance_id;
+        next = {
+          bladeId: surface.blade_instance_id,
+          surfaceId: patch.surfaceId,
+          spanStationId: sameBlade && blade.span_station_ids.includes(next.spanStationId)
+            ? next.spanStationId
+            : blade.span_station_ids[0] || null,
+          sectionSegmentId: null,
+          controlPointId: null,
+        };
+      }
     } else if (patch.surfaceId == null) {
       next.surfaceId = null;
     }
@@ -206,7 +235,9 @@ export function selectedSurfaceIdsForSelection(model, selection) {
 }
 
 export function sectionLoopForSelection(model, selection) {
-  const station = model.indices?.stations?.[selection.spanStationId];
+  const fallbackStationId = defaultInspectionSelection(model).spanStationId;
+  const station = model.indices?.stations?.[selection.spanStationId]
+    || model.indices?.stations?.[fallbackStationId];
   return station ? model.indices.loops?.[station.section_loop_id] || null : null;
 }
 
@@ -264,7 +295,7 @@ function annotationsForViewId(model, viewId, selection) {
 }
 
 function surfaceAnnotations(model, viewId) {
-  return Object.values(model.indices.surfaces).map((surface) =>
+  return Object.values(model.indices.surfaces).filter((surface) => surface.inspectable).map((surface) =>
     annotation({
       id: `${viewId}:${surface.surface_id}`,
       level: "all",
@@ -484,7 +515,7 @@ function surfaceRelationshipsValid(blades, surfaces) {
     }
   }
   return Object.entries(surfaces).every(([surfaceId, surface]) => {
-    if (!isRecord(surface.quality)) {
+    if (!isRecord(surface.quality) || typeof surface.inspectable !== "boolean") {
       return false;
     }
     const bladeId = surface.blade_instance_id;

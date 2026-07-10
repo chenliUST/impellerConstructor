@@ -1,6 +1,42 @@
 const GEOMETRIC_VIEW_IDS = new Set(["3d", "meridional", "top"]);
 const LOOP_SEGMENT_IDS = ["pressure_side", "suction_side", "leading_edge", "trailing_edge"];
 
+export function createRendererLifecycleRegistry() {
+  const counts = {
+    createdRendererCount: 0,
+    liveRendererCount: 0,
+    createdContextCount: 0,
+    liveContextCount: 0,
+  };
+  return {
+    register(renderer) {
+      const context = renderer?.getContext?.() || null;
+      counts.createdRendererCount += 1;
+      counts.liveRendererCount += 1;
+      if (context) {
+        counts.createdContextCount += 1;
+        counts.liveContextCount += 1;
+      }
+      let released = false;
+      return () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        counts.liveRendererCount -= 1;
+        if (context) {
+          counts.liveContextCount -= 1;
+        }
+      };
+    },
+    snapshot() {
+      return { ...counts };
+    },
+  };
+}
+
+export const inspectionRendererLifecycle = createRendererLifecycleRegistry();
+
 export function inspectionViewportRects(width, height, layout) {
   const viewportWidth = finiteDimension(width);
   const viewportHeight = finiteDimension(height);
