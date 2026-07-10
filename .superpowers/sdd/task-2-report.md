@@ -309,3 +309,40 @@ The user interrupted the task before this command returned a final result. No re
 ### Concerns
 
 The completed focused suite takes approximately 14 minutes in this environment. The post-review exact suite is incomplete, so it has no pass/fail result for the final review-fix commit.
+
+---
+
+## Review Fix: Generated Graph Binding
+
+Implementation commit: `2e1d6c1 fix: bind inspection evidence to generated graph`.
+
+- Loop-derived section controls, pose frames, thickness, and sagittae now resolve from `surface_graph["blade_to_blade_loop_family"]`, never mutable inspection contract loops.
+- Placement records validate against generated blade population and generated root-attachment directions; their source scopes are explicit.
+- Shroud thickness now carries the generated inner/outer shroud surface IDs and validates against those surfaces.
+- Sagitta validation now verifies the displayed polyline as well as the measured points and value.
+
+### RED Evidence
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -k "mutable_contract_loops or placement_shroud_and_sagitta" -q
+```
+
+Result before the graph-backed implementation: `1 failed, 1 passed in 15.69s`; placement, shroud, and sagitta records were not source-bound.
+
+### GREEN Evidence
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -k "mutable_contract_loops or placement_shroud_and_sagitta" -q
+```
+
+Result: `2 passed, 12 deselected in 19.76s`.
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -q
+```
+
+Result: `14 passed in 199.31s (0:03:19)`.
+
+### Suite Status
+
+Per instruction, the 15-minute three-file suite was not started in this review wave. The engineering inspection file is the completed final verification.
