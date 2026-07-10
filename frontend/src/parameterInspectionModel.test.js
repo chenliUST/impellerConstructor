@@ -60,12 +60,12 @@ function manifestFixture() {
     blade_instances: {
       blade_0: {
         blade_instance_id: "blade_0",
-        surface_ids: ["blade_0_pressure_surface", "blade_0_suction_surface"],
+        surface_ids: ["blade_0_pressure_surface", "blade_0_suction_surface", "blade_0_root_surface", "blade_0_tip_surface"],
         span_station_ids: ["blade_0:span_0"],
       },
       blade_1: {
         blade_instance_id: "blade_1",
-        surface_ids: ["blade_1_pressure_surface", "blade_1_suction_surface"],
+        surface_ids: ["blade_1_pressure_surface", "blade_1_suction_surface", "blade_1_root_surface", "blade_1_tip_surface"],
         span_station_ids: ["blade_1:span_0"],
       },
     },
@@ -84,6 +84,20 @@ function manifestFixture() {
         quality: {},
         inspectable: true,
       },
+      blade_0_root_surface: {
+        surface_id: "blade_0_root_surface",
+        blade_instance_id: "blade_0",
+        face_family: "blade_root",
+        quality: {},
+        inspectable: true,
+      },
+      blade_0_tip_surface: {
+        surface_id: "blade_0_tip_surface",
+        blade_instance_id: "blade_0",
+        face_family: "blade_tip",
+        quality: {},
+        inspectable: true,
+      },
       blade_1_pressure_surface: {
         surface_id: "blade_1_pressure_surface",
         blade_instance_id: "blade_1",
@@ -95,6 +109,20 @@ function manifestFixture() {
         surface_id: "blade_1_suction_surface",
         blade_instance_id: "blade_1",
         face_family: "blade_suction",
+        quality: {},
+        inspectable: true,
+      },
+      blade_1_root_surface: {
+        surface_id: "blade_1_root_surface",
+        blade_instance_id: "blade_1",
+        face_family: "blade_root",
+        quality: {},
+        inspectable: true,
+      },
+      blade_1_tip_surface: {
+        surface_id: "blade_1_tip_surface",
+        blade_instance_id: "blade_1",
+        face_family: "blade_tip",
         quality: {},
         inspectable: true,
       },
@@ -134,6 +162,11 @@ function manifestFixture() {
         coordinate_system: "rz_meridional_mm",
         control_points: [[150, 400], [330, 50], [580, 0]],
       },
+      tip_or_shroud_profile: {
+        id: "tip_or_shroud_profile",
+        coordinate_system: "rz_meridional_mm",
+        control_points: [[230, 401], [400, 90], [581, 30]],
+      },
     },
     resolved_dimensions: {
       thickness_min_mm: { requested_value: 6.8, resolved_value: 6.8, unit: "mm", requested_unit: "mm" },
@@ -141,6 +174,9 @@ function manifestFixture() {
       main_blade_count: { requested_value: 1, resolved_value: 1, unit: "count", requested_unit: "count" },
       splitter_blade_count: { requested_value: 1, resolved_value: 1, unit: "count", requested_unit: "count" },
       splitter_passage_fraction: { requested_value: 0.5, resolved_value: 0.5, unit: "pitch fraction", requested_unit: "pitch fraction" },
+      angular_pitch_deg: { requested_value: 180, resolved_value: 180, unit: "deg", requested_unit: "deg" },
+      root_offset_mm: { requested_value: 0.875, resolved_value: 14, unit: "mm", requested_unit: "thickness ratio" },
+      tip_offset_mm: { requested_value: 0, resolved_value: 0, unit: "mm", requested_unit: "mm" },
     },
     continuity_measurements: {
       "blade_0:span_0:loop": { pressure_to_leading: { status: "PASS" } },
@@ -157,8 +193,12 @@ function manifestFixture() {
         surfaces: [
           { id: "blade_0_pressure_surface", uv_grid: [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]] },
           { id: "blade_0_suction_surface", uv_grid: [[[0, 0, 1], [1, 0, 1]], [[0, 1, 1], [1, 1, 1]]] },
+          { id: "blade_0_root_surface", uv_grid: [[[0, 0, -1], [1, 0, -1]], [[0, 1, -1], [1, 1, -1]]] },
+          { id: "blade_0_tip_surface", uv_grid: [[[0, 0, 1.5], [1, 0, 1.5]], [[0, 1, 1.5], [1, 1, 1.5]]] },
           { id: "blade_1_pressure_surface", uv_grid: [[[0, 0, 2], [1, 0, 2]], [[0, 1, 2], [1, 1, 2]]] },
           { id: "blade_1_suction_surface", uv_grid: [[[0, 0, 3], [1, 0, 3]], [[0, 1, 3], [1, 1, 3]]] },
+          { id: "blade_1_root_surface", uv_grid: [[[0, 0, 1], [1, 0, 1]], [[0, 1, 1], [1, 1, 1]]] },
+          { id: "blade_1_tip_surface", uv_grid: [[[0, 0, 3.5], [1, 0, 3.5]], [[0, 1, 3.5], [1, 1, 3.5]]] },
           { id: "hub_support_surface", role: "hub_support", display: { visible_by_default: true }, uv_grid: [[[-2, -2, -1], [2, -2, -1]], [[-2, 2, -1], [2, 2, -1]]] },
           { id: "shroud_support_surface", role: "shroud_support", display: { visible_by_default: true }, uv_grid: [[[-3, -3, 4], [3, -3, 4]], [[-3, 3, 4], [3, 3, 4]]] },
           { id: "tip_reference_surface", role: "open_tip_reference", surface_flags: { reference_only: true }, display: { reference_only: true, visible_by_default: false }, uv_grid: [[[1000, 1000, 1000], [1001, 1000, 1000]], [[1000, 1001, 1000], [1001, 1001, 1000]]] },
@@ -272,7 +312,7 @@ describe("parameter inspection model", () => {
       annotationsForView(model, "3d", "selected", selection)
         .filter((annotation) => annotation.level === "all")
         .map((annotation) => annotation.id),
-      ["3d:blade_0_pressure_surface", "3d:blade_0_suction_surface"],
+      model.indices.blades.blade_0.surface_ids.map((surfaceId) => `3d:${surfaceId}`),
     );
   });
 
@@ -286,7 +326,7 @@ describe("parameter inspection model", () => {
         annotationsForView(model, viewId, "selected", selection)
           .filter((annotation) => annotation.anchor.kind === "surface")
           .map((annotation) => annotation.id),
-        [`${viewId}:blade_0_pressure_surface`, `${viewId}:blade_0_suction_surface`],
+        model.indices.blades.blade_0.surface_ids.map((surfaceId) => `${viewId}:${surfaceId}`),
       );
     }
     assert.ok(annotationsForView(model, "3d", "selected", selection).some((annotation) => annotation.anchor.kind === "span_station"));
@@ -326,8 +366,12 @@ describe("parameter inspection model", () => {
       [
         "blade_0_pressure_surface",
         "blade_0_suction_surface",
+        "blade_0_root_surface",
+        "blade_0_tip_surface",
         "blade_1_pressure_surface",
         "blade_1_suction_surface",
+        "blade_1_root_surface",
+        "blade_1_tip_surface",
         "hub_support_surface",
         "shroud_support_surface",
       ],
@@ -381,7 +425,7 @@ describe("parameter inspection model", () => {
     assert.deepEqual(selectedSurfaceIdsForSelection(model, segmentSelection), ["blade_1_pressure_surface"]);
     assert.deepEqual(
       selectedSurfaceIdsForSelection(model, reduceInspectionSelection(model, segmentSelection, { bladeId: "blade_0" })),
-      ["blade_0_pressure_surface", "blade_0_suction_surface"],
+      model.indices.blades.blade_0.surface_ids,
     );
   });
 
@@ -447,6 +491,44 @@ describe("parameter inspection model", () => {
     }
     assert.match(annotationsForView(model, "top", "key", selection).map(({ label }) => label).join(" "), /Blade Count/);
     assert.match(annotationsForView(model, "meridional", "key", selection).map(({ label }) => label).join(" "), /Hub Profile/);
+  });
+
+  test("maps parameter rows to their generated inspectable surfaces", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const selection = defaultInspectionSelection(model);
+    const byId = (viewId, level = "key") => Object.fromEntries(
+      annotationsForView(model, viewId, level, selection).map((item) => [item.id, item]),
+    );
+
+    const view3d = byId("3d");
+    assert.deepEqual(view3d["3d:thickness_max_mm"].targetSurfaceIds, model.indices.blades.blade_0.surface_ids);
+
+    const top = byId("top");
+    assert.deepEqual(top["top:main_blade_count"].targetSurfaceIds, [
+      ...model.indices.blades.blade_0.surface_ids,
+      ...model.indices.blades.blade_1.surface_ids,
+    ]);
+    assert.deepEqual(top["top:angular_pitch_deg"].targetSurfaceIds, [
+      ...model.indices.blades.blade_0.surface_ids,
+      ...model.indices.blades.blade_1.surface_ids,
+    ]);
+
+    const meridional = byId("meridional");
+    assert.deepEqual(meridional["meridional:root_offset_mm"].targetSurfaceIds, ["blade_0_root_surface"]);
+    assert.deepEqual(meridional["meridional:tip_offset_mm"].targetSurfaceIds, ["blade_0_tip_surface"]);
+    assert.deepEqual(meridional["meridional:hub_profile"].targetSurfaceIds, ["hub_support_surface"]);
+    assert.deepEqual(meridional["meridional:tip_or_shroud_profile"].targetSurfaceIds, ["shroud_support_surface"]);
+
+    const section = byId("s_q", "all");
+    assert.deepEqual(
+      section["s_q:blade_0:span_0:loop:pressure_side"].targetSurfaceIds,
+      ["blade_0_pressure_surface"],
+    );
+    assert.ok(
+      Object.values({ ...view3d, ...top, ...meridional, ...section })
+        .flatMap((item) => item.targetSurfaceIds)
+        .every((surfaceId) => model.indices.surfaces[surfaceId]?.inspectable === true),
+    );
   });
 
   test("active display names identify v1.1.3 while backend preset ids remain stable", () => {

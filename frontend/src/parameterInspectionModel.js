@@ -263,7 +263,7 @@ function annotationsForViewId(model, viewId, selection) {
   switch (viewId) {
     case "3d":
       return [
-        ...dimensionAnnotations(model, "3d", ["thickness_min_mm", "thickness_max_mm"]),
+        ...dimensionAnnotations(model, "3d", ["thickness_min_mm", "thickness_max_mm"], selection),
         ...stationAnnotations(model, "3d"),
         ...surfaceAnnotations(model, "3d"),
       ];
@@ -276,13 +276,13 @@ function annotationsForViewId(model, viewId, selection) {
           "angular_pitch_deg",
           "pose_theta_min_deg",
           "pose_theta_max_deg",
-        ]),
+        ], selection),
         ...surfaceAnnotations(model, "top"),
       ];
     case "meridional":
       return [
         ...profileAnnotations(model),
-        ...dimensionAnnotations(model, "meridional", ["root_offset_mm", "tip_offset_mm"]),
+        ...dimensionAnnotations(model, "meridional", ["root_offset_mm", "tip_offset_mm"], selection),
         ...stationAnnotations(model, "meridional"),
       ];
     case "s_q":
@@ -304,6 +304,7 @@ function surfaceAnnotations(model, viewId) {
       resolvedValue: surface.surface_id,
       anchor: { kind: "surface", surfaceId: surface.surface_id },
       selection: { bladeId: surface.blade_instance_id, surfaceId: surface.surface_id },
+      targetSurfaceIds: [surface.surface_id],
     }),
   );
 }
@@ -318,11 +319,12 @@ function stationAnnotations(model, viewId = "meridional") {
       resolvedValue: station.h,
       anchor: { kind: "span_station", spanStationId: station.span_station_id },
       selection: { spanStationId: station.span_station_id },
+      targetSurfaceIds: bladeSurfaceIds(model, station.blade_instance_id),
     }),
   );
 }
 
-function dimensionAnnotations(model, viewId, dimensionIds) {
+function dimensionAnnotations(model, viewId, dimensionIds, selection) {
   return dimensionIds.flatMap((dimensionId) => {
     const dimension = model.contract.resolved_dimensions[dimensionId];
     if (!dimension) {
@@ -337,6 +339,7 @@ function dimensionAnnotations(model, viewId, dimensionIds) {
       unit: dimension.unit,
       requestedUnit: dimension.requested_unit,
       anchor: { kind: "viewport_corner", corner: "top_right" },
+      targetSurfaceIds: dimensionTargetSurfaceIds(model, dimensionId, selection),
     })];
   });
 }
@@ -352,6 +355,7 @@ function profileAnnotations(model) {
       resolvedValue: profile.control_points.length,
       unit: "controls",
       anchor: { kind: "profile_rz", point },
+      targetSurfaceIds: profileTargetSurfaceIds(model, profile.id),
     });
   });
 }
@@ -370,6 +374,10 @@ function sectionAnnotations(model, selection) {
       unit: dimension.unit,
       requestedUnit: dimension.requested_unit,
       anchor: { kind: "section_loop", sectionLoopId: loop?.section_loop_id || null },
+      targetSurfaceIds: bladeSurfaceIds(
+        model,
+        model.indices.stations[loop?.span_station_id]?.blade_instance_id || selection.bladeId,
+      ),
     }));
   if (!loop) {
     return dimensions;
@@ -385,6 +393,11 @@ function sectionAnnotations(model, selection) {
       resolvedValue: segment.control_points_s_q,
       anchor: { kind: "section_segment", sectionLoopId: loop.section_loop_id, sectionSegmentId },
       selection: { spanStationId: loop.span_station_id, sectionSegmentId },
+      targetSurfaceIds: [surfaceForSegment(
+        model,
+        model.indices.stations[loop.span_station_id]?.blade_instance_id,
+        segmentId,
+      )?.surface_id].filter(Boolean),
     });
   });
   return [...dimensions, ...segments];
@@ -409,7 +422,7 @@ function joinAnnotations(model, selection) {
   );
 }
 
-function annotation({ id, level, label, requestedValue, resolvedValue, unit = "", requestedUnit = unit, anchor, selection = null, metrics = null }) {
+function annotation({ id, level, label, requestedValue, resolvedValue, unit = "", requestedUnit = unit, anchor, selection = null, metrics = null, targetSurfaceIds = [] }) {
   return {
     id,
     level,
@@ -422,7 +435,45 @@ function annotation({ id, level, label, requestedValue, resolvedValue, unit = ""
     anchor,
     selection,
     metrics,
+    targetSurfaceIds: [...new Set(targetSurfaceIds)],
   };
+}
+
+function bladeSurfaceIds(model, bladeId, faceFamilies = null) {
+  return (model.indices.blades[bladeId]?.surface_ids || []).filter((surfaceId) => {
+    const surface = model.indices.surfaces[surfaceId];
+    return surface?.inspectable === true && (!faceFamilies || faceFamilies.includes(surface.face_family));
+  });
+}
+
+function allBladeSurfaceIds(model) {
+  return Object.values(model.indices.blades).flatMap((blade) => bladeSurfaceIds(model, blade.blade_instance_id));
+}
+
+function dimensionTargetSurfaceIds(model, dimensionId, selection) {
+  if (["main_blade_count", "splitter_blade_count", "splitter_passage_fraction", "angular_pitch_deg"].includes(dimensionId)) {
+    return allBladeSurfaceIds(model);
+  }
+  const bladeId = selection.bladeId || defaultInspectionSelection(model).bladeId;
+  if (dimensionId === "root_offset_mm") {
+    return bladeSurfaceIds(model, bladeId, ["blade_root"]);
+  }
+  if (dimensionId === "tip_offset_mm") {
+    return bladeSurfaceIds(model, bladeId, ["blade_tip"]);
+  }
+  return bladeSurfaceIds(model, bladeId);
+}
+
+function profileTargetSurfaceIds(model, profileId) {
+  const wantsHub = String(profileId).includes("hub");
+  return Object.values(model.indices.surfaces)
+    .filter((surface) => {
+      const family = `${surface.face_family || ""} ${surface.role || ""}`;
+      return surface.inspectable === true
+        && surface.blade_instance_id == null
+        && (wantsHub ? family.includes("hub") : family.includes("tip") || family.includes("shroud"));
+    })
+    .map((surface) => surface.surface_id);
 }
 
 function annotationMatchesSelection(annotation, selection = {}) {
