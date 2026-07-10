@@ -5,6 +5,7 @@ import { describe, test } from "node:test";
 
 const root = resolve(import.meta.dirname, "..", "..");
 const workspacePath = resolve(root, "src/components/ParameterInspectionWorkspace.js");
+const stylesPath = resolve(root, "src/styles.css");
 
 describe("ParameterInspectionWorkspace source contract", () => {
   test("integrates the approved read-only inspection views and controls", () => {
@@ -37,5 +38,37 @@ describe("ParameterInspectionWorkspace source contract", () => {
     assert.match(source, /data-testid":\s*"inspection-workspace"/);
     assert.match(source, /inspection-tab-quad/);
     assert.match(source, /data-testid":\s*"inspection-annotation-level"/);
+  });
+
+  test("clears projection errors before selection and tab changes without a passive clear race", () => {
+    const source = readFileSync(workspacePath, "utf-8");
+    const generationReset = source.match(/useLayoutEffect\(\(\) => \{([\s\S]*?)\}, \[generationId\]\);/)?.[1] || "";
+    const surfaceSelection = source.match(/function handleSurfaceSelection\(surfaceId\) \{([\s\S]*?)\n  \}/)?.[1] || "";
+    const sectionSelection = source.match(/function handleSectionSelection\(nextSelection\) \{([\s\S]*?)\n  \}/)?.[1] || "";
+    const tabSelection = source.match(/function handleTabSelection\(viewId\) \{([\s\S]*?)\n  \}/)?.[1] || "";
+
+    assert.match(source, /import React, \{ useEffect, useLayoutEffect, useMemo, useState \}/);
+    assert.ok(generationReset.indexOf("setProjectionError(null)") < generationReset.indexOf("setSelection("));
+    assert.ok(surfaceSelection.indexOf("setProjectionError(null)") < surfaceSelection.indexOf("setSelection("));
+    assert.ok(sectionSelection.indexOf("setProjectionError(null)") < sectionSelection.indexOf("setSelection("));
+    assert.ok(tabSelection.indexOf("setProjectionError(null)") < tabSelection.indexOf("setActiveTab("));
+    assert.doesNotMatch(source, /useEffect\(\(\) => \{\s*setProjectionError\(null\);\s*\}, \[activeTab, generationId, selection\]\)/);
+    assert.match(source, /onClick: \(\) => handleTabSelection\(tab\.id\)/);
+    assert.match(source, /onClick: \(\) => handleTabSelection\(viewId\)/);
+  });
+
+  test("selects stacked Quad at the CSS breakpoint and cleans up matchMedia", () => {
+    const source = readFileSync(workspacePath, "utf-8");
+    const styles = readFileSync(stylesPath, "utf-8");
+
+    assert.match(source, /window\.matchMedia\("\(max-width: 820px\)"\)/);
+    assert.match(source, /mediaQuery\.addEventListener\("change", updateNarrowQuad\)/);
+    assert.match(source, /mediaQuery\.removeEventListener\("change", updateNarrowQuad\)/);
+    assert.match(source, /const quadLayout = narrowQuad \? "quad_stacked" : "quad"/);
+    assert.match(source, /layout: quadLayout/);
+    assert.match(styles, /\.inspection-quad-pane-3d\s*\{\s*grid-row: 1;/);
+    assert.match(styles, /\.inspection-quad-pane-meridional\s*\{\s*grid-row: 2;/);
+    assert.match(styles, /\.inspection-quad-pane-s_q\s*\{\s*grid-row: 3;/);
+    assert.match(styles, /\.inspection-quad-pane-top\s*\{\s*grid-row: 4;/);
   });
 });

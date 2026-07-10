@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import {
   ANNOTATION_LEVELS,
@@ -28,19 +28,24 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
   const [activeTab, setActiveTab] = useState("3d");
   const [annotationLevel, setAnnotationLevel] = useState("key");
   const [projectionError, setProjectionError] = useState(null);
+  const [narrowQuad, setNarrowQuad] = useState(false);
   const model = useMemo(() => resolveParameterInspection(manifest), [manifest]);
   const [selection, setSelection] = useState(() => defaultInspectionSelection(model));
   const generationId = model.contract?.generation_id;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    setProjectionError(null);
     setSelection(defaultInspectionSelection(model));
     setActiveTab("3d");
-    setProjectionError(null);
   }, [generationId]);
 
   useEffect(() => {
-    setProjectionError(null);
-  }, [activeTab, generationId, selection]);
+    const mediaQuery = window.matchMedia("(max-width: 820px)");
+    const updateNarrowQuad = () => setNarrowQuad(mediaQuery.matches);
+    updateNarrowQuad();
+    mediaQuery.addEventListener("change", updateNarrowQuad);
+    return () => mediaQuery.removeEventListener("change", updateNarrowQuad);
+  }, []);
 
   const annotationsByView = useMemo(
     () =>
@@ -53,8 +58,10 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
     [annotationLevel, model, selection],
   );
   const selectedLoop = sectionLoopForSelection(model, selection);
+  const quadLayout = narrowQuad ? "quad_stacked" : "quad";
 
   function handleSurfaceSelection(surfaceId) {
+    setProjectionError(null);
     const reference = model.indices.surfaces[surfaceId];
     setSelection((current) =>
       mergeInspectionSelection(current, {
@@ -65,7 +72,13 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
   }
 
   function handleSectionSelection(nextSelection) {
+    setProjectionError(null);
     setSelection((current) => mergeInspectionSelection(current, nextSelection));
+  }
+
+  function handleTabSelection(viewId) {
+    setProjectionError(null);
+    setActiveTab(viewId);
   }
 
   if (model.status === "empty" && model.errorCode === EMPTY_INSPECTION_ERROR) {
@@ -103,7 +116,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
               role: "tab",
               "aria-selected": activeTab === tab.id,
               "data-testid": INSPECTION_TAB_TEST_IDS[tab.id],
-              onClick: () => setActiveTab(tab.id),
+              onClick: () => handleTabSelection(tab.id),
             },
             tab.label,
           ),
@@ -129,6 +142,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
       ? renderQuadView({
           annotationsByView,
           annotationLevel,
+          handleTabSelection,
           manifest,
           model,
           onProjectionError: setProjectionError,
@@ -136,7 +150,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
           onSelectSection: handleSectionSelection,
           selectedLoop,
           selection,
-          setActiveTab,
+          quadLayout,
           viewMode,
           visibleLayers,
         })
@@ -170,6 +184,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
 function renderQuadView({
   annotationsByView,
   annotationLevel,
+  handleTabSelection,
   manifest,
   model,
   onProjectionError,
@@ -177,7 +192,7 @@ function renderQuadView({
   onSelectSection,
   selectedLoop,
   selection,
-  setActiveTab,
+  quadLayout,
   viewMode,
   visibleLayers,
 }) {
@@ -190,7 +205,7 @@ function renderQuadView({
       h(InspectionScene, {
         manifest,
         surfaceGraph: model.surfaceGraph,
-        layout: "quad",
+        layout: quadLayout,
         selectedSurfaceId: selection.surfaceId,
         onSelectSurface,
         onProjectionError,
@@ -211,7 +226,7 @@ function renderQuadView({
             type: "button",
             title: `Maximize ${viewLabel(viewId)}`,
             "aria-label": `Maximize ${viewLabel(viewId)}`,
-            onClick: () => setActiveTab(viewId),
+            onClick: () => handleTabSelection(viewId),
           },
           "maximize",
         ),

@@ -1318,8 +1318,7 @@ pre {
     overflow: auto;
   }
 
-  .inspection-quad-pane,
-  .inspection-quad-scene {
+  .inspection-quad-pane {
     aspect-ratio: 4 / 3;
   }
 

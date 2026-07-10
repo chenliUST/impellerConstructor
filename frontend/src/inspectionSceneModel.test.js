@@ -11,6 +11,7 @@ const {
   resolveInspectionAnchor,
   selectedProjectionFailureKey,
   viewportAtPointer,
+  visibleGeometricViews,
 } = inspectionSceneModel;
 
 describe("inspection scene model", () => {
@@ -20,6 +21,31 @@ describe("inspection scene model", () => {
     assert.deepEqual(Object.keys(rects), ["3d", "meridional", "s_q", "top"]);
     assert.deepEqual(rects["3d"], { x: 0, y: 400, width: 600, height: 400 });
     assert.deepEqual(rects["s_q"], { x: 0, y: 0, width: 600, height: 400 });
+  });
+
+  test("stacked quad maps visual top-to-bottom panes into lower-left WebGL rectangles", () => {
+    const rects = inspectionViewportRects(820, 1000, "quad_stacked");
+
+    assert.deepEqual(Object.keys(rects), ["3d", "meridional", "s_q", "top"]);
+    assert.deepEqual(rects["3d"], { x: 0, y: 750, width: 820, height: 250 });
+    assert.deepEqual(rects.meridional, { x: 0, y: 500, width: 820, height: 250 });
+    assert.deepEqual(rects["s_q"], { x: 0, y: 250, width: 820, height: 250 });
+    assert.deepEqual(rects.top, { x: 0, y: 0, width: 820, height: 250 });
+    assert.deepEqual(visibleGeometricViews("quad_stacked"), ["3d", "meridional", "top"]);
+  });
+
+  test("stacked quad seams belong to the upper visual pane exactly once", () => {
+    const rects = inspectionViewportRects(820, 1000, "quad_stacked");
+    const canvasRect = { left: 0, top: 0, width: 820, height: 1000 };
+    const viewIds = ["3d", "meridional", "s_q", "top"];
+
+    assert.equal(viewportAtPointer(410, 250, canvasRect, rects, viewIds).viewId, "3d");
+    assert.equal(viewportAtPointer(410, 500, canvasRect, rects, viewIds).viewId, "meridional");
+    assert.equal(viewportAtPointer(410, 750, canvasRect, rects, viewIds).viewId, "s_q");
+    assert.equal(
+      viewportAtPointer(410, 750, canvasRect, rects, visibleGeometricViews("quad_stacked")),
+      null,
+    );
   });
 
   test("full-size layout allocates the complete viewport", () => {

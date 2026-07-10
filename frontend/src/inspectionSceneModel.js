@@ -4,6 +4,17 @@ const LOOP_SEGMENT_IDS = ["pressure_side", "suction_side", "leading_edge", "trai
 export function inspectionViewportRects(width, height, layout) {
   const viewportWidth = finiteDimension(width);
   const viewportHeight = finiteDimension(height);
+  if (layout === "quad_stacked") {
+    const firstBoundary = Math.floor(viewportHeight / 4);
+    const secondBoundary = Math.floor(viewportHeight / 2);
+    const thirdBoundary = Math.floor((viewportHeight * 3) / 4);
+    return {
+      "3d": { x: 0, y: thirdBoundary, width: viewportWidth, height: viewportHeight - thirdBoundary },
+      meridional: { x: 0, y: secondBoundary, width: viewportWidth, height: thirdBoundary - secondBoundary },
+      "s_q": { x: 0, y: firstBoundary, width: viewportWidth, height: secondBoundary - firstBoundary },
+      top: { x: 0, y: 0, width: viewportWidth, height: firstBoundary },
+    };
+  }
   if (layout !== "quad") {
     return {
       [layout]: { x: 0, y: 0, width: viewportWidth, height: viewportHeight },
@@ -23,7 +34,9 @@ export function inspectionViewportRects(width, height, layout) {
 }
 
 export function visibleGeometricViews(layout) {
-  return layout === "quad" ? ["3d", "meridional", "top"] : GEOMETRIC_VIEW_IDS.has(layout) ? [layout] : [];
+  return layout === "quad" || layout === "quad_stacked"
+    ? ["3d", "meridional", "top"]
+    : GEOMETRIC_VIEW_IDS.has(layout) ? [layout] : [];
 }
 
 export function viewportAtPointer(clientX, clientY, canvasRect, rects, viewIds) {
