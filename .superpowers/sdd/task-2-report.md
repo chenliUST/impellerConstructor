@@ -346,3 +346,39 @@ Result: `14 passed in 199.31s (0:03:19)`.
 ### Suite Status
 
 Per instruction, the 15-minute three-file suite was not started in this review wave. The engineering inspection file is the completed final verification.
+
+---
+
+## Review Fix: Deterministic Selector And Result Binding
+
+Implementation commit: `f15cd2f fix: bind inspection selectors and results`.
+
+- Source station, segment, and control selectors now resolve through generated graph data and must map back to the declared blade/station/loop/segment/control identity and deterministic control parameter path.
+- Legacy profile curve, pose, thickness, root-offset, and join-status records now have explicit validation coverage. Join-status validates its generated status and displayed polyline.
+- Placement records validate generated population/directions and their `reference_axis` primitives; shroud thickness remains source-surface bound.
+
+### RED Evidence
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -k "selector_identity or join_results_and_placement" -q
+```
+
+Result before implementation: `1 failed, 1 passed in 28.64s`; join-result and placement feature mutations were accepted.
+
+### GREEN Evidence
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -k "selector_identity or join_results_and_placement" -q
+```
+
+Result: `2 passed, 14 deselected in 37.76s`.
+
+```powershell
+$env:PYTHONPATH='src'; python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -q
+```
+
+Result: `16 passed in 244.52s (0:04:04)`.
+
+### Suite Status
+
+Per instruction, the long three-file suite was not started in this wave.
