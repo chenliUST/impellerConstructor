@@ -158,6 +158,19 @@ describe("parameter inspection model", () => {
     );
   });
 
+  test("default selection keeps blade-linked 3D and Top annotations visible", () => {
+    const model = resolveParameterInspection(manifestFixture());
+    const selection = defaultInspectionSelection(model);
+    assert.equal(selection.spanStationId, "blade_0:span_0");
+
+    for (const viewId of ["3d", "top"]) {
+      assert.deepEqual(
+        annotationsForView(model, viewId, "selected", selection).map((annotation) => annotation.id),
+        [`${viewId}:blade_0_pressure_surface`, `${viewId}:blade_0_suction_surface`],
+      );
+    }
+  });
+
   test("active display names identify v1.1.3 while backend preset ids remain stable", () => {
     for (const preset of presets) {
       assert.match(preset.name, /v1\.1\.3/i);

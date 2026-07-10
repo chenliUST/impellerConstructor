@@ -196,9 +196,10 @@ function annotation({ id, level, label, requestedValue, resolvedValue, unit = ""
 }
 
 function annotationMatchesSelection(annotation, selection = {}) {
+  const annotationSelection = annotation.selection || {};
   const identityKey = ["controlPointId", "sectionSegmentId", "surfaceId", "spanStationId", "bladeId"]
-    .find((key) => selection[key] != null);
-  return Boolean(identityKey) && annotation.selection?.[identityKey] === selection[identityKey];
+    .find((key) => selection[key] != null && annotationSelection[key] != null);
+  return Boolean(identityKey) && annotationSelection[identityKey] === selection[identityKey];
 }
 
 function formatAnnotationValue(requestedValue, resolvedValue, requestedUnit, unit) {
