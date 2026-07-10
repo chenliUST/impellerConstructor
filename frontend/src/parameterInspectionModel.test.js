@@ -171,6 +171,10 @@ describe("parameter inspection model", () => {
     const selection = defaultInspectionSelection(model);
     assert.ok(annotationsForView(model, "s_q", "key", selection).length > 0);
     assert.ok(annotationsForView(model, "s_q", "all", selection).length >= annotationsForView(model, "s_q", "key", selection).length);
+    assert.deepEqual(
+      annotationsForView(model, "s_q", "key", selection).map((annotation) => annotation.id),
+      ["s_q:thickness_min_mm", "s_q:thickness_max_mm"],
+    );
   });
 
   test("selected surface excludes sibling surfaces on the same blade", () => {

@@ -122,7 +122,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
     h("div", { className: "inspection-provenance-badge", "data-testid": "inspection-provenance" }, "Resolved manifest | runtime 1.1.3 | geometry 1.1.2"),
     h(
       "div",
-      { className: "inspection-workspace-toolbar" },
+      { className: `inspection-workspace-toolbar${narrowQuad ? " narrow" : ""}` },
       h(
         "div",
         { className: "inspection-tab-list", role: "tablist", "aria-label": "Inspection views" },
@@ -144,7 +144,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
       ),
       h(
         "div",
-        { className: "inspection-entity-selectors" },
+        { className: `inspection-entity-selectors${narrowQuad ? " narrow" : ""}` },
         h(
           "label",
           null,
@@ -178,19 +178,19 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
             }),
           ),
         ),
-      ),
-      h(
-        "label",
-        { className: "inspection-annotation-control" },
-        h("span", null, "Annotations"),
         h(
-          "select",
-          {
-            value: annotationLevel,
-            "data-testid": "inspection-annotation-level",
-            onInput: (event) => setAnnotationLevel(event.target.value),
-          },
-          ANNOTATION_LEVELS.map((level) => h("option", { key: level, value: level }, level)),
+          "label",
+          { className: "inspection-annotation-control" },
+          h("span", null, "Annotations"),
+          h(
+            "select",
+            {
+              value: annotationLevel,
+              "data-testid": "inspection-annotation-level",
+              onInput: (event) => setAnnotationLevel(event.target.value),
+            },
+            ANNOTATION_LEVELS.map((level) => h("option", { key: level, value: level }, level)),
+          ),
         ),
       ),
     ),

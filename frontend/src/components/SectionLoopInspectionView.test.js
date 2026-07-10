@@ -108,6 +108,17 @@ function actualOpenPresetLoopFixture() {
   loop.streamwise_metric_scale_mm = 667.5320490261993;
   loop.source_coordinate_units = { s: "normalized", q: "mm" };
   loop.display_coordinate_units = { s: "mm", q: "mm" };
+  loop.join_metrics = Object.fromEntries([
+    "pressure_to_leading",
+    "leading_to_suction",
+    "suction_to_trailing",
+    "trailing_to_pressure",
+  ].map((joinId) => [joinId, {
+    status: "PASS",
+    position_gap_mm: 0,
+    tangent_angle_deg: 0.001,
+    curvature_proxy_mismatch: 0.01,
+  }]));
   const actualDisplayPoints = {
     pressure_side: [[40.05192294157195, -7.7], [186.90897372733582, 35.753125], [333.76602451309964, 132.925], [480.62307529886345, 231.109375], [627.4801260846273, 277.6]],
     leading_edge: [[40.05192294157195, -7.7], [34.60720045381796, -5.444722215], [32.351922732689424, 0], [34.60720045381796, 5.444722215], [40.05192294157195, 7.7]],
@@ -203,6 +214,35 @@ describe("SectionLoopInspectionView source contract", () => {
     assert.ok(drawnWidth > 700, drawnWidth);
     assert.ok(drawnHeight > 300, drawnHeight);
     assert.ok(drawnWidth / drawnHeight > 1.8 && drawnWidth / drawnHeight < 2.2, drawnWidth / drawnHeight);
+  });
+
+  test("reserves a deterministic upper rail for visible annotations", () => {
+    const SectionLoopInspectionView = loadComponent(sectionViewPath, "SectionLoopInspectionView");
+    const annotations = Array.from({ length: 6 }, (_, index) => ({ id: `annotation-${index}` }));
+    const tree = SectionLoopInspectionView({
+      loop: actualOpenPresetLoopFixture(),
+      annotationLevel: "all",
+      annotations,
+    });
+    const curves = collectElements(tree, (node) => node.type === "polyline" && /actual-section-loop/.test(node.props.className));
+    const ys = curves.flatMap((curve) => curve.props.points.split(" ").map((point) => Number(point.split(",")[1])));
+
+    assert.ok(Math.min(...ys) >= 200, Math.min(...ys));
+  });
+
+  test("keeps continuity metrics in a lower rail outside the loop", () => {
+    const SectionLoopInspectionView = loadComponent(sectionViewPath, "SectionLoopInspectionView");
+    const tree = SectionLoopInspectionView({
+      loop: actualOpenPresetLoopFixture(),
+      annotationLevel: "all",
+      annotations: Array.from({ length: 6 }, (_, index) => ({ id: `annotation-${index}` })),
+    });
+    const curves = collectElements(tree, (node) => node.type === "polyline" && /actual-section-loop/.test(node.props.className));
+    const curveYs = curves.flatMap((curve) => curve.props.points.split(" ").map((point) => Number(point.split(",")[1])));
+    const metricYs = collectElements(tree, (node) => node.type === "text" && /_to_/.test(visibleText(node)))
+      .map((node) => node.props.y);
+
+    assert.ok(Math.min(...metricYs) > Math.max(...curveYs), `${Math.min(...metricYs)} <= ${Math.max(...curveYs)}`);
   });
 
   test("keeps join metrics below the top annotation lanes", () => {

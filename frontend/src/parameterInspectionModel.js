@@ -327,7 +327,9 @@ function profileAnnotations(model) {
 
 function sectionAnnotations(model, selection) {
   const loop = sectionLoopForSelection(model, selection);
-  const dimensions = Object.entries(model.contract.resolved_dimensions || {}).map(([dimensionId, dimension]) =>
+  const dimensions = Object.entries(model.contract.resolved_dimensions || {})
+    .filter(([dimensionId]) => ["thickness_min_mm", "thickness_max_mm"].includes(dimensionId))
+    .map(([dimensionId, dimension]) =>
     annotation({
       id: `s_q:${dimensionId}`,
       level: "key",
@@ -337,8 +339,7 @@ function sectionAnnotations(model, selection) {
       unit: dimension.unit,
       requestedUnit: dimension.requested_unit,
       anchor: { kind: "section_loop", sectionLoopId: loop?.section_loop_id || null },
-    }),
-  );
+    }));
   if (!loop) {
     return dimensions;
   }

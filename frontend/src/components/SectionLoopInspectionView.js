@@ -15,12 +15,15 @@ const SEGMENT_CLASS = {
 
 const SEGMENT_ORDER = ["pressure_side", "leading_edge", "suction_side", "trailing_edge"];
 
-export function SectionLoopInspectionView({ loop, selection = {}, annotationLevel = "key", onSelect }) {
+export function SectionLoopInspectionView({ loop, selection = {}, annotationLevel = "key", annotations = [], onSelect }) {
   const segments = sectionSegments(loop);
+  const plotTop = Math.min(260, PADDING + annotations.length * 28);
+  const joinMetricCount = Object.keys(loop?.join_metrics || {}).length;
+  const plotBottom = Math.max(PADDING, joinMetricCount * 22 + 40);
   const transform = fitPoints(segments.flatMap((segment) => [
     ...segment.points,
     ...segment.controls.map((control) => control.point),
-  ]));
+  ]), plotTop, plotBottom);
   const controlsVisible = annotationLevel === "selected" || annotationLevel === "all";
 
   return h(
@@ -34,10 +37,10 @@ export function SectionLoopInspectionView({ loop, selection = {}, annotationLeve
         role: "img",
         "aria-label": loop?.section_loop_id ? `S-Q section loop ${loop.section_loop_id}` : "No S-Q section loop selected",
       },
-      renderAxes(),
+      renderAxes(plotTop, plotBottom),
       segments.map((segment) => renderActualSegment(segment, transform, selection, onSelect)),
       controlsVisible ? segments.map((segment) => renderControlGeometry(segment, transform, selection, onSelect)) : null,
-      renderJoinMetrics(loop?.join_metrics || {}),
+      renderJoinMetrics(loop?.join_metrics || {}, plotBottom),
       !segments.length ? h("text", { className: "section-loop-empty", x: 500, y: 350, textAnchor: "middle" }, "No section loop selected") : null,
     ),
   );
@@ -67,7 +70,7 @@ function finitePoints(points) {
   );
 }
 
-function fitPoints(points) {
+function fitPoints(points, plotTop = PADDING, plotBottom = PADDING) {
   const finite = finitePoints(points);
   if (!finite.length) {
     return (point) => [VIEWBOX_WIDTH / 2, VIEWBOX_HEIGHT / 2];
@@ -81,23 +84,24 @@ function fitPoints(points) {
   const maxQ = Math.max(...qValues);
   const spanS = Math.max(maxS - minS, 1e-9);
   const spanQ = Math.max(maxQ - minQ, 1e-9);
-  const scale = Math.min((VIEWBOX_WIDTH - PADDING * 2) / spanS, (VIEWBOX_HEIGHT - PADDING * 2) / spanQ);
+  const availableHeight = VIEWBOX_HEIGHT - plotTop - plotBottom;
+  const scale = Math.min((VIEWBOX_WIDTH - PADDING * 2) / spanS, availableHeight / spanQ);
   const drawnWidth = spanS * scale;
   const drawnHeight = spanQ * scale;
   const offsetS = (VIEWBOX_WIDTH - drawnWidth) / 2 - minS * scale;
-  const offsetQ = (VIEWBOX_HEIGHT - drawnHeight) / 2 + maxQ * scale;
+  const offsetQ = plotTop + (availableHeight - drawnHeight) / 2 + maxQ * scale;
 
   return (point) => [offsetS + Number(point[0]) * scale, offsetQ - Number(point[1]) * scale];
 }
 
-function renderAxes() {
+function renderAxes(plotTop, plotBottom) {
   return h(
     "g",
     { className: "section-loop-axes" },
-    h("line", { x1: PADDING, y1: VIEWBOX_HEIGHT - PADDING, x2: VIEWBOX_WIDTH - PADDING, y2: VIEWBOX_HEIGHT - PADDING }),
-    h("line", { x1: PADDING, y1: PADDING, x2: PADDING, y2: VIEWBOX_HEIGHT - PADDING }),
+    h("line", { x1: PADDING, y1: VIEWBOX_HEIGHT - plotBottom, x2: VIEWBOX_WIDTH - PADDING, y2: VIEWBOX_HEIGHT - plotBottom }),
+    h("line", { x1: PADDING, y1: plotTop, x2: PADDING, y2: VIEWBOX_HEIGHT - plotBottom }),
     h("text", { x: VIEWBOX_WIDTH - PADDING, y: VIEWBOX_HEIGHT - 36, textAnchor: "end" }, "S (mm)"),
-    h("text", { x: PADDING + 12, y: PADDING + 16 }, "Q (mm)"),
+    h("text", { x: PADDING + 12, y: plotTop + 16 }, "Q (mm)"),
   );
 }
 
@@ -161,11 +165,10 @@ function renderControlGeometry(segment, transform, selection, onSelect) {
   );
 }
 
-function renderJoinMetrics(joinMetrics) {
+function renderJoinMetrics(joinMetrics, plotBottom) {
   const entries = Object.entries(joinMetrics);
   const lineHeight = 22;
-  const lastLineY = VIEWBOX_HEIGHT - PADDING - 18;
-  const firstLineY = lastLineY - Math.max(0, entries.length - 1) * lineHeight;
+  const firstLineY = VIEWBOX_HEIGHT - plotBottom + 24;
   return h(
     "g",
     { className: "section-loop-join-metrics" },

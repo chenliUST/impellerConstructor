@@ -77,5 +77,6 @@ describe("ParameterInspectionWorkspace source contract", () => {
     assert.match(styles, /\.inspection-quad-pane-meridional\s*\{\s*grid-row: 2;/);
     assert.match(styles, /\.inspection-quad-pane-s_q\s*\{\s*grid-row: 3;/);
     assert.match(styles, /\.inspection-quad-pane-top\s*\{\s*grid-row: 4;/);
+    assert.match(styles, /\.inspection-tab-list,\s*\.inspection-entity-selectors\s*\{\s*width: 100%;\s*flex: 0 0 auto;/);
   });
 });

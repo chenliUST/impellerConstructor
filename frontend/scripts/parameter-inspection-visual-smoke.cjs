@@ -21,6 +21,14 @@ function nonBackgroundRatio(buffer) {
   return changed / (png.width * png.height);
 }
 
+async function captureElement(page, locator, outputPath) {
+  await locator.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  const clip = await locator.boundingBox();
+  assert.ok(clip && clip.width > 0 && clip.height > 0, `missing screenshot bounds for ${outputPath}`);
+  await page.screenshot({ path: outputPath, clip, animations: "disabled", timeout: 60000 });
+}
+
 async function main() {
   const outputDir = path.resolve("docs/evidence/assets/v1.1.3-parameter-inspection");
   fs.mkdirSync(outputDir, { recursive: true });
@@ -67,30 +75,42 @@ async function main() {
     const annotationSelector = page.locator('[data-testid="inspection-annotation-level"]');
     await annotationSelector.selectOption("all");
     assert.equal(await annotationSelector.inputValue(), "all");
+    await annotationSelector.selectOption("key");
 
     const canvasBuffer = await canvas.screenshot();
     const ratio = nonBackgroundRatio(canvasBuffer);
     assert.ok(ratio >= 0.05, `inspection canvas ratio ${ratio} is below 0.05`);
-    await workspace.screenshot({
-      path: path.join(outputDir, "desktop-3d.png"),
-    });
+    await captureElement(page, workspace, path.join(outputDir, "desktop-3d.png"));
     console.log("parameter inspection desktop 3D: PASS");
 
     await page.locator('[data-testid="inspection-tab-quad"]').click();
     await page.locator('[data-testid="inspection-workspace"][data-active-tab="quad"]').waitFor();
-    await workspace.screenshot({
-      path: path.join(outputDir, "desktop-quad.png"),
-    });
+    await captureElement(page, workspace, path.join(outputDir, "desktop-quad.png"));
     console.log("parameter inspection desktop Quad: PASS");
 
     await page.setViewportSize({ width: 768, height: 1100 });
+    await page.locator(".inspection-workspace-toolbar.narrow .inspection-entity-selectors.narrow").waitFor({ timeout: 30000 });
     await page.locator('[data-testid="inspection-tab-s_q"]').click();
     await page.locator('[data-testid="inspection-workspace"][data-active-tab="s_q"]').waitFor();
+    await annotationSelector.selectOption("all");
+    const workspaceBox = await workspace.boundingBox();
+    const annotationBox = await annotationSelector.boundingBox();
+    const sectionPaneBox = await page.locator(".inspection-section-loop-pane").boundingBox();
+    assert.ok(workspaceBox && annotationBox && sectionPaneBox, "narrow inspection regions must have measurable bounds");
+    const narrowBounds = { workspaceBox, annotationBox, sectionPaneBox };
+    console.log(`narrow toolbar bounds: ${JSON.stringify(narrowBounds)}`);
+    assert.ok(
+      annotationBox.x >= workspaceBox.x && annotationBox.x + annotationBox.width <= workspaceBox.x + workspaceBox.width,
+      JSON.stringify(narrowBounds),
+    );
+    assert.ok(
+      annotationBox.y >= workspaceBox.y && annotationBox.y + annotationBox.height <= workspaceBox.y + workspaceBox.height,
+      JSON.stringify(narrowBounds),
+    );
+    assert.ok(annotationBox.y + annotationBox.height <= sectionPaneBox.y, JSON.stringify(narrowBounds));
     assert.equal(await bladeSelector.inputValue(), bladeOptions[1]);
     assert.equal(await annotationSelector.inputValue(), "all");
-    await workspace.screenshot({
-      path: path.join(outputDir, "narrow-s-q.png"),
-    });
+    await captureElement(page, workspace, path.join(outputDir, "narrow-s-q.png"));
     console.log("parameter inspection narrow S-Q: PASS");
     console.log(`inspection renderer count: ${rendererCount}`);
     console.log(`inspection context count: ${contextCount}`);
