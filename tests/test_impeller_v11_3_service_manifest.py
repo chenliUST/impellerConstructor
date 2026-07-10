@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +66,52 @@ def test_validation_rejects_generation_mismatch():
     reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
 
     assert "parameter_inspection_generation_id_mismatch" in reasons
+
+
+def test_validation_rejects_geometry_mutation_with_stored_generation_ids():
+    graph = deepcopy(graph_for())
+    graph["surfaces"][0]["uv_grid"][0][0][0] += 0.125
+
+    reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+
+    assert "parameter_inspection_generation_id_mismatch" in reasons
+
+
+def test_validation_rejects_non_mapping_surface_references():
+    graph = graph_for()
+    graph["parameter_inspection"]["surface_references"] = []
+
+    reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+
+    assert "parameter_inspection_contract_unsupported" in reasons
+
+
+def test_validation_rejects_non_mapping_span_stations():
+    graph = graph_for()
+    graph["parameter_inspection"]["span_stations"] = []
+
+    reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+
+    assert "parameter_inspection_contract_unsupported" in reasons
+
+
+def test_validation_rejects_non_mapping_section_loops():
+    graph = graph_for()
+    graph["parameter_inspection"]["section_loops"] = []
+
+    reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+
+    assert "parameter_inspection_contract_unsupported" in reasons
+
+
+def test_validation_rejects_malformed_section_loop_entry():
+    graph = graph_for()
+    loop_id = next(iter(graph["parameter_inspection"]["section_loops"]))
+    graph["parameter_inspection"]["section_loops"][loop_id] = []
+
+    reasons = {failure["reason"] for failure in validate_v11_surface_graph(graph)}
+
+    assert "parameter_inspection_contract_unsupported" in reasons
 
 
 def test_all_active_presets_expose_service_inspection_contracts(tmp_path):

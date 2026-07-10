@@ -19,20 +19,39 @@ def validate_parameter_inspection_contract(
     failures: list[dict[str, Any]] = []
     if contract.get("contract_version") != INSPECTION_CONTRACT_VERSION:
         failures.append({"reason": "parameter_inspection_contract_unsupported"})
-    if contract.get("generation_id") != surface_graph.get("generation_id"):
+    expected_generation_id = parameter_inspection_generation_id(surface_graph)
+    if (
+        surface_graph.get("generation_id") != expected_generation_id
+        or contract.get("generation_id") != expected_generation_id
+    ):
         failures.append({"reason": "parameter_inspection_generation_id_mismatch"})
+
+    surface_references = contract.get("surface_references")
+    span_stations = contract.get("span_stations")
+    section_loops = contract.get("section_loops")
+    if not all(
+        isinstance(collection, Mapping)
+        for collection in (surface_references, span_stations, section_loops)
+    ):
+        return [{"reason": "parameter_inspection_contract_unsupported"}]
+    if any(
+        not isinstance(loop, Mapping) or not isinstance(loop.get("metrics"), Mapping)
+        for loop in section_loops.values()
+    ):
+        return [{"reason": "parameter_inspection_contract_unsupported"}]
+
     graph_surface_ids = {surface.get("id") for surface in surface_graph.get("surfaces", [])}
-    referenced_surface_ids = set(contract.get("surface_references", {}))
+    referenced_surface_ids = set(surface_references)
     if graph_surface_ids != referenced_surface_ids:
         failures.append({"reason": "parameter_inspection_surface_reference_missing"})
-    station_ids = set(contract.get("span_stations", {}))
+    station_ids = set(span_stations)
     loop_station_ids = {
         loop.get("span_station_id")
-        for loop in contract.get("section_loops", {}).values()
+        for loop in section_loops.values()
     }
     if station_ids != loop_station_ids:
         failures.append({"reason": "parameter_inspection_station_reference_missing"})
-    for loop in contract.get("section_loops", {}).values():
+    for loop in section_loops.values():
         if loop.get("metrics", {}).get("join_status") != "PASS":
             failures.append(
                 {
