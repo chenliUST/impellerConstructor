@@ -132,6 +132,18 @@ describe("SectionLoopInspectionView source contract", () => {
       controlPointId: "blade_0:span_0:loop:pressure_side:cp_0",
     });
   });
+
+  test("keeps join metrics below the top annotation lanes", () => {
+    const SectionLoopInspectionView = loadComponent(sectionViewPath, "SectionLoopInspectionView");
+    const tree = SectionLoopInspectionView({ loop: loopFixture() });
+    const metrics = collectElements(
+      tree,
+      (node) => node.type === "text" && /pressure_to_leading: PASS/.test(visibleText(node)),
+    );
+
+    assert.equal(metrics.length, 1);
+    assert.ok(metrics[0].props.y >= 500);
+  });
 });
 
 describe("ParameterAnnotationOverlay source contract", () => {

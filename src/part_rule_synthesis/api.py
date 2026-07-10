@@ -67,6 +67,7 @@ def create_app(root: Path | None = None) -> FastAPI:
         return PRIMITIVES
 
     @app.get("/api/impeller-presets")
+    @app.get("/api/presets/impeller")
     def impeller_presets():
         return {
             "presets": [

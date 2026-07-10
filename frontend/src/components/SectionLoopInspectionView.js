@@ -145,13 +145,17 @@ function renderControlGeometry(segment, transform, selection, onSelect) {
 }
 
 function renderJoinMetrics(joinMetrics) {
+  const entries = Object.entries(joinMetrics);
+  const lineHeight = 22;
+  const lastLineY = VIEWBOX_HEIGHT - PADDING - 18;
+  const firstLineY = lastLineY - Math.max(0, entries.length - 1) * lineHeight;
   return h(
     "g",
     { className: "section-loop-join-metrics" },
-    Object.entries(joinMetrics).map(([joinId, metrics], index) =>
+    entries.map(([joinId, metrics], index) =>
       h(
         "text",
-        { key: joinId, x: PADDING, y: PADDING + 34 + index * 22 },
+        { key: joinId, x: PADDING, y: firstLineY + index * lineHeight },
         `${joinId}: ${metrics.status || "UNKNOWN"} | gap ${metrics.position_gap_mm} mm | angle ${metrics.tangent_angle_deg} deg | curvature ${metrics.curvature_proxy_mismatch}`,
       ),
     ),

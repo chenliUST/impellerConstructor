@@ -73,13 +73,23 @@ def parameter_inspection_generation_id(surface_graph: Mapping[str, Any]) -> str:
             {
                 "id": surface.get("id"),
                 "role": surface.get("role"),
-                "uv_grid": surface.get("uv_grid", []),
+                "uv_grid": [] if _is_reference_only_surface(surface) else surface.get("uv_grid", []),
             }
             for surface in surface_graph.get("surfaces", [])
         ],
     }
     encoded = json.dumps(basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:24]
+
+
+def _is_reference_only_surface(surface: Mapping[str, Any]) -> bool:
+    if str(surface.get("role") or "") in {"open_tip_reference", "hub_support", "shroud_support"}:
+        return True
+    surface_flags = surface.get("surface_flags")
+    if isinstance(surface_flags, Mapping) and surface_flags.get("reference_only") is True:
+        return True
+    display = surface.get("display")
+    return isinstance(display, Mapping) and display.get("reference_only") is True
 
 
 def build_parameter_inspection_contract(surface_graph: Mapping[str, Any]) -> dict[str, Any]:

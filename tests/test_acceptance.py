@@ -61,6 +61,15 @@ def test_acceptance_impeller_ontology_exposes_facets_and_presets(tmp_path: Path)
     assert all(preset["part_family_id"] == "impeller" for preset in preset_payload)
 
 
+def test_acceptance_task7_impeller_preset_health_route(tmp_path: Path):
+    client = TestClient(create_app(tmp_path))
+
+    response = client.get("/api/presets/impeller")
+
+    assert response.status_code == 200
+    assert response.json() == client.get("/api/impeller-presets").json()
+
+
 def test_acceptance_impeller_ontology_exposes_axisymmetric_radial_slice(tmp_path: Path):
     client = TestClient(create_app(tmp_path))
 

@@ -70,6 +70,15 @@ def test_generation_id_is_deterministic_and_geometry_sensitive():
     assert parameter_inspection_generation_id(edited) != baseline_a["generation_id"]
 
 
+def test_generation_id_ignores_reference_only_helper_sampling():
+    graph = graph_for()
+    edited = deepcopy(graph)
+    helper = next(surface for surface in edited["surfaces"] if surface["id"] == "tip_reference_surface")
+    helper["uv_grid"] = []
+
+    assert parameter_inspection_generation_id(edited) == graph["generation_id"]
+
+
 def test_all_active_presets_emit_contracts():
     for preset_id in ACTIVE_PRESETS:
         graph = graph_for(preset_id)
