@@ -41,3 +41,11 @@ Inspection selection is not an arbitrary object merge. A pure reducer normalizes
 ## Insight 8: Malformed Evidence Is A First-Class State
 
 Producer and consumer validation both check nested records, exact ID sets, closure, uniqueness, ownership, and bidirectional references. Invalid contracts become documented failure states instead of JavaScript exceptions or a blank workspace.
+
+## Insight 9: Hash Exemption Requires Total Non-Inspectability
+
+Ignoring a helper UV grid in provenance is valid only when that grid is also excluded from rendering, camera fitting, picking, and annotations. Otherwise the same generation ID could frame or label a different scene.
+
+## Insight 10: Support Selection Has No Blade Owner
+
+Hub and shroud support surfaces are legitimate selectable geometry without a `blade_instance_id`. Their selection clears blade-owned station, segment, and control identities while the mathematical S-Q view falls back to the first valid blade station.

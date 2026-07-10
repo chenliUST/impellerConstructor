@@ -140,3 +140,27 @@ docs/version-history.md
 - The interrupted post-hardening combined backend command has no pass/fail summary.
 - Browser smoke covers one open preset and DPR 1; broader preset behavior remains primarily contract-test evidence.
 - Geometry remains review-grade sampled V1.1.2 geometry, outside production CAD, solver mesh, and manufacturing certification claims.
+
+## Final Review Closure
+
+The last two review findings were resolved in `4cf26c7`:
+
+- explicit noninspectable helper surfaces are excluded consistently from scene input, camera bounds, picking, and annotations;
+- visible unowned hub/shroud support selection clears blade-owned dependent identities and retains a deterministic S-Q fallback.
+
+Fresh final verification:
+
+```text
+contract file:             11 passed in 453.85s
+service groups 1-4:         4 + 4 + 4 + 4 passed
+service group 3:            4 passed in 107.04s
+service group 4:            4 passed in 377.90s
+frontend:                  188 passed, 0 failed
+browser 3D/Quad/narrow S-Q: PASS
+scene surfaces:            101
+non-background ratio:      0.1986
+renderer lifecycle:        created 3, live 1
+context lifecycle:         created 3, live 1
+```
+
+The browser services were refreshed from the final worktree before the last smoke run. The historical 165-test geometry matrix is not relabeled as post-hardening evidence.

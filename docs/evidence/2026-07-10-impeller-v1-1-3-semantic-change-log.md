@@ -40,3 +40,5 @@ canonical_payload_version = 1.1.2
 ## Compatibility Boundary
 
 Generation IDs cover every source field that affects visible or inspectable evidence, including manufactured hub/shroud surfaces, section-loop samples and controls, dimensions, policies, and quality evidence. A UV grid is exempt only when explicit metadata marks the surface both reference-only and hidden/non-rendered. Categorical roles such as `hub_support` and `shroud_support` are never exemptions. The generation ID and derived inspection payload are excluded from their own hash input to avoid self-reference.
+
+The same explicit `inspectable` classification controls scene input, camera bounds, picking, and annotations. A hash-exempt helper therefore cannot alter any visible inspection output. Visible hub/shroud support surfaces remain inspectable and hashed; selecting one clears blade-owned dependent identities without invalidating the S-Q fallback.

@@ -146,3 +146,24 @@ frontend PID 30920  http://127.0.0.1:5199  / = HTTP 200
 - The full 165-test backend matrix is historical relative to the hardening commits; the post-hardening combined command was interrupted and has no final result.
 - Browser smoke covers the active open preset in headless Chromium at device pixel ratio 1; backend contract tests provide broader preset coverage.
 - Review-grade sampled geometry, sewn production CAD, solver-ready volume meshes, and manufacturing certification remain outside V1.1.3.
+
+## Final Post-Review Verification
+
+The final review fixes unify explicit inspectability across provenance, scene input, camera bounds, picking, and annotations, and make unowned hub/shroud support selection safe.
+
+Fresh backend results after these fixes:
+
+```text
+parameter-inspection contract: 11 passed in 453.85s
+service manifest group 1:       4 passed in 116.83s
+service manifest group 2:       4 passed in 39.99s
+service manifest group 3:       4 passed in 107.04s
+service manifest group 4:       4 passed in 377.90s
+fresh V1.1.3 total:            27 passed, 0 failed
+```
+
+Fresh frontend result: `188 passed, 0 failed`.
+
+The final browser run passed desktop 3D, desktop Quad, and narrow S-Q with `101` inspectable scene surfaces and non-background ratio `0.1986`. Lifecycle instrumentation reported `createdRenderers=3`, `liveRenderers=1`, `createdContexts=3`, and `liveContexts=1` after the tested tab transitions; no concurrent context leak was observed.
+
+The earlier 165-test geometry regression matrix and 38-test API acceptance suite remain historical relative to the final inspection-only hardening. V1.1.2 geometry construction code was not changed by the final fixes.
