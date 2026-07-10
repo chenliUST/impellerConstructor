@@ -346,6 +346,12 @@ class RuleSynthesisService:
         if manifest["dsl_version"] == "1.1":
             manifest["geometry_version"] = surface_graph.get("geometry_version")
             manifest["geometry_patch_version"] = surface_graph.get("geometry_patch_version")
+            manifest["runtime_release_version"] = dsl.get("runtime_release_version", "1.1.3")
+            manifest["parameter_inspection_contract_version"] = dsl.get(
+                "parameter_inspection_contract_version", "1.1.3"
+            )
+            manifest["generation_id"] = surface_graph.get("generation_id")
+            manifest["parameter_inspection"] = copy.deepcopy(surface_graph.get("parameter_inspection", {}))
             if geometry_metadata.get("geometry_generation_status"):
                 manifest["geometry_generation_status"] = geometry_metadata["geometry_generation_status"]
             manifest["transition_geometry_status"] = surface_graph.get("transition_geometry_status")

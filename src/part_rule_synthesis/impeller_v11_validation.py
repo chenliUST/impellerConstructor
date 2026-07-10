@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from part_rule_synthesis.impeller_v11_2_canonical import evaluate_nurbs_surface
+from part_rule_synthesis.impeller_v11_3_parameter_inspection import validate_parameter_inspection_contract
 
 PASS = "PASS"
 VALIDATION_STAGE = "v1_1_validation"
@@ -34,6 +35,9 @@ def validate_v11_surface_graph(surface_graph: dict[str, Any]) -> list[dict[str, 
             failures.append(_failure("v1_1_2_canonical_payload_missing"))
         else:
             failures.extend(_validate_v112_canonical_contract(surface_graph, canonical))
+        failures.extend(
+            validate_parameter_inspection_contract(surface_graph, surface_graph.get("parameter_inspection"))
+        )
 
     roles = {str(surface.get("role") or "") for surface in surfaces}
     if not _REQUIRED_ROLES.issubset(roles):

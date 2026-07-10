@@ -10,6 +10,10 @@ from part_rule_synthesis.impeller_v11_2_canonical import (
     MATH_PARAMETERIZATION as V11_2_MATH_PARAMETERIZATION,
     canonical_nurbs_from_v11_defaults,
 )
+from part_rule_synthesis.impeller_v11_3_parameter_inspection import (
+    INSPECTION_CONTRACT_VERSION,
+    RUNTIME_RELEASE_VERSION,
+)
 from part_rule_synthesis.impeller_v11_constants import SOURCE_KERNEL as V11_SOURCE_KERNEL
 
 
@@ -270,6 +274,8 @@ def _v11_runtime_defaults(
         "resolved_parameter_defaults": dict(parameters),
         "geometry_version": "1.1",
         "geometry_patch_version": preset.get("geometry_patch_version", "1.1.2"),
+        "runtime_release_version": RUNTIME_RELEASE_VERSION,
+        "parameter_inspection_contract_version": INSPECTION_CONTRACT_VERSION,
         "math_parameterization": preset.get("math_parameterization", V11_2_MATH_PARAMETERIZATION),
         "source_kernel": preset.get("source_kernel", V11_SOURCE_KERNEL),
         "transition_geometry_status": preset.get(

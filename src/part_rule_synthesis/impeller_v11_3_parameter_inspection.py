@@ -10,6 +10,39 @@ RUNTIME_RELEASE_VERSION = "1.1.3"
 INSPECTION_CONTRACT_VERSION = "1.1.3"
 
 
+def validate_parameter_inspection_contract(
+    surface_graph: Mapping[str, Any],
+    contract: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(contract, Mapping):
+        return [{"reason": "parameter_inspection_contract_unsupported"}]
+    failures: list[dict[str, Any]] = []
+    if contract.get("contract_version") != INSPECTION_CONTRACT_VERSION:
+        failures.append({"reason": "parameter_inspection_contract_unsupported"})
+    if contract.get("generation_id") != surface_graph.get("generation_id"):
+        failures.append({"reason": "parameter_inspection_generation_id_mismatch"})
+    graph_surface_ids = {surface.get("id") for surface in surface_graph.get("surfaces", [])}
+    referenced_surface_ids = set(contract.get("surface_references", {}))
+    if graph_surface_ids != referenced_surface_ids:
+        failures.append({"reason": "parameter_inspection_surface_reference_missing"})
+    station_ids = set(contract.get("span_stations", {}))
+    loop_station_ids = {
+        loop.get("span_station_id")
+        for loop in contract.get("section_loops", {}).values()
+    }
+    if station_ids != loop_station_ids:
+        failures.append({"reason": "parameter_inspection_station_reference_missing"})
+    for loop in contract.get("section_loops", {}).values():
+        if loop.get("metrics", {}).get("join_status") != "PASS":
+            failures.append(
+                {
+                    "reason": "parameter_inspection_loop_not_closed",
+                    "section_loop_id": loop.get("section_loop_id"),
+                }
+            )
+    return failures
+
+
 def parameter_inspection_generation_id(surface_graph: Mapping[str, Any]) -> str:
     basis = {
         "geometry_patch_version": surface_graph.get("geometry_patch_version"),
