@@ -259,26 +259,24 @@ describe("SectionLoopInspectionView source contract", () => {
 });
 
 describe("ParameterAnnotationOverlay source contract", () => {
-  test("declares clickable label rows without geometry leader lines", () => {
+  test("uses native parameter buttons without SVG leaders", () => {
     assert.equal(existsSync(overlayPath), true, "ParameterAnnotationOverlay.js should exist");
 
     const source = readFileSync(overlayPath, "utf-8");
     assert.doesNotMatch(source, /inspection-leader/);
-    assert.match(source, /inspection-label/);
+    assert.doesNotMatch(source, /clipPath/);
+    assert.match(source, /"button"/);
+    assert.match(source, /type:\s*"button"/);
     assert.match(source, /onSelectAnnotation/);
     assert.match(source, /aria-pressed/);
-    assert.match(source, /event\.key === "Enter"/);
-    assert.match(source, /clipPath/);
     assert.match(source, /sort\(.*id/);
-    assert.doesNotMatch(source, /onChange/);
-    assert.doesNotMatch(source, /onMutate/);
-    assert.doesNotMatch(source, /onEdit/);
 
     const styles = readFileSync(stylesPath, "utf-8");
-    assert.match(styles, /inspection-label-region/);
+    assert.match(styles, /button\.inspection-label-row/);
+    assert.match(styles, /text-overflow:\s*ellipsis/);
   });
 
-  test("sorts labels into slots, preserves values, and toggles actionable rows", () => {
+  test("sorts rows, preserves values, and toggles one actionable parameter", () => {
     const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
     const selected = [];
     const tree = ParameterAnnotationOverlay({
@@ -290,8 +288,6 @@ describe("ParameterAnnotationOverlay source contract", () => {
           requestedUnit: "mm",
           resolvedValue: 18,
           unit: "mm",
-          anchor: { id: "second" },
-          selected: true,
           targetSurfaceIds: ["surface-b"],
         },
         {
@@ -301,7 +297,6 @@ describe("ParameterAnnotationOverlay source contract", () => {
           requestedUnit: "mm",
           resolvedValue: 6.8,
           unit: "mm",
-          anchor: { id: "first" },
           targetSurfaceIds: [],
         },
       ],
@@ -309,26 +304,20 @@ describe("ParameterAnnotationOverlay source contract", () => {
       onSelectAnnotation: (annotation) => selected.push(annotation.id),
     });
 
-    const leaders = collectElements(tree, (node) => node.type === "line");
-    const labels = collectElements(tree, (node) => node.type === "text");
-    const buttons = collectElements(tree, (node) => node.props?.role === "button");
+    const rows = collectElements(tree, (node) => node.type === "button" || node.type === "div");
+    const buttons = collectElements(tree, (node) => node.type === "button");
 
-    assert.equal(leaders.length, 0);
-    assert.equal(labels.length, 2);
-    assert.equal(labels[1].props.y - labels[0].props.y, 28);
-    assert.match(visibleText(labels[0]), /Thickness min: 6.8 mm/);
-    assert.match(visibleText(labels[1]), /Thickness max: 20 mm -> 18 mm/);
-    assert.match(labels[1].props.className, /selected/);
+    assert.equal(rows.length, 3);
+    assert.match(visibleText(rows[1]), /Thickness min: 6.8 mm/);
+    assert.match(visibleText(rows[2]), /Thickness max: 20 mm -> 18 mm/);
     assert.equal(buttons.length, 1);
+    assert.match(buttons[0].props.className, /selected/);
     assert.equal(buttons[0].props["aria-pressed"], true);
     buttons[0].props.onClick();
-    let prevented = false;
-    buttons[0].props.onKeyDown({ key: "Enter", preventDefault: () => { prevented = true; } });
-    assert.equal(prevented, true);
-    assert.deepEqual(selected, ["b", "b"]);
+    assert.deepEqual(selected, ["b"]);
   });
 
-  test("compacts structured values while preserving their full text in titles", () => {
+  test("compacts structured values and preserves full text in the native title", () => {
     const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
     const requestedValue = Array.from({ length: 12 }, (_, index) => index);
     const resolvedValue = { first: "resolved-a", second: "resolved-b" };
@@ -338,107 +327,33 @@ describe("ParameterAnnotationOverlay source contract", () => {
         label: "Points",
         requestedValue,
         resolvedValue,
-        anchor: { id: "structured" },
       }],
-      projectAnchor: () => ({ x: 700, y: 140 }),
     });
 
-    const label = collectElements(tree, (node) => node.type === "text")[0];
-    const title = collectElements(tree, (node) => node.type === "title")[0];
+    const row = collectElements(tree, (node) => node.type === "div" && node.props["data-annotation-id"])[0];
 
-    assert.equal(visibleText(label), "Points: [12 items] -> {2 fields}");
-    assert.match(title.props.children.join(""), /\[0,1,2,3,4,5,6,7,8,9,10,11\]/);
-    assert.match(title.props.children.join(""), /resolved-b/);
+    assert.equal(visibleText(row), "Points: [12 items] -> {2 fields}");
+    assert.match(row.props.title, /\[0,1,2,3,4,5,6,7,8,9,10,11\]/);
+    assert.match(row.props.title, /resolved-b/);
   });
 
-  test("clamps narrow viewport labels and retains selected annotations when slots overflow", () => {
+  test("renders long values as one CSS-clipped selected button", () => {
     const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
-    const annotations = ["a", "b", "c", "z"].map((id) => ({
-      id,
-      label: id === "z" ? "Selected annotation with a deliberately long visible label" : `Annotation ${id}`,
-      requestedValue: id === "z" ? Array.from({ length: 20 }, (_, index) => `requested-${index}`) : id,
-      resolvedValue: id === "z" ? { final: "long-final-value" } : id,
-      anchor: { id },
-      selected: id === "z",
-    }));
-    const tree = ParameterAnnotationOverlay({
-      annotations,
-      selectedAnnotationId: "z",
-      viewportWidth: 240,
-      viewportHeight: 84,
-    });
-
-    const labels = collectElements(tree, (node) => node.type === "text");
-    const selectedLabel = labels.find((label) => /selected/.test(label.props.className));
-    const selectedTitle = collectElements(selectedLabel, (node) => node.type === "title")[0];
-
-    assert.ok(labels.length <= 3);
-    assert.ok(labels.every((label) => label.props.x >= 12 && label.props.x <= 228));
-    assert.ok(labels.every((label) => label.props.y >= 0 && label.props.y <= 84));
-    assert.ok(selectedLabel, "selected annotation must remain rendered");
-    assert.match(visibleText(selectedLabel), /\.\.\.$/);
-    assert.match(selectedTitle.props.children.join(""), /long-final-value/);
-  });
-
-  test("retains one active row within bounded overflow slots", () => {
-    const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
-    const annotations = Array.from({ length: 10 }, (_, index) => ({
-      id: `annotation-${String(index).padStart(2, "0")}`,
-      label: `Annotation ${index}`,
-      requestedValue: index,
-      resolvedValue: index,
-      anchor: { index },
-      targetSurfaceIds: [`surface-${index}`],
-    }));
-    const tree = ParameterAnnotationOverlay({
-      annotations,
-      selectedAnnotationId: "annotation-07",
-      viewportWidth: 300,
-      viewportHeight: 84,
-    });
-
-    const selectedLabels = collectElements(
-      tree,
-      (node) => node.type === "text" && /selected/.test(node.props.className),
-    );
-    const coordinates = selectedLabels.map((label) => `${label.props.x},${label.props.y}`);
-
-    assert.equal(selectedLabels.length, 1);
-    assert.ok(selectedLabels.length <= 3);
-    assert.equal(new Set(coordinates).size, selectedLabels.length);
-    assert.ok(selectedLabels.every((label) => label.props.x >= 0 && label.props.x <= 300));
-    assert.ok(selectedLabels.every((label) => label.props.y >= 0 && label.props.y <= 84));
-  });
-
-  test("hard clips wide-glyph labels to a bounded region and preserves the full title", () => {
-    const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
-    const wideValue = "W".repeat(160);
+    const longValue = "W".repeat(160);
     const tree = ParameterAnnotationOverlay({
       annotations: [{
-        id: "wide-glyph",
-        label: `Wide ${wideValue}`,
-        requestedValue: wideValue,
-        resolvedValue: wideValue,
-        anchor: { id: "wide-glyph" },
-        selected: true,
+        id: "long",
+        label: "Long parameter",
+        requestedValue: longValue,
+        resolvedValue: longValue,
+        targetSurfaceIds: ["surface-long"],
       }],
-      projectAnchor: () => ({ x: 90, y: 35 }),
-      viewportWidth: 180,
-      viewportHeight: 70,
+      selectedAnnotationId: "long",
     });
 
-    const label = collectElements(tree, (node) => node.type === "text")[0];
-    const title = collectElements(label, (node) => node.type === "title")[0];
-    const clipPath = collectElements(tree, (node) => node.type === "clipPath")[0];
-    assert.ok(clipPath, "wide labels require an SVG clip path");
-    const clipRect = collectElements(clipPath, (node) => node.type === "rect")[0];
-    assert.ok(clipRect, "clip path requires a bounded rectangle");
-
-    assert.equal(label.props.clipPath, `url(#${clipPath.props.id})`);
-    assert.ok(clipRect.props.x >= 0);
-    assert.ok(clipRect.props.y >= 0);
-    assert.ok(clipRect.props.x + clipRect.props.width <= 180);
-    assert.ok(clipRect.props.y + clipRect.props.height <= 70);
-    assert.match(title.props.children.join(""), new RegExp(wideValue));
+    const button = collectElements(tree, (node) => node.type === "button")[0];
+    assert.match(button.props.className, /selected/);
+    assert.match(button.props.title, new RegExp(longValue));
+    assert.match(visibleText(button), new RegExp(longValue));
   });
 });

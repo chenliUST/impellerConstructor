@@ -16,7 +16,7 @@ function nonBackgroundRatio(buffer) {
     const red = png.data[index];
     const green = png.data[index + 1];
     const blue = png.data[index + 2];
-    if (Math.abs(red - 238) + Math.abs(green - 242) + Math.abs(blue - 240) > 24) changed += 1;
+    if (Math.abs(red - 245) + Math.abs(green - 245) + Math.abs(blue - 245) > 24) changed += 1;
   }
   return changed / (png.width * png.height);
 }
@@ -73,6 +73,8 @@ async function main() {
       liveContexts: 1,
     });
     assert.ok(Number(surfaceCount) > 0);
+    assert.equal(await canvas.getAttribute("data-visible-uv-overlay-count"), "0");
+    assert.equal(await page.locator(".inspection-leader").count(), 0);
 
     const workspace = page.locator('[data-testid="inspection-workspace"]');
     const bladeSelector = page.locator('[data-testid="inspection-blade-selector"]');
@@ -95,11 +97,20 @@ async function main() {
     assert.equal(await annotationSelector.inputValue(), "all");
     await annotationSelector.selectOption("key");
 
+    const parameterRow = page.locator('[data-annotation-id="3d:thickness_max_mm"]');
+    await parameterRow.waitFor({ state: "visible" });
+    await parameterRow.click();
+    assert.equal(await parameterRow.getAttribute("aria-pressed"), "true");
+    assert.equal(await workspace.getAttribute("data-selected-annotation-id"), "3d:thickness_max_mm");
+    assert.ok(Number(await workspace.getAttribute("data-selected-surface-count")) > 0);
+
     const canvasBuffer = await canvas.screenshot();
     const ratio = nonBackgroundRatio(canvasBuffer);
     assert.ok(ratio >= 0.05, `inspection canvas ratio ${ratio} is below 0.05`);
     await captureElement(page, workspace, path.join(outputDir, "desktop-3d.png"));
     console.log("parameter inspection desktop 3D: PASS");
+    await parameterRow.click();
+    assert.equal(await workspace.getAttribute("data-selected-annotation-id"), "");
 
     await page.locator('[data-testid="inspection-tab-quad"]').click();
     await page.locator('[data-testid="inspection-workspace"][data-active-tab="quad"]').waitFor();

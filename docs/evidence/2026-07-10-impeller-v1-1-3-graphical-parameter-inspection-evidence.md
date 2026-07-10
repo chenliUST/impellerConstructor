@@ -167,3 +167,31 @@ Fresh frontend result: `188 passed, 0 failed`.
 The final browser run passed desktop 3D, desktop Quad, and narrow S-Q with `101` inspectable scene surfaces and non-background ratio `0.1986`. Lifecycle instrumentation reported `createdRenderers=3`, `liveRenderers=1`, `createdContexts=3`, and `liveContexts=1` after the tested tab transitions; no concurrent context leak was observed.
 
 The earlier 165-test geometry regression matrix and 38-test API acceptance suite remain historical relative to the final inspection-only hardening. V1.1.2 geometry construction code was not changed by the final fixes.
+
+## Monochrome Parameter Selection Hardening
+
+On 2026-07-11 the Parameter inspection presentation was simplified without changing the backend contract or V1.1.2 geometry:
+
+- inspectable surfaces render white with black `EdgesGeometry` contours;
+- selected parameter geometry renders black with white contours;
+- UV overlays, triangle wireframe, colored support-profile overlays, and parameter leader lines are absent;
+- native HTML parameter buttons replace the full-screen SVG label layer;
+- clicking a parameter row exclusively highlights its generated target surfaces, and clicking it again clears the highlight.
+
+Fresh frontend result: `187 passed, 0 failed`.
+
+Fresh browser result:
+
+```text
+parameter inspection desktop 3D: PASS
+parameter inspection desktop Quad: PASS
+parameter inspection narrow S-Q: PASS
+renderer lifecycle: created 3, live 1
+context lifecycle: created 3, live 1
+inspection scene surfaces: 101
+visible UV overlays: 0
+parameter leader elements: 0
+canvas non-background ratio: 0.1595
+```
+
+The desktop 3D screenshot captures `Thickness Max` selected: the row is black/white inverted and the related blade geometry is black with white contours. The refreshed 3D, Quad, and narrow S-Q screenshots were visually inspected; no incoherent overlap or blank viewport was observed.

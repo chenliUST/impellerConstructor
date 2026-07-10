@@ -1054,47 +1054,50 @@ pre {
   outline: none;
 }
 
-.inspection-label-region {
-  fill: #f8fbfa;
-  fill-opacity: 0.94;
-  stroke: #cbd8d3;
-  stroke-width: 1;
+.parameter-annotation-overlay {
+  display: grid;
+  max-height: min(38%, 220px);
+  gap: 3px;
+  padding: 6px 8px;
+  overflow: auto;
   pointer-events: none;
-  vector-effect: non-scaling-stroke;
 }
 
-.inspection-label {
-  fill: #17231f;
-  stroke: #f8fbfa;
-  stroke-width: 5px;
-  paint-order: stroke;
-  font: 12px Arial, sans-serif;
-  font-weight: 750;
+.inspection-label-row {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 24px;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid #c8cfcc;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #111111;
+  font: 700 12px Arial, sans-serif;
   letter-spacing: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.inspection-label-region.selected {
-  fill: #111111;
-  stroke: #111111;
-}
-
-.inspection-label.selected {
-  fill: #ffffff;
-  stroke: #111111;
-}
-
-.inspection-label-action {
+button.inspection-label-row {
   cursor: pointer;
   pointer-events: auto;
 }
 
-.inspection-label-action:focus-visible {
-  outline: none;
+button.inspection-label-row:hover {
+  border-color: #111111;
 }
 
-.inspection-label-action:focus-visible .inspection-label-region {
-  stroke: #000000;
-  stroke-width: 2;
+button.inspection-label-row:focus-visible {
+  outline: 2px solid #111111;
+  outline-offset: 1px;
+}
+
+button.inspection-label-row.selected {
+  border-color: #111111;
+  background: #111111;
+  color: #ffffff;
 }
 
 .parameter-inspection-workspace {

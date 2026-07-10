@@ -351,19 +351,15 @@ function renderSectionLoopPane({ annotations, annotationLevel, loop, onSelect, o
       onSelect,
     }),
     h(
-      "svg",
+      "div",
       {
         className: "inspection-section-annotations",
-        viewBox: "0 0 1000 700",
-        preserveAspectRatio: "none",
         "aria-label": "S-Q inspection parameters",
       },
       h(ParameterAnnotationOverlay, {
         annotations,
         selectedAnnotationId,
         onSelectAnnotation,
-        viewportWidth: 1000,
-        viewportHeight: 700,
       }),
     ),
   );

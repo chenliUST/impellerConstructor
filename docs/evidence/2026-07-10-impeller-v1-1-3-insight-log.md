@@ -49,3 +49,11 @@ Ignoring a helper UV grid in provenance is valid only when that grid is also exc
 ## Insight 10: Support Selection Has No Blade Owner
 
 Hub and shroud support surfaces are legitimate selectable geometry without a `blade_instance_id`. Their selection clears blade-owned station, segment, and control identities while the mathematical S-Q view falls back to the first valid blade station.
+
+## Insight 11: Inspection Contours Are Not UV Or Mesh Wireframe
+
+Internal UV is useful for surface construction debugging but obscures parameter-to-geometry inspection. The quiet technical view uses the already generated surface mesh only as a shaded carrier and derives necessary boundaries with an angle-filtered `EdgesGeometry`; UV and triangle edges stay hidden.
+
+## Insight 12: Parameter Rows Should Select Geometry, Not Point At It
+
+Leader lines add clutter and require fragile projection/layout logic. Native HTML parameter buttons map directly to generated surface ids, preserve keyboard behavior, and highlight geometry without covering the 3D canvas with an interactive SVG layer.

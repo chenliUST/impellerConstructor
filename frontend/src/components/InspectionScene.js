@@ -406,13 +406,10 @@ export function InspectionScene({
             return null;
           }
           return h(
-            "svg",
+            "div",
             {
               className: `inspection-annotation-viewport inspection-annotation-${viewId}`,
               key: `${viewId}:${projectionEpoch}`,
-              viewBox: `0 0 ${rect.width} ${rect.height}`,
-              width: rect.width,
-              height: rect.height,
               style: {
                 position: "absolute",
                 left: rect.x,
@@ -428,8 +425,6 @@ export function InspectionScene({
               annotations: annotationsByView[viewId] || [],
               selectedAnnotationId,
               onSelectAnnotation,
-              viewportWidth: rect.width,
-              viewportHeight: rect.height,
             }),
           );
         })
