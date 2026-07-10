@@ -16,6 +16,7 @@ export function viewModeOptions() {
     { id: "cfd_full_360", label: "CFD full 360" },
     { id: "mesh", label: "CFD360 mesh" },
     { id: "feature_debug", label: "Feature debug" },
+    { id: "parameter_inspection", label: "Parameter inspection" },
   ];
 }
 

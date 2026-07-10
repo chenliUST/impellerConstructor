@@ -386,16 +386,12 @@ describe("frontend application files", () => {
     assert.match(modelSource, /surfaceVisibleInView/);
   });
 
-  test("application includes V1.1.2 parameter views panel", () => {
+  test("application removes the text-only parameter panel and declares its inspection model", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
-    const stylesSource = readFileSync(resolve(root, "src/styles.css"), "utf-8");
+    const simulationSource = readFileSync(resolve(root, "src/simulationViewModel.js"), "utf-8");
 
-    assert.match(appSource, /ParameterViewsPanel/);
-    assert.match(
-      appSource,
-      /h\(ParameterViewsPanel,\s*\{\s*[\r\n\s]*activePreset,\s*[\r\n\s]*manifest,\s*[\r\n\s]*\}\)/,
-    );
-    assert.doesNotMatch(appSource, /\/\/\s*<ParameterViewsPanel\s+activePreset=\{activePreset\}\s+manifest=\{manifest\}\s*\/>/);
-    assert.match(stylesSource, /\.parameter-views-panel\s+\.annotation-list\s*\{/);
+    assert.equal(existsSync(resolve(root, "src/parameterInspectionModel.js")), true);
+    assert.doesNotMatch(appSource, /Parameter views/);
+    assert.match(simulationSource, /parameter_inspection/);
   });
 });
