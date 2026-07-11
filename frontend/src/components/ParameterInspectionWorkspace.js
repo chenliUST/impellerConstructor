@@ -20,7 +20,7 @@ import {
 } from "../engineeringDrawingModel.js?v=1.1.7";
 import { BladeFeatureScene } from "./BladeFeatureScene.js?v=1.1.5";
 import { EngineeringDrawingView } from "./EngineeringDrawingView.js?v=1.1.7";
-import { ParameterFeatureBrowser } from "./ParameterFeatureBrowser.js?v=1.1.5";
+import { ParameterFeatureBrowser } from "./ParameterFeatureBrowser.js?v=1.1.6";
 
 const h = React.createElement;
 const EMPTY_INSPECTION_ERROR = "parameter_inspection_not_generated";

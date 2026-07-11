@@ -682,7 +682,13 @@ def _loop_join_parameter_matches_source(
     if loop is None or not isinstance(join_name, str) or not isinstance(metric_name, str):
         return False
     value = loop.get("join_metrics", {}).get(join_name, {}).get(metric_name)
-    return parameter.get("requested_value") == value and parameter.get("resolved_value") == value
+    feature = _selected_feature_geometry(parameter)
+    return (
+        parameter.get("requested_value") == value
+        and parameter.get("resolved_value") == value
+        and len(feature) == 1
+        and feature[0].get("points") == _join_feature_points(loop, join_name)
+    )
 
 
 def _selected_feature_geometry(parameter: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -1723,7 +1729,7 @@ def _append_complete_engineering_parameters(
                         "kind": "polyline",
                         "id": f"{parameter_id}:loop",
                         "coordinate_system": "s_q_mm",
-                        "points": _section_loop_points(loop),
+                        "points": _join_feature_points(loop, join_name),
                     }],
                     dimension_definition=None,
                     selection_scope={
@@ -2177,6 +2183,26 @@ def _section_loop_points(loop: Mapping[str, Any]) -> list[list[float]]:
         for segment in loop["segment_references"].values()
         for point in segment["display_points_s_q_mm"]
     ]
+
+
+def _join_feature_points(loop: Mapping[str, Any], join_name: str) -> list[list[float]]:
+    segments = loop.get("segment_references", {})
+    roles = {
+        "pressure_to_leading": ("pressure_side", "start", "leading_edge", "start"),
+        "leading_to_suction": ("leading_edge", "end", "suction_side", "start"),
+        "suction_to_trailing": ("suction_side", "end", "trailing_edge", "start"),
+        "trailing_to_pressure": ("trailing_edge", "end", "pressure_side", "end"),
+    }.get(join_name)
+    if roles is None:
+        return []
+    first_name, first_end, second_name, second_end = roles
+    first = segments.get(first_name, {}).get("display_points_s_q_mm", [])
+    second = segments.get(second_name, {}).get("display_points_s_q_mm", [])
+    if len(first) < 2 or len(second) < 2:
+        return []
+    first_pair = [first[1], first[0]] if first_end == "start" else [first[-2], first[-1]]
+    second_pair = [second[0], second[1]] if second_end == "start" else [second[-1], second[-2]]
+    return copy.deepcopy(first_pair + second_pair)
 
 
 def _section_loop_points_xyz(loop: Mapping[str, Any]) -> list[list[float]]:

@@ -3,16 +3,31 @@ import React from "react";
 const h = React.createElement;
 
 export function ParameterFeatureBrowser({ groups = [], selectedParameterId = null, onSelect = null }) {
+  const [openGroups, setOpenGroups] = React.useState(() => new Set(
+    groups.filter((group) => group.collapsed === false).map((group) => group.groupId),
+  ));
   return h(
     "aside",
     { className: "engineering-parameter-browser", "aria-label": "Engineering parameters" },
     [...groups]
       .sort(compareRecords)
-      .map((group) => h(
+      .map((group) => {
+        const open = openGroups.has(group.groupId);
+        return h(
         "details",
-        { key: group.groupId, className: "engineering-parameter-group", open: group.collapsed === false },
+        {
+          key: group.groupId,
+          className: "engineering-parameter-group",
+          open,
+          onToggle: (event) => setOpenGroups((current) => {
+            const next = new Set(current);
+            if (event.currentTarget.open) next.add(group.groupId);
+            else next.delete(group.groupId);
+            return next;
+          }),
+        },
         h("summary", null, group.label),
-        h(
+        open ? h(
           "div",
           { className: "engineering-parameter-list" },
           [...(group.parameters || [])].sort(compareRecords).map((parameter) => {
@@ -36,8 +51,9 @@ export function ParameterFeatureBrowser({ groups = [], selectedParameterId = nul
               parameter.label,
             );
           }),
-        ),
-      )),
+        ) : null,
+      );
+      }),
   );
 }
 

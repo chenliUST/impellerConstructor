@@ -395,9 +395,9 @@ def test_contract_exposes_authoritative_nurbs_pose_thickness_and_join_records():
     joins = contract["section_loops"][loop_id]["join_metrics"]
     for join_name, metrics in joins.items():
         for metric_name, value in metrics.items():
-            assert parameters[
-                f"blade:blade_0:station:{station_id}:join:{join_name}:{metric_name}"
-            ]["resolved_value"] == value
+            parameter = parameters[f"blade:blade_0:station:{station_id}:join:{join_name}:{metric_name}"]
+            assert parameter["resolved_value"] == value
+            assert len(parameter["feature_geometry"][0]["points"]) == 4
 
 
 def test_section_nurbs_metadata_is_not_invented_when_generated_segments_do_not_carry_it():

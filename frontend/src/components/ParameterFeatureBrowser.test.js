@@ -11,7 +11,7 @@ function loadComponent(path, exportName) {
   const source = readFileSync(path, "utf-8")
     .replace(
       'import React from "react";',
-      'const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props || {}), children } }) };',
+      'const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props || {}), children } }), useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}] };',
     )
     .replace(/export function /g, "function ");
   const module = { exports: {} };
@@ -91,9 +91,9 @@ describe("ParameterFeatureBrowser", () => {
     assert.equal(groups.length, 2);
     assert.equal(groups[0].props.open, false);
     assert.equal(groups[1].props.open, true);
-    assert.equal(buttons.length, 4);
-    assert.equal(buttons[1].props["data-parameter-id"], "curve:control:0");
-    assert.equal(buttons[2].props["data-parameter-id"], "curve:control:1");
+    assert.equal(buttons.length, 3);
+    assert.equal(buttons[0].props["data-parameter-id"], "curve:control:0");
+    assert.equal(buttons[1].props["data-parameter-id"], "curve:control:1");
   });
 
   test("exposes applicable views for disabled parameters and clears the active selection", () => {

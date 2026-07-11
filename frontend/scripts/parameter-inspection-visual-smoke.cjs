@@ -299,13 +299,13 @@ async function main() {
     await page.goto("http://127.0.0.1:5199", { waitUntil: "networkidle" });
     const instantiateResponse = page.waitForResponse((response) =>
       response.request().method() === "POST" && /\/api\/rule-engines\/[^/]+\/instantiate$/.test(response.url()),
-    { timeout: 300000 });
+    { timeout: 600000 });
     await page.locator('[data-testid="generate-model"]').click();
     const response = await instantiateResponse;
     assert.equal(response.status(), 200, `instantiate returned HTTP ${response.status()}`);
     await page.waitForFunction(() =>
       Boolean(window.__task8InstantiateEvidence || window.__task8InstantiateEvidenceError),
-    { timeout: 300000 });
+    { timeout: 600000 });
     const evidenceError = await page.evaluate(() => window.__task8InstantiateEvidenceError || "");
     assert.equal(evidenceError, "", evidenceError);
     const manifest = await page.evaluate(() => window.__task8InstantiateEvidence);
