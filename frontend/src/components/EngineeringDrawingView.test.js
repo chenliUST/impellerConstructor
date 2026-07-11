@@ -4,6 +4,12 @@ import { resolve } from "node:path";
 import { describe, test } from "node:test";
 import vm from "node:vm";
 
+import {
+  engineeringDrawingBounds,
+  layoutEngineeringDimension,
+  projectEngineeringFeature,
+} from "../engineeringDrawingModel.js";
+
 const root = resolve(import.meta.dirname, "..", "..");
 const drawingPath = resolve(root, "src/components/EngineeringDrawingView.js");
 
@@ -24,10 +30,9 @@ function loadComponent(path, exportName) {
     Number,
     Object,
     String,
-    projectEngineeringFeature: (feature) => feature.kind === "control_point"
-      ? { id: feature.id, kind: "point", point: feature.coordinates, className: "engineering-feature" }
-      : { id: feature.id, kind: "path", points: feature.control_points || feature.points, className: "engineering-feature" },
-    layoutEngineeringDimension: () => [],
+    engineeringDrawingBounds,
+    layoutEngineeringDimension,
+    projectEngineeringFeature,
   });
   vm.runInContext(`${source}\nmodule.exports = { ${exportName} };`, context, { filename: path });
   return module.exports[exportName];
@@ -63,6 +68,7 @@ describe("EngineeringDrawingView", () => {
     assert.match(source, /engineering-context/);
     assert.match(source, /engineering-feature/);
     assert.match(source, /engineering-dimension/);
+    assert.match(source, /engineeringDrawingBounds/);
     assert.match(source, /"path"/);
     assert.match(source, /"circle"/);
     assert.match(source, /"line"/);
@@ -71,7 +77,7 @@ describe("EngineeringDrawingView", () => {
     assert.doesNotMatch(source, /material|uv|triangle|leader/i);
   });
 
-  test("renders SVG context, selected feature geometry, and dimensions without non-SVG graphics", () => {
+  test("projects context, features, and dimensions into one equal-aspect canvas frame", () => {
     if (!existsSync(drawingPath)) {
       return;
     }
@@ -79,25 +85,41 @@ describe("EngineeringDrawingView", () => {
     const EngineeringDrawingView = loadComponent(drawingPath, "EngineeringDrawingView");
     const tree = EngineeringDrawingView({
       viewId: "s_q",
-      contextPrimitives: [{ id: "context", kind: "path", points: [[20, 20], [80, 80]] }],
+      contextPrimitives: [{ id: "context", kind: "polyline", points: [[0, 0], [100, 0]] }],
       selectedParameter: {
         id: "curve",
         label: "Blade curve",
         features: [
-          { id: "curve", kind: "nurbs_curve", control_points: [[20, 20], [50, 70], [80, 20]] },
-          { id: "control", kind: "control_point", coordinates: [50, 70] },
+          { id: "curve", kind: "nurbs_curve", control_points: [[0, 0], [50, 50], [100, 0]] },
+          { id: "control", kind: "control_point", coordinates: [50, 50] },
         ],
+        dimension: { id: "chord", kind: "linear", measurement_points: [[0, 0], [100, 0]], resolvedValue: 100, unit: "mm" },
       },
     });
     const svg = collectElements(tree, (node) => node.type === "svg")[0];
     const paths = collectElements(tree, (node) => node.type === "path");
+    const featurePath = paths.find((node) => /engineering-feature/.test(node.props.className));
     const polygon = collectElements(tree, (node) => node.type === "polygon")[0];
     const point = collectElements(tree, (node) => node.type === "circle")[0];
+    const dimensionLines = collectElements(tree, (node) => node.type === "line");
+    const dimensionPaths = paths.filter((node) => !node.props.className);
+    const dimensionText = collectElements(tree, (node) => node.type === "text")[0];
 
     assert.equal(svg.props.role, "img");
     assert.match(paths[0].props.className, /engineering-context/);
+    assert.equal(paths[0].props.d, "M 16 108 L 984 108");
+    assert.match(featurePath.props.className, /engineering-feature/);
+    assert.equal(featurePath.props.d, "M 16 108 L 500 592 L 984 108");
     assert.match(polygon.props.className, /engineering-feature/);
+    assert.equal(polygon.props.points, "16,108 500,592 984,108");
     assert.match(point.props.className, /engineering-feature/);
+    assert.deepEqual([point.props.cx, point.props.cy], [500, 592]);
+    assert.equal(dimensionLines.length, 3);
+    assert.deepEqual([dimensionLines[0].props.x1, dimensionLines[0].props.y1], [16, 90]);
+    assert.deepEqual([dimensionLines[1].props.x1, dimensionLines[1].props.y1], [16, 108]);
+    assert.deepEqual([dimensionLines[2].props.x1, dimensionLines[2].props.y1], [984, 108]);
+    assert.equal(dimensionPaths.length, 2);
+    assert.equal(dimensionText.props.children[0], "100 mm");
     assert.equal(collectElements(tree, (node) => node.type === "canvas").length, 0);
   });
 });

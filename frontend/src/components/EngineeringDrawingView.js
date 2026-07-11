@@ -1,16 +1,22 @@
 import React from "react";
 
-import { layoutEngineeringDimension, projectEngineeringFeature } from "../engineeringDrawingModel.js?v=1.1.5";
+import {
+  engineeringDrawingBounds,
+  layoutEngineeringDimension,
+  projectEngineeringFeature,
+} from "../engineeringDrawingModel.js?v=1.1.5";
 
 const h = React.createElement;
 const VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
 
 export function EngineeringDrawingView({ viewId, contextPrimitives = [], selectedParameter = null }) {
-  const selectedFeatures = projectSelectedFeatures(selectedParameter?.features, viewId);
+  const projection = createProjectionContext(viewId, contextPrimitives, selectedParameter?.features);
+  const contextFeatures = projectFeatures(contextPrimitives, projection, "engineering-context");
+  const selectedFeatures = projectFeatures(selectedParameter?.features, projection, "engineering-feature");
   const dimensions = selectedParameter?.dimension
     ? layoutEngineeringDimension(
       selectedParameter.dimension,
-      { viewId, primitives: [...contextPrimitives, ...selectedFeatures] },
+      { ...projection, primitives: [...contextFeatures, ...selectedFeatures] },
       VIEWBOX,
     )
     : [];
@@ -29,28 +35,45 @@ export function EngineeringDrawingView({ viewId, contextPrimitives = [], selecte
         role: "img",
         "aria-label": label,
       },
-      contextPrimitives.map((primitive, index) => renderPrimitive(primitive, "engineering-context", `context:${index}`)),
+      contextFeatures.map((primitive, index) => renderPrimitive(primitive, "engineering-context", `context:${index}`)),
       selectedFeatures.map((primitive, index) => renderSelectedFeature(primitive, `feature:${index}`)),
       dimensions.map((primitive, index) => renderPrimitive(primitive, "engineering-dimension", `dimension:${index}`)),
     ),
   );
 }
 
-function projectSelectedFeatures(features, viewId) {
+function createProjectionContext(viewId, contextFeatures, selectedFeatures) {
+  const rawContext = projectFeatures(contextFeatures, { viewId, frame: null }, "engineering-context");
+  const rawSelected = projectFeatures(selectedFeatures, { viewId, frame: null }, "engineering-feature");
+  const bounds = engineeringDrawingBounds(rawContext, rawSelected) || {
+    minX: 0,
+    minY: 0,
+    maxX: 1,
+    maxY: 1,
+  };
+  return { viewId, frame: { bounds, viewport: VIEWBOX } };
+}
+
+function projectFeatures(features, projection, className) {
   return (Array.isArray(features) ? features : []).flatMap((feature) => {
-    const primitive = projectEngineeringFeature({ ...feature, className: "engineering-feature" }, viewId);
+    const primitive = projectEngineeringFeature({ ...feature, className }, projection.viewId, projection.frame);
     return primitive ? [{ ...primitive, sourceKind: feature.kind }] : [];
   });
 }
 
 function renderSelectedFeature(primitive, key) {
   if (primitive.sourceKind === "nurbs_curve" && primitive.kind === "path") {
-    return h("polygon", {
-      key,
-      className: "engineering-feature engineering-control-polygon",
-      points: pointsAttribute(primitive.points),
-      fill: "none",
-    });
+    return h(
+      "g",
+      { key },
+      renderPrimitive(primitive, "engineering-feature", `${key}:curve`),
+      h("polygon", {
+        key: `${key}:control-polygon`,
+        className: "engineering-feature engineering-control-polygon",
+        points: pointsAttribute(primitive.points),
+        fill: "none",
+      }),
+    );
   }
   return renderPrimitive(primitive, "engineering-feature", key);
 }
