@@ -621,7 +621,7 @@ Expected: zero failures.
 
 - [ ] **Step 4: Start or confirm local services**
 
-Backend: `http://127.0.0.1:8061`  
+Backend: `http://127.0.0.1:8061`
 Frontend: `http://127.0.0.1:5199`
 
 Both must load from this worktree and return HTTP 200.

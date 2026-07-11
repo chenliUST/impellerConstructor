@@ -1,8 +1,8 @@
 # Impeller Engineering Parameter Inspection Design
 
-**Date:** 2026-07-11  
-**Status:** Approved for implementation planning  
-**Scope:** Frontend inspection UX plus authoritative backend `parameter_inspection` evidence  
+**Date:** 2026-07-11
+**Status:** Approved for implementation planning
+**Scope:** Frontend inspection UX plus authoritative backend `parameter_inspection` evidence
 **Geometry:** Preserve V1.1.2 construction semantics
 
 ## 1. Goal
