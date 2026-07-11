@@ -57,3 +57,11 @@ Internal UV is useful for surface construction debugging but obscures parameter-
 ## Insight 12: Parameter Rows Should Select Geometry, Not Point At It
 
 Leader lines add clutter and require fragile projection/layout logic. Native HTML parameter buttons map directly to generated surface ids, preserve keyboard behavior, and highlight geometry without covering the 3D canvas with an interactive SVG layer.
+
+## Insight 13: Selection Must Expose Authoritative Construction Evidence
+
+Parameter selection identifies authoritative construction evidence; it never substitutes whole-surface material highlighting for feature geometry. A red primitive that is detached from its blade, a blue dimension without its black construction boundaries, or a parameter disabled in its required view is not acceptance evidence even when the DOM contains correctly colored elements.
+
+## Insight 14: Pixel Evidence Complements DOM Contracts
+
+Class names and computed colors prove styling intent, not visible engineering content. Task 8 therefore checks drawing-interior black/red/blue pixels and verifies that red 3D feature pixels contact neutral blade context. This caught a blank Top drawing, absent Meridional root boundaries, and detached S-Q-derived 3D feature geometry that element-count assertions alone reported as present.
