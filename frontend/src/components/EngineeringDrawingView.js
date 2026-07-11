@@ -46,7 +46,7 @@ export function EngineeringDrawingView({ viewId, contextPrimitives = [], selecte
 function contextProjection(viewId, contextPrimitives) {
   const descriptor = (Array.isArray(contextPrimitives) ? contextPrimitives : [])
     .map((primitive) => primitive?.projection)
-    .find((projection) => projection?.viewId && projection.frame);
+    .find((projection) => typeof projection?.viewId === "string" && projection.viewId.length > 0);
   return descriptor ? { viewId: descriptor.viewId || viewId, frame: descriptor.frame } : null;
 }
 

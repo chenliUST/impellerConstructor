@@ -133,4 +133,42 @@ describe("EngineeringDrawingView", () => {
     assert.equal(dimensionText.props.children[0], "100 mm");
     assert.equal(collectElements(tree, (node) => node.type === "canvas").length, 0);
   });
+
+  test("uses a valid unframed Task 4 descriptor for context, selected geometry, and dimensions", () => {
+    const EngineeringDrawingView = loadComponent(drawingPath, "EngineeringDrawingView");
+    const contextPrimitives = [
+      projectEngineeringFeature({ id: "context-path", kind: "polyline", points: [[0, 0], [100, 0]] }, "s_q"),
+      projectEngineeringFeature({ id: "context-point", kind: "point", coordinates: [0, 0] }, "s_q"),
+    ];
+    const tree = EngineeringDrawingView({
+      viewId: "s_q",
+      contextPrimitives,
+      selectedParameter: {
+        id: "curve",
+        label: "Blade curve",
+        features: [
+          { id: "curve", kind: "nurbs_curve", control_points: [[0, 0], [50, 50], [100, 0]] },
+          { id: "control", kind: "control_point", coordinates: [50, 50] },
+        ],
+        dimension: { id: "chord", kind: "linear", measurement_points: [[0, 0], [100, 0]], resolvedValue: 100, unit: "mm" },
+      },
+    });
+    const paths = collectElements(tree, (node) => node.type === "path");
+    const contextPath = paths.find((node) => /engineering-context/.test(node.props.className));
+    const featurePath = paths.find((node) => /engineering-feature/.test(node.props.className));
+    const featurePoint = collectElements(tree, (node) => node.type === "circle")
+      .find((node) => /engineering-feature/.test(node.props.className));
+    const dimension = collectElements(tree, (node) => node.type === "g")
+      .find((node) => node.props.className === "engineering-dimension");
+
+    assert.ok(contextPath, "expected black Task 4 context path");
+    assert.ok(featurePath, "expected red selected feature path");
+    assert.ok(featurePoint, "expected red selected control point");
+    assert.equal(contextPath.props.d, "M 0 0 L 100 0");
+    assert.equal(featurePath.props.d, "M 0 0 L 50 50 L 100 0");
+    assert.deepEqual([featurePoint.props.cx, featurePoint.props.cy], [50, 50]);
+    assert.ok(dimension);
+    assert.equal(collectElements(dimension, (node) => node.type === "line").length, 3);
+    assert.equal(collectElements(dimension, (node) => node.type === "text")[0].props.children[0], "100 mm");
+  });
 });
