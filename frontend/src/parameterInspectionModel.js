@@ -15,6 +15,34 @@ const SEGMENT_FACE_FAMILY = {
   trailing_edge: "blade_trailing_edge",
 };
 
+const ENGINEERING_FEATURE_KINDS = new Set([
+  "nurbs_curve",
+  "polyline",
+  "control_point",
+  "point",
+  "local_frame",
+  "reference_axis",
+]);
+
+const ENGINEERING_DIMENSION_KINDS = new Set([
+  "linear",
+  "radial",
+  "diameter",
+  "angular",
+  "arc_height",
+  "ordinate",
+  "control_coordinate",
+]);
+
+const ENGINEERING_CONTEXT_SCOPE_KEYS = new Set([
+  "blade_instance_id",
+  "span_station_id",
+  "section_loop_id",
+  "section_segment_id",
+  "source_control_point_id",
+  "source_attachment_surface_id",
+]);
+
 export function resolveParameterInspection(manifest) {
   if (!manifest) {
     return { status: "empty", errorCode: "parameter_inspection_not_generated" };
@@ -75,6 +103,16 @@ export function resolveParameterInspection(manifest) {
     return inspectionError("parameter_inspection_loop_not_closed");
   }
 
+  const engineeringParameters = normalizeEngineeringParameters(contract, {
+    blades,
+    stations,
+    loops,
+    profiles,
+  });
+  if (engineeringParameters == null) {
+    return inspectionError("parameter_inspection_contract_unsupported");
+  }
+
   return {
     status: "ready",
     errorCode: null,
@@ -92,7 +130,47 @@ export function resolveParameterInspection(manifest) {
       segments: segmentIndex,
       controls: controlIndex,
     },
+    engineeringParameters,
   };
+}
+
+export function engineeringParameterGroups(model, context = {}) {
+  if (model?.status !== "ready" || !Array.isArray(model.engineeringParameters)) {
+    return [];
+  }
+  return [...(model.contract.parameter_groups || [])]
+    .sort(compareEngineeringRecords)
+    .map((group) => ({
+      groupId: group.group_id,
+      label: group.label,
+      collapsed: group.collapsed,
+      order: group.order,
+      parameters: model.engineeringParameters
+        .filter((parameter) => parameter.groupId === group.group_id && engineeringParameterMatchesContext(parameter, context))
+        .sort(compareEngineeringRecords),
+    }))
+    .filter((group) => group.parameters.length > 0);
+}
+
+export function engineeringParameterById(model, id) {
+  if (model?.status !== "ready" || !nonemptyString(id)) {
+    return null;
+  }
+  return model.engineeringParameters.find((parameter) => parameter.id === id) || null;
+}
+
+export function equivalentParameterId(model, currentId, nextContext = {}) {
+  const current = engineeringParameterById(model, currentId);
+  if (!current) {
+    return null;
+  }
+  const match = model.engineeringParameters
+    .filter((parameter) => parameter.groupId === current.groupId)
+    .filter((parameter) => engineeringParameterMatchesContext(parameter, nextContext))
+    .filter((parameter) => selectionScopeMatchesContext(parameter.selectionScope, nextContext))
+    .filter((parameter) => equivalentEngineeringScope(current.selectionScope, parameter.selectionScope))
+    .sort(compareEngineeringRecords)[0];
+  return match?.id || null;
 }
 
 export function defaultInspectionSelection(model) {
@@ -500,6 +578,303 @@ function titleCase(value) {
     .filter(Boolean)
     .map((word) => word[0].toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function normalizeEngineeringParameters(contract, indices) {
+  const hasGroups = Object.hasOwn(contract, "parameter_groups");
+  const hasParameters = Object.hasOwn(contract, "parameters");
+  if (hasGroups !== hasParameters) {
+    return null;
+  }
+  if (!hasGroups) {
+    return [];
+  }
+  const groups = contract.parameter_groups;
+  const parameters = contract.parameters;
+  if (!engineeringRecordsValid(groups, parameters, indices)) {
+    return null;
+  }
+  return parameters.map((parameter) => ({
+    id: parameter.parameter_id,
+    groupId: parameter.group_id,
+    label: parameter.label,
+    requestedValue: parameter.requested_value,
+    resolvedValue: parameter.resolved_value,
+    unit: parameter.unit,
+    applicableViews: [...parameter.applicable_views],
+    features: parameter.feature_geometry.map((feature) => ({ ...feature })),
+    dimension: parameter.dimension_definition == null ? null : { ...parameter.dimension_definition },
+    selectionScope: { ...parameter.selection_scope },
+    order: parameter.order,
+  }));
+}
+
+function engineeringRecordsValid(groups, parameters, indices) {
+  if (!Array.isArray(groups) || groups.length === 0 || !Array.isArray(parameters)) {
+    return false;
+  }
+  const groupIds = new Set();
+  for (const group of groups) {
+    if (
+      !isRecord(group)
+      || !nonemptyString(group.group_id)
+      || groupIds.has(group.group_id)
+      || !nonemptyString(group.label)
+      || !integer(group.order)
+      || typeof group.collapsed !== "boolean"
+    ) {
+      return false;
+    }
+    groupIds.add(group.group_id);
+  }
+
+  const parameterIds = new Set();
+  const primitiveIds = new Set();
+  const requiredFields = [
+    "parameter_id",
+    "group_id",
+    "label",
+    "requested_value",
+    "resolved_value",
+    "unit",
+    "applicable_views",
+    "feature_geometry",
+    "dimension_definition",
+    "selection_scope",
+    "order",
+  ];
+  return parameters.every((parameter) => {
+    if (
+      !isRecord(parameter)
+      || !requiredFields.every((field) => Object.hasOwn(parameter, field))
+      || !nonemptyString(parameter.parameter_id)
+      || parameterIds.has(parameter.parameter_id)
+      || !groupIds.has(parameter.group_id)
+      || !nonemptyString(parameter.label)
+      || !nonemptyString(parameter.unit)
+      || !integer(parameter.order)
+      || !engineeringValueFinite(parameter.requested_value)
+      || !engineeringValueFinite(parameter.resolved_value)
+      || !applicableViewsValid(parameter.applicable_views)
+      || !selectionScopeValid(parameter.selection_scope, indices)
+      || !featureGeometryValid(parameter.feature_geometry, primitiveIds)
+      || !dimensionDefinitionValid(parameter.dimension_definition)
+    ) {
+      return false;
+    }
+    parameterIds.add(parameter.parameter_id);
+    return true;
+  });
+}
+
+function applicableViewsValid(views) {
+  return Array.isArray(views) && views.length > 0 && stringIdList(views);
+}
+
+function featureGeometryValid(features, primitiveIds) {
+  if (!Array.isArray(features) || features.length === 0) {
+    return false;
+  }
+  return features.every((feature) => {
+    if (
+      !isRecord(feature)
+      || !ENGINEERING_FEATURE_KINDS.has(feature.kind)
+      || !nonemptyString(feature.id)
+      || primitiveIds.has(feature.id)
+      || !nonemptyString(feature.coordinate_system)
+      || !engineeringValueFinite(feature)
+      || !featureCoordinatesValid(feature)
+    ) {
+      return false;
+    }
+    primitiveIds.add(feature.id);
+    return true;
+  });
+}
+
+function featureCoordinatesValid(feature) {
+  switch (feature.kind) {
+    case "nurbs_curve":
+      return coordinateArray(feature.control_points);
+    case "polyline":
+      return coordinateArray(feature.points);
+    case "control_point":
+    case "point":
+      return coordinateVector(feature.coordinates);
+    case "local_frame":
+      return coordinateVector(feature.origin) && coordinateVector(feature.s_axis) && coordinateVector(feature.q_axis);
+    case "reference_axis":
+      return coordinateVector(feature.origin) && coordinateVector(feature.direction);
+    default:
+      return false;
+  }
+}
+
+function dimensionDefinitionValid(definition) {
+  if (definition == null) {
+    return true;
+  }
+  if (
+    !isRecord(definition)
+    || !ENGINEERING_DIMENSION_KINDS.has(definition.kind)
+    || !nonemptyString(definition.unit)
+    || !finiteNumber(definition.tolerance)
+    || definition.tolerance < 0
+    || !coordinateArray(definition.measurement_points, 2)
+    || !engineeringValueFinite(definition)
+  ) {
+    return false;
+  }
+  const [start, end] = definition.measurement_points;
+  if (definition.kind === "angular") {
+    return coordinateVector(definition.reference_direction)
+      && coordinateVector(definition.measured_direction)
+      && definition.reference_direction.length === definition.measured_direction.length
+      && vectorNorm(definition.reference_direction) > 1e-9
+      && vectorNorm(definition.measured_direction) > 1e-9;
+  }
+  if (definition.kind === "arc_height") {
+    return definition.measurement_points.length >= 3 && pointDistance(start, end) > 1e-9;
+  }
+  return definition.kind === "control_coordinate" || pointDistance(start, end) > 1e-9;
+}
+
+function selectionScopeValid(scope, indices) {
+  if (!isRecord(scope) || !engineeringValueFinite(scope)) {
+    return false;
+  }
+  const profileId = scope.support_profile_id;
+  if (profileId != null && !indices.profiles[profileId]) {
+    return false;
+  }
+  const bladeId = scope.blade_instance_id;
+  if (bladeId != null && !indices.blades[bladeId]) {
+    return false;
+  }
+  const stationId = scope.span_station_id;
+  const station = stationId == null ? null : indices.stations[stationId];
+  if (stationId != null && (!station || (bladeId != null && station.blade_instance_id !== bladeId))) {
+    return false;
+  }
+  const loopId = scope.section_loop_id;
+  const loop = loopId == null ? null : indices.loops[loopId];
+  if (loopId != null && (!loop || (stationId != null && loop.span_station_id !== stationId))) {
+    return false;
+  }
+  const segmentId = scope.section_segment_id;
+  if (segmentId != null) {
+    const segment = loop && Object.values(loop.segment_references).find((record) => record.section_segment_id === segmentId);
+    if (!segment) {
+      return false;
+    }
+    const controlPointId = scope.source_control_point_id;
+    if (controlPointId != null && !segment.control_points.some((record) => record.control_point_id === controlPointId)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function engineeringParameterMatchesContext(parameter, suppliedContext) {
+  const context = isRecord(suppliedContext) ? suppliedContext : {};
+  const scope = parameter.selectionScope;
+  const viewId = context.viewId;
+  if (viewId != null && !parameter.applicableViews.includes(viewId) && !(viewId === "3d" && parameter.applicableViews.includes("blade_3d"))) {
+    return false;
+  }
+  return contextScopeEntries(context).every(([contextKey, scopeKey]) =>
+    !Object.hasOwn(scope, scopeKey) || scope[scopeKey] === context[contextKey]);
+}
+
+function selectionScopeMatchesContext(scope, suppliedContext) {
+  const context = isRecord(suppliedContext) ? suppliedContext : {};
+  return contextScopeEntries(context).every(([contextKey, scopeKey]) =>
+    scope[scopeKey] === context[contextKey]);
+}
+
+function contextScopeEntries(context) {
+  return [
+    ["bladeId", "blade_instance_id"],
+    ["spanStationId", "span_station_id"],
+    ["sectionLoopId", "section_loop_id"],
+    ["sectionSegmentId", "section_segment_id"],
+    ["controlPointId", "source_control_point_id"],
+    ["supportProfileId", "support_profile_id"],
+  ].filter(([contextKey]) => Object.hasOwn(context, contextKey));
+}
+
+function equivalentEngineeringScope(left, right) {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  return [...keys].every((key) =>
+    ENGINEERING_CONTEXT_SCOPE_KEYS.has(key) || engineeringValueEqual(left[key], right[key]));
+}
+
+function compareEngineeringRecords(left, right) {
+  return left.order - right.order || engineeringRecordId(left).localeCompare(engineeringRecordId(right));
+}
+
+function engineeringRecordId(record) {
+  return record.id || record.groupId || record.parameter_id || record.group_id;
+}
+
+function engineeringValueEqual(left, right) {
+  if (left === right) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => engineeringValueEqual(value, right[index]));
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) {
+      return false;
+    }
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+    return [...keys].every((key) => engineeringValueEqual(left[key], right[key]));
+  }
+  return false;
+}
+
+function engineeringValueFinite(value) {
+  if (typeof value === "boolean" || typeof value === "string") {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every(engineeringValueFinite);
+  }
+  return isRecord(value) && Object.values(value).every(engineeringValueFinite);
+}
+
+function coordinateVector(value) {
+  return Array.isArray(value) && value.length >= 2 && value.every(finiteNumber);
+}
+
+function coordinateArray(value, minimumCount = 1) {
+  return Array.isArray(value)
+    && value.length >= minimumCount
+    && value.every(coordinateVector)
+    && new Set(value.map((point) => point.length)).size === 1;
+}
+
+function integer(value) {
+  return Number.isInteger(value) && typeof value !== "boolean";
+}
+
+function finiteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function pointDistance(left, right) {
+  return Math.hypot(...left.map((value, index) => right[index] - value));
+}
+
+function vectorNorm(vector) {
+  return Math.hypot(...vector);
 }
 
 function inspectionError(errorCode) {

@@ -7,6 +7,9 @@ import {
   INSPECTION_TABS,
   annotationsForView,
   defaultInspectionSelection,
+  engineeringParameterById,
+  engineeringParameterGroups,
+  equivalentParameterId,
   normalizeInspectionSelection,
   reduceInspectionSelection,
   resolveParameterInspection,
@@ -208,6 +211,106 @@ function manifestFixture() {
   };
 }
 
+function engineeringManifestFixture() {
+  const manifest = manifestFixture();
+  const contract = manifest.parameter_inspection;
+  const loopId = "blade_0:span_0:loop";
+  const segmentId = `${loopId}:pressure_side`;
+  const controlPointId = contract.section_loops[loopId].segment_references.pressure_side.control_points[1].control_point_id;
+  const baseScope = {
+    blade_instance_id: "blade_0",
+    span_station_id: "blade_0:span_0",
+    section_loop_id: loopId,
+    section_segment_id: segmentId,
+  };
+  const feature = (kind, id, fields) => ({
+    id,
+    kind,
+    coordinate_system: "s_q_mm",
+    ...fields,
+  });
+  const dimensions = [
+    { kind: "linear", measurement_points: [[0, 0], [1, 0]] },
+    { kind: "radial", measurement_points: [[0, 0], [1, 0]] },
+    { kind: "diameter", measurement_points: [[0, 0], [1, 0]] },
+    {
+      kind: "angular",
+      measurement_points: [[0, 0], [1, 0]],
+      reference_direction: [1, 0],
+      measured_direction: [0, 1],
+    },
+    { kind: "arc_height", measurement_points: [[0, 0], [1, 0], [0.5, 1]] },
+    { kind: "ordinate", measurement_points: [[0, 0], [1, 0]] },
+    { kind: "control_coordinate", measurement_points: [[0, 0], [1, 0]] },
+  ].map((definition) => ({ ...definition, unit: "mm", tolerance: 0.001 }));
+  const features = [
+    feature("nurbs_curve", "feature:curve", { control_points: [[0, 0], [0.5, 1], [1, 0]] }),
+    feature("polyline", "feature:polyline", { points: [[0, 0], [1, 0]] }),
+    feature("control_point", "feature:control", { coordinates: [0.5, 1] }),
+    feature("point", "feature:point", { coordinates: [0.5, 1] }),
+    feature("local_frame", "feature:frame", { origin: [0, 0], s_axis: [1, 0], q_axis: [0, 1] }),
+    feature("reference_axis", "feature:axis", { origin: [0, 0], direction: [1, 0] }),
+  ];
+  const parameter = (id, index, overrides = {}) => ({
+    parameter_id: id,
+    group_id: "section_loop",
+    label: `Parameter ${index}`,
+    requested_value: index + 1,
+    resolved_value: index + 1,
+    unit: "mm",
+    applicable_views: ["s_q", "blade_3d"],
+    feature_geometry: [{
+      ...features[index % features.length],
+      id: `feature:${index}:${features[index % features.length].kind}`,
+    }],
+    dimension_definition: dimensions[index],
+    selection_scope: baseScope,
+    order: index,
+    ...overrides,
+  });
+
+  contract.parameter_groups = [
+    { group_id: "section_loop", label: "Section Loop", order: 10, collapsed: false },
+    { group_id: "hub", label: "Hub", order: 0, collapsed: true },
+  ];
+  contract.parameters = dimensions.map((_, index) => parameter(
+    index === 4
+      ? "blade:blade_0:station:blade_0:span_0:section:leading:sagitta"
+      : `parameter:${index}`,
+    index,
+  ));
+  contract.parameters.push(
+    parameter("blade:blade_0:station:blade_0:span_0:section:pressure:control:2:s", 7, {
+      dimension_definition: null,
+      feature_geometry: [feature("control_point", "feature:pressure-control-2", { coordinates: [0.4, -1] })],
+      selection_scope: { ...baseScope, source_segment_name: "pressure_side", source_control_index: 2, source_control_point_id: controlPointId },
+    }),
+  );
+  return manifest;
+}
+
+function addEquivalentPressureControl(manifest, bladeId = "blade_1") {
+  const contract = manifest.parameter_inspection;
+  const source = contract.parameters.find((parameter) => parameter.parameter_id.endsWith("pressure:control:2:s"));
+  const loopId = `${bladeId}:span_0:loop`;
+  const sectionSegmentId = `${loopId}:pressure_side`;
+  const controlPointId = contract.section_loops[loopId].segment_references.pressure_side.control_points[1].control_point_id;
+  contract.parameters.push({
+    ...source,
+    parameter_id: `blade:${bladeId}:station:${bladeId}:span_0:section:pressure:control:2:s`,
+    feature_geometry: [{ ...source.feature_geometry[0], id: `feature:${bladeId}:pressure-control-2` }],
+    selection_scope: {
+      ...source.selection_scope,
+      blade_instance_id: bladeId,
+      span_station_id: `${bladeId}:span_0`,
+      section_loop_id: loopId,
+      section_segment_id: sectionSegmentId,
+      source_control_point_id: controlPointId,
+    },
+    order: source.order + 1,
+  });
+}
+
 describe("parameter inspection model", () => {
   test("declares the five approved tabs and three annotation levels", () => {
     assert.deepEqual(INSPECTION_TABS.map((tab) => tab.id), ["3d", "top", "meridional", "s_q", "quad"]);
@@ -223,6 +326,71 @@ describe("parameter inspection model", () => {
     const missingSurface = manifestFixture();
     missingSurface.geometry.surface_graph.surfaces = [];
     assert.equal(resolveParameterInspection(missingSurface).errorCode, "parameter_inspection_surface_reference_missing");
+  });
+
+  test("normalizes additive engineering evidence without changing legacy contracts", () => {
+    const legacy = resolveParameterInspection(manifestFixture());
+    assert.equal(legacy.status, "ready");
+    assert.deepEqual(legacy.engineeringParameters, []);
+
+    const model = resolveParameterInspection(engineeringManifestFixture());
+    assert.equal(model.status, "ready", model.errorCode);
+    assert.deepEqual(model.engineeringParameters.map((parameter) => parameter.id), [
+      "parameter:0",
+      "parameter:1",
+      "parameter:2",
+      "parameter:3",
+      "blade:blade_0:station:blade_0:span_0:section:leading:sagitta",
+      "parameter:5",
+      "parameter:6",
+      "blade:blade_0:station:blade_0:span_0:section:pressure:control:2:s",
+    ]);
+    assert.deepEqual(model.engineeringParameters.map((parameter) => parameter.features[0].kind), [
+      "nurbs_curve", "polyline", "control_point", "point", "local_frame", "reference_axis", "nurbs_curve", "control_point",
+    ]);
+    assert.deepEqual(model.engineeringParameters.slice(0, 7).map((parameter) => parameter.dimension?.kind), [
+      "linear", "radial", "diameter", "angular", "arc_height", "ordinate", "control_coordinate",
+    ]);
+
+    const groups = engineeringParameterGroups(model, {
+      bladeId: "blade_0",
+      spanStationId: "blade_0:span_0",
+      viewId: "s_q",
+    });
+    assert.equal(groups.find((group) => group.groupId === "section_loop").parameters.length > 0, true);
+    assert.equal(
+      engineeringParameterById(model, "blade:blade_0:station:blade_0:span_0:section:leading:sagitta").dimension.kind,
+      "arc_height",
+    );
+  });
+
+  test("rejects malformed additive engineering ids coordinates views references and values", () => {
+    const cases = [
+      ["parameter id", (contract) => { contract.parameters[0].parameter_id = ""; }],
+      ["primitive id", (contract) => { contract.parameters[0].feature_geometry[0].id = ""; }],
+      ["coordinates", (contract) => { contract.parameters[0].feature_geometry[0].control_points[0][0] = Number.NaN; }],
+      ["views", (contract) => { contract.parameters[0].applicable_views = []; }],
+      ["selection reference", (contract) => { contract.parameters[0].selection_scope.span_station_id = "missing"; }],
+      ["dimension value", (contract) => { contract.parameters[0].resolved_value = Number.POSITIVE_INFINITY; }],
+    ];
+    for (const [, mutate] of cases) {
+      const manifest = engineeringManifestFixture();
+      mutate(manifest.parameter_inspection);
+      assert.equal(resolveParameterInspection(manifest).errorCode, "parameter_inspection_contract_unsupported");
+    }
+  });
+
+  test("finds a deterministic equivalent parameter in the next selection context", () => {
+    const manifest = engineeringManifestFixture();
+    addEquivalentPressureControl(manifest);
+    const model = resolveParameterInspection(manifest);
+    const currentId = "blade:blade_0:station:blade_0:span_0:section:pressure:control:2:s";
+
+    assert.equal(
+      equivalentParameterId(model, currentId, { bladeId: "blade_1", spanStationId: "blade_1:span_0" }),
+      "blade:blade_1:station:blade_1:span_0:section:pressure:control:2:s",
+    );
+    assert.equal(equivalentParameterId(model, currentId, { bladeId: "missing", spanStationId: "missing" }), null);
   });
 
   test("selects the first blade and station without mutation", () => {
