@@ -1,118 +1,125 @@
-import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import React, { useLayoutEffect, useMemo, useState } from "react";
 
 import {
-  ANNOTATION_LEVELS,
-  INSPECTION_TABS,
-  annotationsForView,
   defaultInspectionSelection,
-  reduceInspectionSelection,
+  engineeringParameterById,
+  engineeringParameterGroups,
+  equivalentParameterId,
   resolveParameterInspection,
-  sectionLoopForSelection,
-  selectedSurfaceIdsForSelection,
 } from "../parameterInspectionModel.js?v=1.1.5";
-import { InspectionScene } from "./InspectionScene.js?v=1.1.5";
-import { ParameterAnnotationOverlay } from "./ParameterAnnotationOverlay.js?v=1.1.5";
-import { SectionLoopInspectionView } from "./SectionLoopInspectionView.js?v=1.1.5";
+import {
+  engineeringDrawingBounds,
+  projectEngineeringFeature,
+} from "../engineeringDrawingModel.js?v=1.1.5";
+import { BladeFeatureScene } from "./BladeFeatureScene.js?v=1.1.5";
+import { EngineeringDrawingView } from "./EngineeringDrawingView.js?v=1.1.5";
+import { ParameterFeatureBrowser } from "./ParameterFeatureBrowser.js?v=1.1.5";
 
 const h = React.createElement;
-const GEOMETRIC_VIEW_IDS = ["3d", "top", "meridional"];
 const EMPTY_INSPECTION_ERROR = "parameter_inspection_not_generated";
-const INSPECTION_TAB_TEST_IDS = {
-  "3d": "inspection-tab-3d",
-  top: "inspection-tab-top",
-  meridional: "inspection-tab-meridional",
-  s_q: "inspection-tab-s_q",
-  quad: "inspection-tab-quad",
-};
+const DRAWING_VIEWPORT = { x: 0, y: 0, width: 1000, height: 700 };
+const NAVIGATION_SCOPE_KEYS = new Set([
+  "blade_instance_id",
+  "section_loop_id",
+  "source_attachment_surface_id",
+  "source_control_point_id",
+  "source_station_index",
+  "span_station_id",
+]);
 
-export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, viewMode }) {
-  const [activeTab, setActiveTab] = useState("3d");
-  const [annotationLevel, setAnnotationLevel] = useState("key");
-  const [activeAnnotationId, setActiveAnnotationId] = useState(null);
-  const [narrowQuad, setNarrowQuad] = useState(false);
+export const WORKSPACE_TABS = Object.freeze([
+  { id: "top", label: "Top" },
+  { id: "meridional", label: "Meridional" },
+  { id: "s_q_blade", label: "S-Q + Blade" },
+]);
+
+export function ParameterInspectionWorkspace({ manifest = null }) {
+  const [activeTab, setActiveTab] = useState("top");
   const model = useMemo(() => resolveParameterInspection(manifest), [manifest]);
-  const [selection, setSelection] = useState(() => defaultInspectionSelection(model));
+  const [navigation, setNavigation] = useState(() => defaultInspectionSelection(model));
+  const [selectedParameterId, setSelectedParameterId] = useState(null);
   const generationId = model.contract?.generation_id;
 
   useLayoutEffect(() => {
-    setActiveAnnotationId(null);
-    setSelection(defaultInspectionSelection(model));
-    setActiveTab("3d");
-  }, [generationId]);
+    setActiveTab("top");
+    setNavigation(defaultInspectionSelection(model));
+    setSelectedParameterId(null);
+  }, [generationId, model]);
 
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(max-width: 820px)");
-    const updateNarrowQuad = () => setNarrowQuad(mediaQuery.matches);
-    updateNarrowQuad();
-    mediaQuery.addEventListener("change", updateNarrowQuad);
-    return () => mediaQuery.removeEventListener("change", updateNarrowQuad);
-  }, []);
-
-  const annotationsByView = useMemo(
-    () =>
-      Object.fromEntries(
-        [...GEOMETRIC_VIEW_IDS, "s_q"].map((viewId) => [
-          viewId,
-          annotationsForView(model, viewId, annotationLevel, selection),
-        ]),
-      ),
-    [annotationLevel, model, selection],
+  const context = {
+    bladeId: navigation.bladeId,
+    spanStationId: navigation.spanStationId,
+  };
+  const parameterGroups = useMemo(
+    () => engineeringParameterGroups(model, context),
+    [model, navigation.bladeId, navigation.spanStationId],
   );
-  const selectedLoop = sectionLoopForSelection(model, selection);
-  const navigationSelection = selection.bladeId ? selection : defaultInspectionSelection(model);
-  const selectedSurfaceIds = useMemo(
-    () => selectedSurfaceIdsForSelection(model, selection),
-    [model, selection],
+  const browserGroups = useMemo(
+    () => parameterGroups.map((group) => ({
+      ...group,
+      parameters: group.parameters.map((parameter) => ({
+        ...parameter,
+        disabled: !parameterAppliesToWorkspaceView(parameter, activeTab),
+      })),
+    })),
+    [activeTab, parameterGroups],
   );
-  const activeAnnotation = Object.values(annotationsByView)
-    .flat()
-    .find((annotation) => annotation.id === activeAnnotationId);
-  const displayedSurfaceIds = activeAnnotation?.targetSurfaceIds?.length
-    ? activeAnnotation.targetSurfaceIds
-    : selectedSurfaceIds;
-  const quadLayout = narrowQuad ? "quad_stacked" : "quad";
-
-  function handleSurfaceSelection(surfaceId) {
-    setActiveAnnotationId(null);
-    const reference = model.indices.surfaces[surfaceId];
-    if (reference?.inspectable === true) {
-      setSelection((current) => reduceInspectionSelection(model, current, { surfaceId }));
-    }
-  }
-
-  function handleSectionSelection(nextSelection) {
-    setActiveAnnotationId(null);
-    setSelection((current) => reduceInspectionSelection(model, current, nextSelection));
-  }
+  const selectedParameter = engineeringParameterById(model, selectedParameterId);
+  const drawingViewId = activeTab === "s_q_blade" ? "s_q" : activeTab;
+  const drawingContext = useMemo(
+    () => engineeringContextPrimitives(parameterGroups, drawingViewId),
+    [drawingViewId, parameterGroups],
+  );
+  const drawingSelectedParameter = selectedParameter?.applicableViews.includes(drawingViewId)
+    ? selectedParameter
+    : null;
+  const bladeSelectedParameter = activeTab === "s_q_blade"
+    && selectedParameter?.applicableViews.includes("blade_3d")
+    ? selectedParameter
+    : null;
+  const selectedBlade = model.indices?.blades?.[navigation.bladeId];
+  const bladeSurfaceIds = selectedBlade?.surface_ids || [];
 
   function handleBladeSelection(bladeId) {
-    setActiveAnnotationId(null);
-    setSelection((current) => reduceInspectionSelection(model, current, { bladeId }));
+    const blade = model.indices.blades[bladeId];
+    if (!blade) {
+      return;
+    }
+    const nextContext = {
+      bladeId,
+      spanStationId: blade.span_station_ids?.[0] || null,
+    };
+    setNavigation((current) => ({ ...current, ...nextContext }));
+    setSelectedParameterId((current) =>
+      preserveEquivalentParameterId(model, current, nextContext, activeTab));
   }
 
   function handleStationSelection(spanStationId) {
-    setActiveAnnotationId(null);
-    setSelection((current) => reduceInspectionSelection(model, current, { spanStationId }));
+    const station = model.indices.stations[spanStationId];
+    if (!station) {
+      return;
+    }
+    const nextContext = {
+      bladeId: station.blade_instance_id,
+      spanStationId,
+    };
+    setNavigation((current) => ({ ...current, ...nextContext }));
+    setSelectedParameterId((current) =>
+      preserveEquivalentParameterId(model, current, nextContext, activeTab));
   }
 
   function handleTabSelection(viewId) {
-    setActiveAnnotationId(null);
     setActiveTab(viewId);
-  }
-
-  function handleAnnotationSelection(annotation) {
-    setActiveAnnotationId((current) => current === annotation.id ? null : annotation.id);
-  }
-
-  function handleAnnotationLevel(level) {
-    setActiveAnnotationId(null);
-    setAnnotationLevel(level);
+    setSelectedParameterId((current) => {
+      const parameter = engineeringParameterById(model, current);
+      return parameterAppliesToWorkspaceView(parameter, viewId) ? current : null;
+    });
   }
 
   if (model.status === "empty" && model.errorCode === EMPTY_INSPECTION_ERROR) {
     return h(
       "section",
-      { className: "parameter-inspection-workspace inspection-workspace-status", "data-testid": "inspection-workspace", "data-active-tab": activeTab },
+      { className: "parameter-inspection-workspace inspection-workspace-status", "data-testid": "inspection-workspace" },
       h("p", null, "Generate a model to inspect resolved geometry."),
     );
   }
@@ -120,7 +127,7 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
   if (model.status === "error") {
     return h(
       "section",
-      { className: "parameter-inspection-workspace inspection-workspace-status", "data-testid": "inspection-workspace", "data-active-tab": activeTab },
+      { className: "parameter-inspection-workspace inspection-workspace-status", "data-testid": "inspection-workspace" },
       h("p", { className: "inspection-error-banner" }, model.errorCode),
     );
   }
@@ -131,37 +138,38 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
       className: "parameter-inspection-workspace",
       "data-testid": "inspection-workspace",
       "data-active-tab": activeTab,
-      "data-selected-blade-id": selection.bladeId || "",
-      "data-selected-station-id": selection.spanStationId || "",
-      "data-selected-surface-count": String(displayedSurfaceIds.length),
-      "data-selected-annotation-id": activeAnnotationId || "",
+      "data-selected-blade-id": navigation.bladeId || "",
+      "data-selected-station-id": navigation.spanStationId || "",
+      "data-selected-parameter-id": selectedParameterId || "",
     },
-    h("div", { className: "inspection-provenance-badge", "data-testid": "inspection-provenance" }, "Resolved manifest | runtime 1.1.3 | geometry 1.1.2"),
     h(
       "div",
-      { className: `inspection-workspace-toolbar${narrowQuad ? " narrow" : ""}` },
+      { className: "inspection-provenance-badge", "data-testid": "inspection-provenance" },
+      "Resolved manifest | runtime 1.1.3 | geometry 1.1.2",
+    ),
+    h(
+      "div",
+      { className: "inspection-workspace-toolbar" },
       h(
         "div",
         { className: "inspection-tab-list", role: "tablist", "aria-label": "Inspection views" },
-        INSPECTION_TABS.map((tab) =>
-          h(
-            "button",
-            {
-              key: tab.id,
-              className: activeTab === tab.id ? "selected" : "",
-              type: "button",
-              role: "tab",
-              "aria-selected": activeTab === tab.id,
-              "data-testid": INSPECTION_TAB_TEST_IDS[tab.id],
-              onClick: () => handleTabSelection(tab.id),
-            },
-            tab.label,
-          ),
-        ),
+        WORKSPACE_TABS.map((tab) => h(
+          "button",
+          {
+            key: tab.id,
+            className: activeTab === tab.id ? "selected" : "",
+            type: "button",
+            role: "tab",
+            "aria-selected": activeTab === tab.id,
+            "data-testid": `inspection-tab-${tab.id}`,
+            onClick: () => handleTabSelection(tab.id),
+          },
+          tab.label,
+        )),
       ),
       h(
         "div",
-        { className: `inspection-entity-selectors${narrowQuad ? " narrow" : ""}` },
+        { className: "inspection-entity-selectors" },
         h(
           "label",
           null,
@@ -169,13 +177,12 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
           h(
             "select",
             {
-              value: navigationSelection.bladeId || "",
+              value: navigation.bladeId || "",
               "data-testid": "inspection-blade-selector",
               onInput: (event) => handleBladeSelection(event.target.value),
             },
             Object.values(model.indices.blades).map((blade) =>
-              h("option", { key: blade.blade_instance_id, value: blade.blade_instance_id }, bladeLabel(blade)),
-            ),
+              h("option", { key: blade.blade_instance_id, value: blade.blade_instance_id }, bladeLabel(blade))),
           ),
         ),
         h(
@@ -185,174 +192,152 @@ export function ParameterInspectionWorkspace({ manifest = null, visibleLayers, v
           h(
             "select",
             {
-              value: navigationSelection.spanStationId || "",
+              value: navigation.spanStationId || "",
               "data-testid": "inspection-station-selector",
               onInput: (event) => handleStationSelection(event.target.value),
             },
-            (model.indices.blades[navigationSelection.bladeId]?.span_station_ids || []).map((stationId) => {
-              const station = model.indices.stations[stationId];
-              return h("option", { key: stationId, value: stationId }, stationLabel(station));
-            }),
-          ),
-        ),
-        h(
-          "label",
-          { className: "inspection-annotation-control" },
-          h("span", null, "Annotations"),
-          h(
-            "select",
-            {
-              value: annotationLevel,
-              "data-testid": "inspection-annotation-level",
-              onInput: (event) => handleAnnotationLevel(event.target.value),
-            },
-            ANNOTATION_LEVELS.map((level) => h("option", { key: level, value: level }, level)),
+            (selectedBlade?.span_station_ids || []).map((stationId) =>
+              h("option", { key: stationId, value: stationId }, stationLabel(model.indices.stations[stationId]))),
           ),
         ),
       ),
     ),
-    activeTab === "quad"
-      ? renderQuadView({
-          annotationsByView,
-          annotationLevel,
-          handleTabSelection,
-          manifest,
-          model,
-          onSelectSurface: handleSurfaceSelection,
-          onSelectSection: handleSectionSelection,
-          onSelectAnnotation: handleAnnotationSelection,
-          selectedAnnotationId: activeAnnotationId,
-          selectedLoop,
-          selection,
-          selectedSurfaceIds: displayedSurfaceIds,
-          quadLayout,
-          viewMode,
-          visibleLayers,
-        })
-      : activeTab === "s_q"
-        ? renderSectionLoopPane({
-            annotations: annotationsByView.s_q,
-            annotationLevel,
-            loop: selectedLoop,
-            onSelect: handleSectionSelection,
-            onSelectAnnotation: handleAnnotationSelection,
-            selectedAnnotationId: activeAnnotationId,
-            selection,
-          })
+    h(
+      "div",
+      { className: "inspection-workspace-body" },
+      h(ParameterFeatureBrowser, {
+        groups: browserGroups,
+        selectedParameterId: selectedParameterId,
+        onSelect: setSelectedParameterId,
+      }),
+      activeTab === "s_q_blade"
+        ? h(
+            "div",
+            { className: "inspection-drawing-grid inspection-s-q-blade-grid" },
+            h(EngineeringDrawingView, {
+              viewId: "s_q",
+              contextPrimitives: drawingContext,
+              selectedParameter: drawingSelectedParameter,
+              selectedParameterId: selectedParameterId,
+            }),
+            h(BladeFeatureScene, {
+              surfaceGraph: model.inspectionSurfaceGraph,
+              bladeSurfaceIds,
+              selectedParameter: bladeSelectedParameter,
+              selectedParameterId: selectedParameterId,
+              manifest,
+            }),
+          )
         : h(
             "div",
-            { className: "inspection-workspace-content inspection-workspace-full" },
-            h(InspectionScene, {
-              manifest,
-              surfaceGraph: model.inspectionSurfaceGraph,
-              layout: activeTab,
-              selectedSurfaceIds: displayedSurfaceIds,
-              onSelectSurface: handleSurfaceSelection,
-              visibleLayers,
-              viewMode,
-              annotationsByView,
-              selectedAnnotationId: activeAnnotationId,
-              onSelectAnnotation: handleAnnotationSelection,
+            { className: "inspection-drawing-grid" },
+            h(EngineeringDrawingView, {
+              viewId: drawingViewId,
+              contextPrimitives: drawingContext,
+              selectedParameter: drawingSelectedParameter,
+              selectedParameterId: selectedParameterId,
             }),
           ),
+    ),
   );
 }
 
-function renderQuadView({
-  annotationsByView,
-  annotationLevel,
-  handleTabSelection,
-  manifest,
+export function parameterAppliesToWorkspaceView(parameter, viewId) {
+  const applicableViews = Array.isArray(parameter?.applicableViews) ? parameter.applicableViews : [];
+  return viewId === "s_q_blade"
+    ? applicableViews.includes("s_q") || applicableViews.includes("blade_3d")
+    : applicableViews.includes(viewId);
+}
+
+export function preserveEquivalentParameterId(
   model,
-  onSelectSurface,
-  onSelectSection,
-  onSelectAnnotation,
-  selectedAnnotationId,
-  selectedLoop,
-  selection,
-  selectedSurfaceIds,
-  quadLayout,
-  viewMode,
-  visibleLayers,
-}) {
-  return h(
-    "div",
-    { className: "inspection-workspace-content inspection-workspace-quad" },
-    h(
-      "div",
-      { className: "inspection-quad-scene" },
-      h(InspectionScene, {
-        manifest,
-        surfaceGraph: model.inspectionSurfaceGraph,
-        layout: quadLayout,
-        selectedSurfaceIds,
-        onSelectSurface,
-        visibleLayers,
-        viewMode,
-        annotationsByView,
-        selectedAnnotationId,
-        onSelectAnnotation,
-      }),
-    ),
-    ["3d", "meridional", "s_q", "top"].map((viewId) =>
-      h(
-        "div",
-        { key: viewId, className: `inspection-quad-pane inspection-quad-pane-${viewId}` },
-        h(
-          "button",
-          {
-            className: "inspection-maximize",
-            type: "button",
-            title: `Maximize ${viewLabel(viewId)}`,
-            "aria-label": `Maximize ${viewLabel(viewId)}`,
-            onClick: () => handleTabSelection(viewId),
-          },
-          "maximize",
-        ),
-        viewId === "s_q"
-          ? renderSectionLoopPane({
-            annotations: annotationsByView.s_q,
-              annotationLevel,
-              loop: selectedLoop,
-              onSelect: onSelectSection,
-              onSelectAnnotation,
-              selectedAnnotationId,
-              selection,
-            })
-          : null,
-      ),
-    ),
+  currentId,
+  nextContext,
+  viewId,
+  resolveEquivalent = equivalentParameterId,
+) {
+  if (!currentId) {
+    return null;
+  }
+  const nextId = resolveEquivalent(model, currentId, nextContext)
+    || stationEquivalentParameterId(model, currentId, nextContext);
+  const nextParameter = model?.engineeringParameters?.find((parameter) => parameter.id === nextId) || null;
+  return parameterAppliesToWorkspaceView(nextParameter, viewId) ? nextId : null;
+}
+
+function stationEquivalentParameterId(model, currentId, nextContext) {
+  if (!nextContext?.spanStationId) {
+    return null;
+  }
+  const parameters = Array.isArray(model?.engineeringParameters) ? model.engineeringParameters : [];
+  const current = parameters.find((parameter) => parameter.id === currentId);
+  if (!current) {
+    return null;
+  }
+  const currentScope = semanticScope(current.selectionScope);
+  const match = parameters.find((parameter) =>
+    parameter.groupId === current.groupId
+    && parameter.label === current.label
+    && scopeMatchesNavigation(parameter.selectionScope, nextContext)
+    && engineeringValuesEqual(semanticScope(parameter.selectionScope), currentScope));
+  return match?.id || null;
+}
+
+function scopeMatchesNavigation(scope, context) {
+  return (!context.bladeId || scope?.blade_instance_id === context.bladeId)
+    && (!context.spanStationId || scope?.span_station_id === context.spanStationId);
+}
+
+function semanticScope(scope) {
+  return Object.fromEntries(
+    Object.entries(scope || {}).filter(([key]) => !NAVIGATION_SCOPE_KEYS.has(key)),
   );
 }
 
-function renderSectionLoopPane({ annotations, annotationLevel, loop, onSelect, onSelectAnnotation, selectedAnnotationId, selection }) {
-  return h(
-    "div",
-    { className: "inspection-section-loop-pane" },
-    h(SectionLoopInspectionView, {
-      loop,
-      selection,
-      annotationLevel,
-      annotations,
-      onSelect,
-    }),
-    h(
-      "div",
-      {
-        className: "inspection-section-annotations",
-        "aria-label": "S-Q inspection parameters",
-      },
-      h(ParameterAnnotationOverlay, {
-        annotations,
-        selectedAnnotationId,
-        onSelectAnnotation,
-      }),
-    ),
-  );
+function engineeringValuesEqual(left, right) {
+  if (left === right) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => engineeringValuesEqual(value, right[index]));
+  }
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") {
+    return false;
+  }
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  return [...keys].every((key) => engineeringValuesEqual(left[key], right[key]));
 }
 
-function viewLabel(viewId) {
-  return INSPECTION_TABS.find((tab) => tab.id === viewId)?.label || viewId;
+function engineeringContextPrimitives(groups, viewId) {
+  const features = uniqueFeatures(
+    groups.flatMap((group) => group.parameters)
+      .filter((parameter) => parameter.applicableViews.includes(viewId))
+      .flatMap((parameter) => parameter.features),
+  );
+  const unframed = features
+    .map((feature) => projectEngineeringFeature(feature, viewId))
+    .filter(Boolean);
+  const bounds = engineeringDrawingBounds(unframed, []);
+  if (!bounds) {
+    return [];
+  }
+  const frame = { bounds, viewport: DRAWING_VIEWPORT };
+  return features
+    .map((feature) => projectEngineeringFeature(feature, viewId, frame))
+    .filter(Boolean);
+}
+
+function uniqueFeatures(features) {
+  const byId = new Map();
+  for (const feature of features) {
+    if (feature?.id && !byId.has(feature.id)) {
+      byId.set(feature.id, feature);
+    }
+  }
+  return [...byId.values()];
 }
 
 function bladeLabel(blade) {

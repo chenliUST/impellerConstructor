@@ -1131,12 +1131,14 @@ button.inspection-label-row.selected {
 
 .inspection-workspace-toolbar {
   display: flex;
-  min-height: 46px;
+  min-height: 32px;
+  max-block-size: 32px;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex-wrap: nowrap;
   justify-content: flex-start;
-  padding: 6px 8px;
+  padding: 2px 6px;
+  overflow: hidden;
   border-bottom: 1px solid #cbd8d3;
   background: #ffffff;
   z-index: 5;
@@ -1145,9 +1147,9 @@ button.inspection-label-row.selected {
 .inspection-tab-list {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  gap: 6px;
-  flex: 1 1 260px;
+  flex-wrap: nowrap;
+  gap: 4px;
+  flex: 0 1 auto;
 }
 
 .inspection-workspace-toolbar.narrow {
@@ -1174,8 +1176,8 @@ button.inspection-label-row.selected {
 }
 
 .inspection-tab-list button {
-  min-height: 30px;
-  padding: 4px 9px;
+  min-height: 26px;
+  padding: 2px 8px;
 }
 
 .inspection-tab-list button.selected {
@@ -1196,7 +1198,8 @@ button.inspection-label-row.selected {
 
 .inspection-entity-selectors {
   display: flex;
-  flex: 1 1 300px;
+  min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
   gap: 8px;
 }
@@ -1212,9 +1215,9 @@ button.inspection-label-row.selected {
 }
 
 .inspection-entity-selectors select {
-  width: min(150px, 18vw);
-  min-width: 92px;
-  min-height: 30px;
+  width: min(132px, 16vw);
+  min-width: 82px;
+  min-height: 26px;
   border: 1px solid #cbd4cf;
   border-radius: 4px;
   background: #ffffff;
@@ -1261,6 +1264,43 @@ button.inspection-label-row.selected {
   color: #8e3d1e;
   font-size: 12px;
   font-weight: 750;
+}
+
+.inspection-workspace-body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.inspection-workspace-body > .engineering-parameter-browser {
+  min-height: 0;
+  padding: 8px;
+  overflow: auto;
+  border-right: 1px solid #cbd8d3;
+  background: #f5f7f6;
+}
+
+.inspection-drawing-grid {
+  display: grid;
+  min-width: 0;
+  min-height: 420px;
+  padding: 8px;
+  overflow: auto;
+  background: var(--engineering-paper);
+}
+
+.inspection-s-q-blade-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.inspection-s-q-blade-grid > * {
+  min-width: 0;
+  min-height: 420px;
+  border: 1px solid #cbd4cf;
 }
 
 .inspection-workspace-content {
@@ -1427,7 +1467,9 @@ button.inspection-label-row.selected {
 }
 
 .engineering-drawing-view {
+  display: flex;
   min-width: 0;
+  min-height: 0;
 }
 
 .engineering-drawing-toolbar {
@@ -1438,7 +1480,8 @@ button.inspection-label-row.selected {
 .engineering-drawing-canvas {
   display: block;
   width: 100%;
-  min-height: 320px;
+  min-height: 420px;
+  flex: 1;
   border: 1px solid #cbd4cf;
   background: var(--engineering-paper);
 }
@@ -1514,23 +1557,30 @@ circle.engineering-feature {
   }
 
   .inspection-workspace-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
   }
 
   .inspection-tab-list,
   .inspection-entity-selectors {
-    width: 100%;
-    flex: 0 0 auto;
+    width: auto;
+    flex: 0 1 auto;
     align-items: center;
   }
 
   .inspection-entity-selectors {
-    flex-wrap: wrap;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
   }
 
   .inspection-entity-selectors select {
-    width: min(220px, 52vw);
+    width: min(116px, 18vw);
+  }
+
+  .inspection-workspace-body {
+    grid-template-columns: minmax(150px, 190px) minmax(520px, 1fr);
+    overflow: auto;
   }
 
   .inspection-annotation-control {
