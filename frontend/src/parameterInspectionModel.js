@@ -105,6 +105,7 @@ export function resolveParameterInspection(manifest) {
 
   const engineeringParameters = normalizeEngineeringParameters(contract, {
     blades,
+    surfaces,
     stations,
     loops,
     profiles,
@@ -750,6 +751,28 @@ function selectionScopeValid(scope, indices) {
   const bladeId = scope.blade_instance_id;
   if (bladeId != null && !indices.blades[bladeId]) {
     return false;
+  }
+  const hasAttachmentSurface = Object.hasOwn(scope, "source_attachment_surface_id");
+  const hasAttachmentMeasurement = Object.hasOwn(scope, "source_attachment_measurement");
+  if (hasAttachmentSurface !== hasAttachmentMeasurement) {
+    return false;
+  }
+  if (hasAttachmentSurface) {
+    const measurement = scope.source_attachment_measurement;
+    const attachment = typeof measurement === "string" && measurement.startsWith("root_")
+      ? "root"
+      : typeof measurement === "string" && measurement.startsWith("shroud_")
+        ? "shroud"
+        : null;
+    const expectedSurfaceId = attachment === "root"
+      ? `${bladeId}_root_attachment_surface`
+      : attachment === "shroud"
+        ? `${bladeId}_closed_shroud_attachment_surface`
+        : null;
+    const surface = indices.surfaces[scope.source_attachment_surface_id];
+    if (!bladeId || !surface || surface.blade_instance_id !== bladeId || surface.surface_id !== expectedSurfaceId) {
+      return false;
+    }
   }
   const stationId = scope.span_station_id;
   const station = stationId == null ? null : indices.stations[stationId];

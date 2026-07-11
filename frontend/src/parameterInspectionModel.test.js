@@ -311,6 +311,56 @@ function addEquivalentPressureControl(manifest, bladeId = "blade_1") {
   });
 }
 
+function addAttachmentEvidence(manifest) {
+  const contract = manifest.parameter_inspection;
+  for (const bladeId of ["blade_0", "blade_1"]) {
+    const surfaceId = `${bladeId}_root_attachment_surface`;
+    contract.blade_instances[bladeId].surface_ids.push(surfaceId);
+    contract.surface_references[surfaceId] = {
+      surface_id: surfaceId,
+      blade_instance_id: bladeId,
+      face_family: "blade_root",
+      role: "root_to_hub_attachment",
+      quality: {},
+      inspectable: true,
+    };
+    manifest.geometry.surface_graph.surfaces.push({
+      id: surfaceId,
+      uv_grid: [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]],
+    });
+  }
+  contract.parameter_groups.push({ group_id: "attachments", label: "Attachments", order: 11, collapsed: true });
+  contract.parameters.push({
+    parameter_id: "blade:blade_0:attachment:root:width",
+    group_id: "attachments",
+    label: "Root attachment width",
+    requested_value: 1,
+    resolved_value: 1,
+    unit: "mm",
+    applicable_views: ["s_q", "blade_3d"],
+    feature_geometry: [{
+      id: "feature:root-attachment-width",
+      kind: "point",
+      coordinate_system: "s_q_mm",
+      coordinates: [0, 0],
+    }],
+    dimension_definition: {
+      kind: "linear",
+      measurement_points: [[0, 0], [1, 0]],
+      unit: "mm",
+      tolerance: 0.001,
+    },
+    selection_scope: {
+      blade_instance_id: "blade_0",
+      span_station_id: "blade_0:span_0",
+      section_loop_id: "blade_0:span_0:loop",
+      source_attachment_surface_id: "blade_0_root_attachment_surface",
+      source_attachment_measurement: "root_width",
+    },
+    order: 8,
+  });
+}
+
 describe("parameter inspection model", () => {
   test("declares the five approved tabs and three annotation levels", () => {
     assert.deepEqual(INSPECTION_TABS.map((tab) => tab.id), ["3d", "top", "meridional", "s_q", "quad"]);
@@ -376,6 +426,22 @@ describe("parameter inspection model", () => {
     for (const [, mutate] of cases) {
       const manifest = engineeringManifestFixture();
       mutate(manifest.parameter_inspection);
+      assert.equal(resolveParameterInspection(manifest).errorCode, "parameter_inspection_contract_unsupported");
+    }
+  });
+
+  test("rejects nonexistent and cross-blade attachment surface provenance", () => {
+    const cases = [
+      "missing_attachment_surface",
+      "blade_1_root_attachment_surface",
+    ];
+    for (const sourceAttachmentSurfaceId of cases) {
+      const manifest = engineeringManifestFixture();
+      addAttachmentEvidence(manifest);
+      assert.equal(resolveParameterInspection(manifest).status, "ready");
+      const attachment = manifest.parameter_inspection.parameters.find((parameter) =>
+        parameter.parameter_id === "blade:blade_0:attachment:root:width");
+      attachment.selection_scope.source_attachment_surface_id = sourceAttachmentSurfaceId;
       assert.equal(resolveParameterInspection(manifest).errorCode, "parameter_inspection_contract_unsupported");
     }
   });
