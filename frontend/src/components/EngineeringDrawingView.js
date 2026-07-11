@@ -1,7 +1,6 @@
 import React from "react";
 
 import {
-  engineeringDrawingBounds,
   layoutEngineeringDimension,
   projectEngineeringFeature,
 } from "../engineeringDrawingModel.js?v=1.1.5";
@@ -10,19 +9,21 @@ const h = React.createElement;
 const VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
 
 export function EngineeringDrawingView({ viewId, contextPrimitives = [], selectedParameter = null }) {
-  const projection = createProjectionContext(viewId, contextPrimitives, selectedParameter?.features);
-  const contextFeatures = projectFeatures(contextPrimitives, projection, "engineering-context");
-  const selectedFeatures = projectFeatures(selectedParameter?.features, projection, "engineering-feature");
-  const dimensions = selectedParameter?.dimension
+  const projection = contextProjection(viewId, contextPrimitives);
+  const effectiveViewId = projection?.viewId || viewId;
+  const selectedFeatures = projection
+    ? projectFeatures(selectedParameter?.features, projection, "engineering-feature")
+    : [];
+  const dimensions = selectedParameter?.dimension && projection
     ? layoutEngineeringDimension(
       selectedParameter.dimension,
-      { ...projection, primitives: [...contextFeatures, ...selectedFeatures] },
+      { ...projection, primitives: [...contextPrimitives, ...selectedFeatures] },
       VIEWBOX,
     )
     : [];
   const label = selectedParameter?.label
-    ? `${viewLabel(viewId)} engineering drawing for ${selectedParameter.label}`
-    : `${viewLabel(viewId)} engineering drawing`;
+    ? `${viewLabel(effectiveViewId)} engineering drawing for ${selectedParameter.label}`
+    : `${viewLabel(effectiveViewId)} engineering drawing`;
 
   return h(
     "section",
@@ -35,23 +36,18 @@ export function EngineeringDrawingView({ viewId, contextPrimitives = [], selecte
         role: "img",
         "aria-label": label,
       },
-      contextFeatures.map((primitive, index) => renderPrimitive(primitive, "engineering-context", `context:${index}`)),
+      contextPrimitives.map((primitive, index) => renderPrimitive(primitive, "engineering-context", `context:${index}`)),
       selectedFeatures.map((primitive, index) => renderSelectedFeature(primitive, `feature:${index}`)),
       dimensions.map((primitive, index) => renderPrimitive(primitive, "engineering-dimension", `dimension:${index}`)),
     ),
   );
 }
 
-function createProjectionContext(viewId, contextFeatures, selectedFeatures) {
-  const rawContext = projectFeatures(contextFeatures, { viewId, frame: null }, "engineering-context");
-  const rawSelected = projectFeatures(selectedFeatures, { viewId, frame: null }, "engineering-feature");
-  const bounds = engineeringDrawingBounds(rawContext, rawSelected) || {
-    minX: 0,
-    minY: 0,
-    maxX: 1,
-    maxY: 1,
-  };
-  return { viewId, frame: { bounds, viewport: VIEWBOX } };
+function contextProjection(viewId, contextPrimitives) {
+  const descriptor = (Array.isArray(contextPrimitives) ? contextPrimitives : [])
+    .map((primitive) => primitive?.projection)
+    .find((projection) => projection?.viewId && projection.frame);
+  return descriptor ? { viewId: descriptor.viewId || viewId, frame: descriptor.frame } : null;
 }
 
 function projectFeatures(features, projection, className) {

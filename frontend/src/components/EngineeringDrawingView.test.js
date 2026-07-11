@@ -68,7 +68,8 @@ describe("EngineeringDrawingView", () => {
     assert.match(source, /engineering-context/);
     assert.match(source, /engineering-feature/);
     assert.match(source, /engineering-dimension/);
-    assert.match(source, /engineeringDrawingBounds/);
+    assert.match(source, /contextPrimitives\.map\(\(primitive, index\) => renderPrimitive/);
+    assert.doesNotMatch(source, /projectFeatures\(contextPrimitives/);
     assert.match(source, /"path"/);
     assert.match(source, /"circle"/);
     assert.match(source, /"line"/);
@@ -77,15 +78,23 @@ describe("EngineeringDrawingView", () => {
     assert.doesNotMatch(source, /material|uv|triangle|leader/i);
   });
 
-  test("projects context, features, and dimensions into one equal-aspect canvas frame", () => {
+  test("preserves projected context and uses its Task 4 descriptor for selected geometry", () => {
     if (!existsSync(drawingPath)) {
       return;
     }
 
     const EngineeringDrawingView = loadComponent(drawingPath, "EngineeringDrawingView");
+    const frame = {
+      bounds: { minX: 0, minY: 0, maxX: 100, maxY: 50 },
+      viewport: { x: 0, y: 0, width: 1000, height: 700 },
+    };
+    const contextPrimitives = [
+      projectEngineeringFeature({ id: "context-path", kind: "polyline", points: [[0, 0], [100, 0]] }, "s_q", frame),
+      projectEngineeringFeature({ id: "context-point", kind: "point", coordinates: [0, 0] }, "s_q", frame),
+    ];
     const tree = EngineeringDrawingView({
       viewId: "s_q",
-      contextPrimitives: [{ id: "context", kind: "polyline", points: [[0, 0], [100, 0]] }],
+      contextPrimitives,
       selectedParameter: {
         id: "curve",
         label: "Blade curve",
@@ -100,7 +109,9 @@ describe("EngineeringDrawingView", () => {
     const paths = collectElements(tree, (node) => node.type === "path");
     const featurePath = paths.find((node) => /engineering-feature/.test(node.props.className));
     const polygon = collectElements(tree, (node) => node.type === "polygon")[0];
-    const point = collectElements(tree, (node) => node.type === "circle")[0];
+    const points = collectElements(tree, (node) => node.type === "circle");
+    const contextPoint = points.find((node) => /engineering-context/.test(node.props.className));
+    const featurePoint = points.find((node) => /engineering-feature/.test(node.props.className));
     const dimensionLines = collectElements(tree, (node) => node.type === "line");
     const dimensionPaths = paths.filter((node) => !node.props.className);
     const dimensionText = collectElements(tree, (node) => node.type === "text")[0];
@@ -112,8 +123,8 @@ describe("EngineeringDrawingView", () => {
     assert.equal(featurePath.props.d, "M 16 108 L 500 592 L 984 108");
     assert.match(polygon.props.className, /engineering-feature/);
     assert.equal(polygon.props.points, "16,108 500,592 984,108");
-    assert.match(point.props.className, /engineering-feature/);
-    assert.deepEqual([point.props.cx, point.props.cy], [500, 592]);
+    assert.deepEqual([contextPoint.props.cx, contextPoint.props.cy], [16, 108]);
+    assert.deepEqual([featurePoint.props.cx, featurePoint.props.cy], [500, 592]);
     assert.equal(dimensionLines.length, 3);
     assert.deepEqual([dimensionLines[0].props.x1, dimensionLines[0].props.y1], [16, 90]);
     assert.deepEqual([dimensionLines[1].props.x1, dimensionLines[1].props.y1], [16, 108]);
