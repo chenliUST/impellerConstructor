@@ -67,6 +67,32 @@ describe("engineering drawing projection", () => {
     assert.deepEqual(drawing.points, [[12, -8], [48, 16]]);
   });
 
+  test("selects view-specific authoritative coordinates and rejects unsupported spaces", () => {
+    const feature = {
+      id: "leading-edge",
+      kind: "polyline",
+      coordinate_system: "model_xyz",
+      points: [[3, 4, 10], [0, 10, 30]],
+      display_points_s_q_mm: [[12, -8], [48, 16]],
+    };
+
+    assert.deepEqual(projectEngineeringFeature(feature, "top").points, [[3, 4], [0, 10]]);
+    assert.deepEqual(projectEngineeringFeature(feature, "meridional").points, [[5, 10], [10, 30]]);
+    assert.deepEqual(projectEngineeringFeature(feature, "s_q").points, [[12, -8], [48, 16]]);
+    assert.equal(projectEngineeringFeature({
+      id: "s-q-only",
+      kind: "polyline",
+      coordinate_system: "s_q_mm",
+      points: [[0, 0], [1, 1]],
+    }, "top"), null);
+    assert.deepEqual(projectEngineeringFeature({
+      id: "hub-profile",
+      kind: "nurbs_curve",
+      coordinate_system: "profile_rz_mm",
+      control_points: [[150, 400], [580, 0]],
+    }, "meridional").points, [[150, 400], [580, 0]]);
+  });
+
   test("returns null for non-finite feature coordinates", () => {
     assert.equal(projectEngineeringFeature({
       id: "invalid",

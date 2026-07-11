@@ -45,7 +45,12 @@ async function loadSceneHelpers() {
 
 describe("BladeFeatureScene behavior", () => {
   test("keeps only the selected blade context and preserves the stable empty surface-id value", async () => {
-    const { EMPTY_BLADE_SURFACE_IDS, bladeContextSurfaceGraph, normalizeBladeSurfaceIds } = await loadSceneHelpers();
+    const {
+      EMPTY_BLADE_SURFACE_IDS,
+      bladeContextSurfaceGraph,
+      bladeFeatureCameraDistance,
+      normalizeBladeSurfaceIds,
+    } = await loadSceneHelpers();
     const graph = {
       surfaces: [
         { id: "blade_0_pressure" },
@@ -61,20 +66,24 @@ describe("BladeFeatureScene behavior", () => {
     assert.equal(normalizeBladeSurfaceIds(), EMPTY_BLADE_SURFACE_IDS);
     assert.equal(normalizeBladeSurfaceIds([]), EMPTY_BLADE_SURFACE_IDS);
     assert.deepEqual(normalizeBladeSurfaceIds(["blade_0_pressure", "blade_0_pressure"]), ["blade_0_pressure"]);
+    assert.ok(Math.abs(bladeFeatureCameraDistance(100, 400, 400) - 220) < 1e-9);
+    assert.ok(Math.abs(bladeFeatureCameraDistance(100, 100, 400) - 880) < 1e-9);
   });
 
-  test("builds red lines and points for every supported blade feature primitive", async () => {
-    const { createEngineeringFeatureGroup } = await loadSceneHelpers();
+  test("builds red geometry only from model XYZ primitives", async () => {
+    const { bladeFeatureGeometryStatus, createEngineeringFeatureGroup } = await loadSceneHelpers();
+    const features = [
+      { id: "curve", kind: "nurbs_curve", coordinate_system: "model_xyz", control_points: [[0, 0, 0], [10, 0, 0]] },
+      { id: "polyline", kind: "polyline", coordinate_system: "model_xyz", points: [[0, 1, 0], [10, 1, 0]] },
+      { id: "control", kind: "control_point", coordinate_system: "model_xyz", coordinates: [2, 3, 4] },
+      { id: "point", kind: "point", coordinate_system: "model_xyz", coordinates: [4, 3, 2] },
+      { id: "thickness-frame", kind: "local_frame", coordinate_system: "s_q_mm", origin: [1, 1], s_axis: [1, 0], q_axis: [0, 1] },
+      { id: "s-q-point", kind: "point", coordinate_system: "s_q_mm", coordinates: [4, 3] },
+      { id: "axis", kind: "reference_axis", coordinate_system: "model_xyz", origin: [0, 0, 0], direction: [0, 0, 1] },
+      { id: "invalid", kind: "local_frame", coordinate_system: "s_q_mm", origin: [0, 0], s_axis: [Number.NaN, 0], q_axis: [0, 1] },
+    ];
     const group = createEngineeringFeatureGroup(
-      [
-        { id: "curve", kind: "nurbs_curve", coordinate_system: "xyz_mm", control_points: [[0, 0, 0], [10, 0, 0]] },
-        { id: "polyline", kind: "polyline", coordinate_system: "xyz_mm", points: [[0, 1, 0], [10, 1, 0]] },
-        { id: "control", kind: "control_point", coordinate_system: "xyz_mm", coordinates: [2, 3, 4] },
-        { id: "point", kind: "point", coordinate_system: "xyz_mm", coordinates: [4, 3, 2] },
-        { id: "thickness-frame", kind: "local_frame", coordinate_system: "s_q_mm", origin: [1, 1], s_axis: [1, 0], q_axis: [0, 1] },
-        { id: "axis", kind: "reference_axis", coordinate_system: "xyz_mm", origin: [0, 0, 0], direction: [0, 0, 1] },
-        { id: "invalid", kind: "local_frame", coordinate_system: "s_q_mm", origin: [0, 0], s_axis: [Number.NaN, 0], q_axis: [0, 1] },
-      ],
+      features,
       { x: 0, y: 0, z: 0 },
       20,
     );
@@ -82,12 +91,21 @@ describe("BladeFeatureScene behavior", () => {
     const points = group.children.filter((child) => child.isPoints);
 
     assert.equal(group.userData.isEngineeringFeature, true);
-    assert.equal(lines.length, 5);
+    assert.equal(lines.length, 3);
     assert.equal(points.length, 2);
     assert.equal(lines.every((line) => line.material.color.value === "#c40000"), true);
     assert.equal(points.every((point) => point.material.color.value === "#c40000"), true);
-    assert.deepEqual(lines.filter((line) => line.userData.featureId === "thickness-frame").length, 2);
+    assert.equal(lines.every((line) => line.material.depthTest === false), true);
+    assert.equal(points.every((point) => point.material.depthTest === false), true);
+    assert.equal(group.children.some((child) => child.userData.featureId === "thickness-frame"), false);
+    assert.equal(group.children.some((child) => child.userData.featureId === "s-q-point"), false);
     assert.equal(group.children.some((child) => child.userData.featureId === "invalid"), false);
+    assert.equal(bladeFeatureGeometryStatus({ features }), "available");
+    assert.equal(
+      bladeFeatureGeometryStatus({ features: features.filter((feature) => feature.coordinate_system === "s_q_mm") }),
+      "geometry unavailable",
+    );
+    assert.equal(bladeFeatureGeometryStatus(null), null);
   });
 
   test("styles context meshes and disposes all scene resources", async () => {

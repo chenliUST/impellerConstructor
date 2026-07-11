@@ -227,6 +227,7 @@ function engineeringManifestFixture() {
     id,
     kind,
     coordinate_system: "s_q_mm",
+    rendering_role: "selected_feature",
     ...fields,
   });
   const dimensions = [
@@ -258,7 +259,7 @@ function engineeringManifestFixture() {
     requested_value: index + 1,
     resolved_value: index + 1,
     unit: "mm",
-    applicable_views: ["s_q", "blade_3d"],
+    applicable_views: ["s_q"],
     feature_geometry: [{
       ...features[index % features.length],
       id: `feature:${index}:${features[index % features.length].kind}`,
@@ -279,6 +280,13 @@ function engineeringManifestFixture() {
       : `parameter:${index}`,
     index,
   ));
+  const sagitta = contract.parameters.find((item) => item.parameter_id.endsWith(":leading:sagitta"));
+  sagitta.applicable_views = ["s_q", "blade_3d"];
+  sagitta.feature_geometry = [feature("polyline", "feature:4:polyline", {
+    coordinate_system: "model_xyz",
+    points: [[0, 0, 0], [1, 0, 0]],
+    display_points_s_q_mm: [[0, 0], [1, 0]],
+  })];
   contract.parameters.push(
     parameter("blade:blade_0:station:blade_0:span_0:section:pressure:control:2:s", 7, {
       dimension_definition: null,
@@ -337,11 +345,12 @@ function addAttachmentEvidence(manifest) {
     requested_value: 1,
     resolved_value: 1,
     unit: "mm",
-    applicable_views: ["s_q", "blade_3d"],
+    applicable_views: ["s_q"],
     feature_geometry: [{
       id: "feature:root-attachment-width",
       kind: "point",
       coordinate_system: "s_q_mm",
+      rendering_role: "selected_feature",
       coordinates: [0, 0],
     }],
     dimension_definition: {
@@ -396,7 +405,7 @@ describe("parameter inspection model", () => {
       "blade:blade_0:station:blade_0:span_0:section:pressure:control:2:s",
     ]);
     assert.deepEqual(model.engineeringParameters.map((parameter) => parameter.features[0].kind), [
-      "nurbs_curve", "polyline", "control_point", "point", "local_frame", "reference_axis", "nurbs_curve", "control_point",
+      "nurbs_curve", "polyline", "control_point", "point", "polyline", "reference_axis", "nurbs_curve", "control_point",
     ]);
     assert.deepEqual(model.engineeringParameters.slice(0, 7).map((parameter) => parameter.dimension?.kind), [
       "linear", "radial", "diameter", "angular", "arc_height", "ordinate", "control_coordinate",
@@ -426,6 +435,29 @@ describe("parameter inspection model", () => {
     for (const [, mutate] of cases) {
       const manifest = engineeringManifestFixture();
       mutate(manifest.parameter_inspection);
+      assert.equal(resolveParameterInspection(manifest).errorCode, "parameter_inspection_contract_unsupported");
+    }
+  });
+
+  test("rejects missing or ambiguous coordinate spaces for view-applicable primitives", () => {
+    const mutations = [
+      (feature) => { delete feature.coordinate_system; },
+      (feature, parameter) => {
+        feature.coordinate_system = "s_q_mm";
+        delete feature.display_points_s_q_mm;
+        feature.points = [[0, 0], [1, 0]];
+        parameter.applicable_views = ["s_q", "blade_3d"];
+      },
+      (feature, parameter) => {
+        feature.coordinate_system = "model_xyz";
+        delete feature.display_points_s_q_mm;
+        parameter.applicable_views = ["s_q", "blade_3d"];
+      },
+    ];
+    for (const mutate of mutations) {
+      const manifest = engineeringManifestFixture();
+      const parameter = manifest.parameter_inspection.parameters.find((item) => item.parameter_id.endsWith(":leading:sagitta"));
+      mutate(parameter.feature_geometry[0], parameter);
       assert.equal(resolveParameterInspection(manifest).errorCode, "parameter_inspection_contract_unsupported");
     }
   });

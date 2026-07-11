@@ -34,6 +34,10 @@ def thickness_parameter(contract: dict) -> dict:
     return next(item for item in contract["parameters"] if item["parameter_id"].endswith("thickness"))
 
 
+def parameter_by_id(contract: dict, parameter_id: str) -> dict:
+    return next(item for item in contract["parameters"] if item["parameter_id"] == parameter_id)
+
+
 def test_contract_exposes_engineering_groups_and_primitives():
     contract = graph_for()["parameter_inspection"]
 
@@ -63,6 +67,139 @@ def test_contract_exposes_engineering_groups_and_primitives():
     assert len(parameter_ids) == len(set(parameter_ids))
 
 
+def test_blade_features_carry_authoritative_xyz_alongside_s_q_display_geometry():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    source_loop = graph["blade_to_blade_loop_family"]["blades"][0]["loops"][0]
+    station_id = contract["blade_instances"]["blade_0"]["span_station_ids"][0]
+    loop = contract["section_loops"][contract["span_stations"][station_id]["section_loop_id"]]
+
+    for segment_name, source_segment in source_loop["segments"].items():
+        segment = loop["segment_references"][segment_name]
+        assert segment["points_xyz"] == source_segment["points_xyz"]
+        assert segment["display_points_s_q_mm"] == _metric_s_q_points_for_test(
+            source_segment["points_s_q"], source_loop["streamwise_metric_scale_mm"]
+        )
+
+    sagitta = next(
+        item
+        for item in contract["parameters"]
+        if item["parameter_id"].startswith(f"blade:blade_0:station:{station_id}")
+        and item["parameter_id"].endswith(":leading_edge:sagitta")
+    )
+    feature = sagitta["feature_geometry"][0]
+    assert feature["coordinate_system"] == "model_xyz"
+    assert feature["points"] == source_loop["segments"]["leading_edge"]["points_xyz"]
+    assert feature["display_points_s_q_mm"] == loop["segment_references"]["leading_edge"]["display_points_s_q_mm"]
+    source_edge = source_loop["segments"]["leading_edge"]
+    display_edge = loop["segment_references"]["leading_edge"]["display_points_s_q_mm"]
+    sample_indices = [0, len(source_edge["points_xyz"]) - 1, len(source_edge["points_xyz"]) // 2]
+    measurement_features = [
+        item
+        for item in sagitta["feature_geometry"]
+        if item["kind"] == "point" and item["rendering_role"] == "selected_feature"
+    ]
+    assert [item["coordinates"] for item in measurement_features] == [
+        source_edge["points_xyz"][index] for index in sample_indices
+    ]
+    assert [item["display_coordinates_s_q_mm"] for item in measurement_features] == [
+        display_edge[index] for index in sample_indices
+    ]
+
+    thickness = thickness_parameter(contract)
+    sample_index = min(
+        len(source_loop["segments"]["pressure_side"]["points_xyz"]),
+        len(source_loop["segments"]["suction_side"]["points_xyz"]),
+    ) // 2
+    selected_points = [
+        feature
+        for feature in thickness["feature_geometry"]
+        if feature["kind"] == "point" and feature["rendering_role"] == "selected_feature"
+    ]
+    assert [feature["coordinates"] for feature in selected_points] == [
+        source_loop["segments"]["pressure_side"]["points_xyz"][sample_index],
+        source_loop["segments"]["suction_side"]["points_xyz"][sample_index],
+    ]
+    assert all(feature["coordinate_system"] == "model_xyz" for feature in selected_points)
+    context = [
+        feature
+        for feature in thickness["feature_geometry"]
+        if feature["rendering_role"] == "drawing_context"
+    ]
+    assert [(feature["source_segment_name"], feature["points"]) for feature in context] == [
+        (segment_name, source_segment["points_xyz"])
+        for segment_name, source_segment in source_loop["segments"].items()
+    ]
+    assert [feature["display_points_s_q_mm"] for feature in context] == [
+        loop["segment_references"][segment_name]["display_points_s_q_mm"]
+        for segment_name in source_loop["segments"]
+    ]
+
+
+def test_feature_coordinate_spaces_are_explicit_and_blade_applicability_requires_model_xyz():
+    contract = graph_for()["parameter_inspection"]
+    allowed_spaces = {"model_xyz", "s_q_mm", "profile_rz_mm"}
+    allowed_roles = {"drawing_context", "selected_feature"}
+
+    for parameter in contract["parameters"]:
+        features = parameter["feature_geometry"]
+        assert all(feature["coordinate_system"] in allowed_spaces for feature in features)
+        assert all(feature["rendering_role"] in allowed_roles for feature in features)
+        if "blade_3d" in parameter["applicable_views"]:
+            selected = [feature for feature in features if feature["rendering_role"] == "selected_feature"]
+            assert selected
+            assert all(feature["coordinate_system"] == "model_xyz" for feature in selected)
+
+
+def test_attachment_parameters_expose_authoritative_boundary_context_and_selected_measurements():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    root_surface = next(surface for surface in graph["surfaces"] if surface.get("role") == "root_to_hub_attachment")
+    parameter = parameter_by_id(contract, "blade:blade_0:attachment:root:lift")
+    context = [
+        feature for feature in parameter["feature_geometry"] if feature["rendering_role"] == "drawing_context"
+    ]
+    selected = [
+        feature for feature in parameter["feature_geometry"] if feature["rendering_role"] == "selected_feature"
+    ]
+
+    assert [(feature["boundary_role"], feature["points"]) for feature in context] == [
+        ("hub_side", root_surface["edge_samples"]["hub_outer_loop"]),
+        ("blade_side", root_surface["edge_samples"]["blade_inner_loop"]),
+    ]
+    assert all(feature["coordinate_system"] == "model_xyz" for feature in context)
+    assert [feature["coordinates"] for feature in selected] == [
+        root_surface["uv_grid"][0][0],
+        root_surface["uv_grid"][-1][0],
+    ]
+
+
+def test_top_and_meridional_context_come_from_generated_loop_and_profile_evidence():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    top_parameter = parameter_by_id(contract, "blade.main.count")
+    top_context = [
+        feature for feature in top_parameter["feature_geometry"] if feature["rendering_role"] == "drawing_context"
+    ]
+    expected_segment = graph["blade_to_blade_loop_family"]["blades"][0]["loops"][0]["segments"]["pressure_side"]
+
+    assert top_context
+    assert top_context[0]["coordinate_system"] == "model_xyz"
+    assert top_context[0]["points"] == expected_segment["points_xyz"]
+
+    profile_parameter = parameter_by_id(contract, "hub.profile.control.0.r")
+    profile_context = [
+        feature for feature in profile_parameter["feature_geometry"] if feature["rendering_role"] == "drawing_context"
+    ]
+    assert len(profile_context) == 1
+    assert profile_context[0]["coordinate_system"] == "profile_rz_mm"
+    assert profile_context[0]["control_points"] == contract["support_profiles"]["hub_profile"]["control_points"]
+
+
+def _metric_s_q_points_for_test(points: list[list[float]], scale: float) -> list[list[float]]:
+    return [[float(point[0]) * float(scale), float(point[1])] for point in points]
+
+
 def test_station_thickness_measures_generated_pressure_and_suction_samples():
     contract = graph_for()["parameter_inspection"]
     parameter = thickness_parameter(contract)
@@ -75,7 +212,7 @@ def test_station_thickness_measures_generated_pressure_and_suction_samples():
     assert definition["measurement_points"] == expected_endpoints
     assert parameter["resolved_value"] == dist(*expected_endpoints)
     assert {tuple(point) for point in expected_endpoints} <= {
-        tuple(feature["coordinates"])
+        tuple(feature["display_coordinates_s_q_mm"])
         for feature in parameter["feature_geometry"]
         if feature["kind"] == "point"
     }
@@ -282,7 +419,12 @@ def test_validator_rejects_self_consistent_records_that_no_longer_match_source_g
         else:
             definition = parameter["dimension_definition"]
             if definition["kind"] == "control_coordinate":
-                parameter["feature_geometry"][0]["coordinates"][0] += 1.0
+                selected_feature = next(
+                    feature
+                    for feature in parameter["feature_geometry"]
+                    if feature["rendering_role"] == "selected_feature"
+                )
+                selected_feature["coordinates"][0] += 1.0
                 definition["measurement_points"][1][0] += 1.0
                 parameter["resolved_value"] = _measure_dimension(definition)
             else:

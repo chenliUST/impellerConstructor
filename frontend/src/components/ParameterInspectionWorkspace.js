@@ -6,6 +6,8 @@ import {
 } from "../parameterInspectionModel.js?v=1.1.5";
 import {
   WORKSPACE_TABS,
+  engineeringContextFeatures,
+  inspectionWorkspaceBodyStyle,
   initialWorkspaceState,
   parameterAppliesToWorkspaceView,
   transitionWorkspaceState,
@@ -167,7 +169,7 @@ export function ParameterInspectionWorkspace({ manifest = null }) {
     ),
     h(
       "div",
-      { className: "inspection-workspace-body" },
+      { className: "inspection-workspace-body", style: inspectionWorkspaceBodyStyle() },
       h(ParameterFeatureBrowser, {
         groups: browserGroups,
         selectedParameterId: selectedParameterId,
@@ -201,11 +203,8 @@ export function ParameterInspectionWorkspace({ manifest = null }) {
 }
 
 function engineeringContextPrimitives(groups, viewId) {
-  const features = uniqueFeatures(
-    groups.flatMap((group) => group.parameters)
-      .filter((parameter) => parameter.applicableViews.includes(viewId))
-      .flatMap((parameter) => parameter.features),
-  );
+  const features = engineeringContextFeatures(groups, viewId)
+    .map((feature) => ({ ...feature, className: "engineering-context" }));
   const unframed = features
     .map((feature) => projectEngineeringFeature(feature, viewId))
     .filter(Boolean);
@@ -217,16 +216,6 @@ function engineeringContextPrimitives(groups, viewId) {
   return features
     .map((feature) => projectEngineeringFeature(feature, viewId, frame))
     .filter(Boolean);
-}
-
-function uniqueFeatures(features) {
-  const byId = new Map();
-  for (const feature of features) {
-    if (feature?.id && !byId.has(feature.id)) {
-      byId.set(feature.id, feature);
-    }
-  }
-  return [...byId.values()];
 }
 
 function bladeLabel(blade) {

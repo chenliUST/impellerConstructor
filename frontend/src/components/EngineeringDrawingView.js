@@ -51,7 +51,9 @@ function contextProjection(viewId, contextPrimitives) {
 }
 
 function projectFeatures(features, projection, className) {
-  return (Array.isArray(features) ? features : []).flatMap((feature) => {
+  return (Array.isArray(features) ? features : [])
+    .filter((feature) => feature?.rendering_role !== "drawing_context")
+    .flatMap((feature) => {
     const primitive = projectEngineeringFeature({ ...feature, className }, projection.viewId, projection.frame);
     return primitive ? [{ ...primitive, sourceKind: feature.kind }] : [];
   });

@@ -23,6 +23,8 @@ const ENGINEERING_FEATURE_KINDS = new Set([
   "local_frame",
   "reference_axis",
 ]);
+const ENGINEERING_COORDINATE_SYSTEMS = new Set(["model_xyz", "s_q_mm", "profile_rz_mm"]);
+const ENGINEERING_RENDERING_ROLES = new Set(["drawing_context", "selected_feature"]);
 
 const ENGINEERING_DIMENSION_KINDS = new Set([
   "linear",
@@ -658,7 +660,7 @@ function engineeringRecordsValid(groups, parameters, indices) {
       || !engineeringValueFinite(parameter.resolved_value)
       || !applicableViewsValid(parameter.applicable_views)
       || !selectionScopeValid(parameter.selection_scope, indices)
-      || !featureGeometryValid(parameter.feature_geometry, primitiveIds)
+      || !featureGeometryValid(parameter.feature_geometry, primitiveIds, parameter.applicable_views)
       || !dimensionDefinitionValid(parameter.dimension_definition)
     ) {
       return false;
@@ -672,7 +674,7 @@ function applicableViewsValid(views) {
   return Array.isArray(views) && views.length > 0 && stringIdList(views);
 }
 
-function featureGeometryValid(features, primitiveIds) {
+function featureGeometryValid(features, primitiveIds, applicableViews) {
   if (!Array.isArray(features) || features.length === 0) {
     return false;
   }
@@ -682,15 +684,41 @@ function featureGeometryValid(features, primitiveIds) {
       || !ENGINEERING_FEATURE_KINDS.has(feature.kind)
       || !nonemptyString(feature.id)
       || primitiveIds.has(feature.id)
-      || !nonemptyString(feature.coordinate_system)
+      || !ENGINEERING_COORDINATE_SYSTEMS.has(feature.coordinate_system)
+      || !ENGINEERING_RENDERING_ROLES.has(feature.rendering_role)
       || !engineeringValueFinite(feature)
       || !featureCoordinatesValid(feature)
+      || !applicableViews.every((viewId) => featureSupportsView(feature, viewId))
     ) {
       return false;
     }
     primitiveIds.add(feature.id);
     return true;
   });
+}
+
+function featureSupportsView(feature, viewId) {
+  if (viewId === "blade_3d" || viewId === "top") {
+    return feature.coordinate_system === "model_xyz";
+  }
+  if (viewId === "meridional") {
+    return feature.coordinate_system === "model_xyz" || feature.coordinate_system === "profile_rz_mm";
+  }
+  if (viewId !== "s_q") {
+    return false;
+  }
+  if (feature.coordinate_system === "s_q_mm") {
+    return true;
+  }
+  const displayFields = {
+    nurbs_curve: ["display_control_points_s_q_mm"],
+    polyline: ["display_points_s_q_mm"],
+    control_point: ["display_coordinates_s_q_mm"],
+    point: ["display_coordinates_s_q_mm"],
+    local_frame: ["display_origin_s_q_mm", "display_s_axis_s_q_mm", "display_q_axis_s_q_mm"],
+    reference_axis: ["display_origin_s_q_mm", "display_direction_s_q_mm"],
+  }[feature.kind] || [];
+  return displayFields.length > 0 && displayFields.every((field) => Object.hasOwn(feature, field));
 }
 
 function featureCoordinatesValid(feature) {

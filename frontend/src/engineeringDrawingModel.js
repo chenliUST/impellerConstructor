@@ -8,7 +8,7 @@ export function projectEngineeringFeature(feature, viewId, frame) {
   }
 
   const className = feature.className || "engineering-feature-selected";
-  const point = (coordinates) => projectPoint(coordinates, viewId);
+  const point = (coordinates) => projectPoint(coordinates, viewId, feature.coordinate_system);
   let drawing;
 
   switch (feature.kind) {
@@ -307,9 +307,10 @@ function projectDimension(dimension, context) {
 }
 
 function dimensionPoints(dimension, viewId) {
-  return viewId === "s_q"
-    ? dimension.display_measurement_points_s_q_mm || dimension.measurement_points
-    : dimension.measurement_points;
+  if (viewId === "s_q") {
+    return dimension.display_measurement_points_s_q_mm || dimension.measurement_points;
+  }
+  return dimension.model_measurement_points || dimension.measurement_points;
 }
 
 function dimensionDirection(dimension, field, viewId) {
@@ -346,23 +347,38 @@ function arrow(tip, toward) {
 
 function sqPoints(feature, field, viewId) {
   if (viewId === "s_q") {
-    return feature[`display_${field}_s_q_mm`] || feature[field];
+    return feature[`display_${field}_s_q_mm`]
+      || (feature.coordinate_system === "s_q_mm" || feature.coordinate_system == null ? feature[field] : null);
   }
-  return feature[field];
+  return featureCoordinateSystemSupportsView(feature.coordinate_system, viewId) ? feature[field] : null;
 }
 
 function sqPoint(feature, field, viewId) {
   if (viewId === "s_q") {
-    return feature[`display_${field}_s_q_mm`] || feature[field];
+    return feature[`display_${field}_s_q_mm`]
+      || (feature.coordinate_system === "s_q_mm" || feature.coordinate_system == null ? feature[field] : null);
   }
-  return feature[field];
+  return featureCoordinateSystemSupportsView(feature.coordinate_system, viewId) ? feature[field] : null;
+}
+
+function featureCoordinateSystemSupportsView(coordinateSystem, viewId) {
+  if (coordinateSystem == null) {
+    return true;
+  }
+  if (viewId === "top") {
+    return coordinateSystem === "model_xyz";
+  }
+  if (viewId === "meridional") {
+    return coordinateSystem === "model_xyz" || coordinateSystem === "profile_rz_mm";
+  }
+  return viewId === "s_q" && coordinateSystem === "s_q_mm";
 }
 
 function projectPoints(points, project) {
   return Array.isArray(points) ? points.map(project) : null;
 }
 
-function projectPoint(point, viewId) {
+function projectPoint(point, viewId, coordinateSystem = null) {
   if (!Array.isArray(point) || !point.every(isFiniteNumber)) {
     return null;
   }
@@ -371,6 +387,9 @@ function projectPoint(point, viewId) {
   }
   if (viewId === "meridional" && point.length >= 3) {
     return [Math.hypot(point[0], point[1]), point[2]];
+  }
+  if (viewId === "meridional" && coordinateSystem !== "s_q_mm" && point.length === 2) {
+    return [point[0], point[1]];
   }
   if (viewId === "s_q" && point.length >= 2) {
     return [point[0], point[1]];

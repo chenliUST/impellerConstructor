@@ -18,6 +18,8 @@ ENGINEERING_FEATURE_KINDS = {
     "local_frame",
     "reference_axis",
 }
+ENGINEERING_COORDINATE_SYSTEMS = {"model_xyz", "s_q_mm", "profile_rz_mm"}
+ENGINEERING_RENDERING_ROLES = {"drawing_context", "selected_feature"}
 ENGINEERING_DIMENSION_KINDS = {
     "linear",
     "radial",
@@ -223,11 +225,13 @@ def build_parameter_inspection_contract(surface_graph: Mapping[str, Any]) -> dic
             for name, segment in loop.get("segments", {}).items():
                 segment_id = f"{loop_id}:{name}"
                 source_points = copy.deepcopy(segment.get("points_s_q", []))
+                source_points_xyz = copy.deepcopy(segment.get("points_xyz", []))
                 source_controls = copy.deepcopy(segment.get("control_points_s_q", []))
                 segment_references[name] = {
                     "section_segment_id": segment_id,
                     "source_segment_name": name,
                     "points_s_q": source_points,
+                    "points_xyz": source_points_xyz,
                     "control_points_s_q": source_controls,
                     "display_points_s_q_mm": _metric_s_q_points(source_points, metric_scale),
                     "display_control_points_s_q_mm": _metric_s_q_points(source_controls, metric_scale),
@@ -314,11 +318,22 @@ def _inspection_parameter(
         "resolved_value": copy.deepcopy(resolved_value),
         "unit": unit,
         "applicable_views": list(applicable_views),
-        "feature_geometry": copy.deepcopy(list(feature_geometry)),
+        "feature_geometry": [_normalized_feature_geometry(feature) for feature in feature_geometry],
         "dimension_definition": copy.deepcopy(dimension_definition),
         "selection_scope": copy.deepcopy(dict(selection_scope)),
         "order": order,
     }
+
+
+def _normalized_feature_geometry(feature: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(dict(feature))
+    normalized["coordinate_system"] = {
+        "xyz_mm": "model_xyz",
+        "xy_mm": "model_xyz",
+        "rz_meridional_mm": "profile_rz_mm",
+    }.get(normalized.get("coordinate_system"), normalized.get("coordinate_system"))
+    normalized.setdefault("rendering_role", "selected_feature")
+    return normalized
 
 
 def _engineering_records_are_well_formed(
@@ -420,7 +435,8 @@ def _feature_geometry_is_well_formed(features: Any, primitive_ids: set[str]) -> 
             kind not in ENGINEERING_FEATURE_KINDS
             or not _nonempty_string(primitive_id)
             or primitive_id in primitive_ids
-            or not _nonempty_string(feature.get("coordinate_system"))
+            or feature.get("coordinate_system") not in ENGINEERING_COORDINATE_SYSTEMS
+            or feature.get("rendering_role") not in ENGINEERING_RENDERING_ROLES
             or not _engineering_value_is_finite(feature)
             or not _feature_coordinates_are_well_formed(kind, feature)
         ):
@@ -592,6 +608,14 @@ def _engineering_parameters_match_source_geometry(
     return True
 
 
+def _selected_feature_geometry(parameter: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [
+        feature
+        for feature in parameter.get("feature_geometry", [])
+        if feature.get("rendering_role") == "selected_feature"
+    ]
+
+
 def _selection_scope_identity_matches(parameter: Mapping[str, Any], surface_graph: Mapping[str, Any]) -> bool:
     scope = parameter["selection_scope"]
     if "source_station_index" not in scope:
@@ -670,7 +694,7 @@ def _profile_control_matches_source(
         return False
     coordinates = profile["control_points"][index]
     axis_index = 0 if parameter["parameter_id"].endswith(".r") else 1
-    feature = parameter["feature_geometry"]
+    feature = _selected_feature_geometry(parameter)
     prefix = "hub.profile" if profile_id == "hub_profile" else "tip_or_shroud.profile"
     return (
         parameter["group_id"] == ("hub" if profile_id == "hub_profile" else "tip_or_shroud")
@@ -732,11 +756,15 @@ def _thickness_parameter_matches_source(
         return False
     pressure = _metric_s_q_points(loop["segments"]["pressure_side"]["points_s_q"], float(scale))
     suction = _metric_s_q_points(loop["segments"]["suction_side"]["points_s_q"], float(scale))
+    pressure_xyz = loop["segments"]["pressure_side"]["points_xyz"]
+    suction_xyz = loop["segments"]["suction_side"]["points_xyz"]
     sample_index = min(len(pressure), len(suction)) // 2
     endpoints = [pressure[sample_index], suction[sample_index]]
-    features = [feature.get("coordinates") for feature in parameter["feature_geometry"] if feature.get("kind") == "point"]
+    endpoints_xyz = [pressure_xyz[sample_index], suction_xyz[sample_index]]
+    point_features = [feature for feature in _selected_feature_geometry(parameter) if feature.get("kind") == "point"]
     return (
-        features == endpoints
+        [feature.get("coordinates") for feature in point_features] == endpoints_xyz
+        and [feature.get("display_coordinates_s_q_mm") for feature in point_features] == endpoints
         and parameter["dimension_definition"].get("measurement_points") == endpoints
         and parameter["resolved_value"] == _distance(*endpoints)
     )
@@ -752,11 +780,18 @@ def _sagitta_parameter_matches_source(
     if not isinstance(segment, Mapping):
         return False
     points = _metric_s_q_points(segment["points_s_q"], float(loop["streamwise_metric_scale_mm"]))
+    points_xyz = segment["points_xyz"]
     expected = [points[0], points[-1], points[len(points) // 2]]
+    measurement_features = [
+        feature
+        for feature in parameter["feature_geometry"]
+        if feature.get("kind") == "point" and feature.get("rendering_role") == "selected_feature"
+    ]
     return (
-        parameter["feature_geometry"][0].get("points") == points
+        parameter["feature_geometry"][0].get("points") == points_xyz
         and parameter["feature_geometry"][0].get("kind") == "polyline"
-        and parameter["feature_geometry"][0].get("points") == points
+        and parameter["feature_geometry"][0].get("display_points_s_q_mm") == points
+        and measurement_features == _sagitta_measurement_features(parameter["parameter_id"], points_xyz, points)
         and parameter["dimension_definition"].get("measurement_points") == expected
         and parameter["resolved_value"] == _point_line_distance(expected[2], expected[0], expected[1])
     )
@@ -782,6 +817,11 @@ def _generated_station_reference_point(loop: Mapping[str, Any]) -> list[float]:
     return _metric_s_q_points(pressure, float(scale))[len(pressure) // 2]
 
 
+def _generated_station_reference_point_xyz(loop: Mapping[str, Any]) -> list[float]:
+    pressure = loop.get("segments", {}).get("pressure_side", {}).get("points_xyz", [])
+    return copy.deepcopy(pressure[len(pressure) // 2]) if pressure else []
+
+
 def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_graph: Mapping[str, Any]) -> bool:
     blades = surface_graph.get("blade_to_blade_loop_family", {}).get("blades", [])
     main_count = sum(1 for blade in blades if blade.get("blade_class") == "main")
@@ -789,7 +829,7 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
     splitter_directions = _graph_blade_anchor_directions(surface_graph, "splitter")
     parameter_id = parameter["parameter_id"]
     if parameter_id == "blade.main_blade_count":
-        feature = parameter["feature_geometry"]
+        feature = _selected_feature_geometry(parameter)
         return (
             parameter["resolved_value"] == main_count
             and parameter["selection_scope"].get("source_geometry_kind") == "blade_population"
@@ -800,7 +840,7 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
         )
     if parameter_id == "blade.angular_pitch_deg":
         expected = _angle_degrees(main_directions[0], main_directions[1]) if len(main_directions) >= 2 else None
-        feature = parameter["feature_geometry"]
+        feature = _selected_feature_geometry(parameter)
         return (
             expected is not None
             and math.isclose(float(parameter["resolved_value"]), expected, rel_tol=0.0, abs_tol=1.0e-9)
@@ -811,36 +851,40 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
             and feature[0].get("direction") == [0.0, 0.0, 1.0]
         )
     if parameter_id == "blade.main.count":
-        feature = parameter["feature_geometry"]
+        feature = _selected_feature_geometry(parameter)
         return (
             parameter["resolved_value"] == main_count
             and parameter["selection_scope"].get("source_geometry_kind") == "blade_population"
             and len(feature) == 1
             and feature[0].get("kind") == "reference_axis"
-            and feature[0].get("origin") == [0.0, 0.0]
-            and feature[0].get("direction") == [1.0, 0.0]
+            and feature[0].get("origin") == [0.0, 0.0, 0.0]
+            and feature[0].get("direction") == [1.0, 0.0, 0.0]
         )
     if parameter_id == "blade.angular_pitch":
         expected = _angular_dimension(main_directions[0], main_directions[1]) if len(main_directions) >= 2 else None
-        feature = parameter["feature_geometry"]
+        feature = _selected_feature_geometry(parameter)
         return (
             expected is not None
             and parameter["dimension_definition"] == expected
             and parameter["resolved_value"] == _measure_dimension(expected)
             and len(feature) == 2
-            and [item.get("direction") for item in feature] == [main_directions[0], main_directions[1]]
+            and [item.get("direction") for item in feature] == [
+                [*main_directions[0], 0.0],
+                [*main_directions[1], 0.0],
+            ]
         )
     if parameter_id == "blade.splitter.phase":
         if main_directions and splitter_directions:
             expected = _angular_dimension(main_directions[0], splitter_directions[0])
-            feature = parameter["feature_geometry"]
+            feature = _selected_feature_geometry(parameter)
             return (
                 parameter["dimension_definition"] == expected
                 and parameter["resolved_value"] == _measure_dimension(expected)
                 and len(feature) == 1
-                and feature[0].get("direction") == main_directions[0]
+                and feature[0].get("direction") == [*main_directions[0], 0.0]
             )
-        return parameter["resolved_value"] == "not_applicable" and parameter["feature_geometry"][0].get("direction") == [1.0, 0.0]
+        feature = _selected_feature_geometry(parameter)
+        return parameter["resolved_value"] == "not_applicable" and feature[0].get("direction") == [1.0, 0.0, 0.0]
     return False
 
 
@@ -887,12 +931,18 @@ def _join_status_matches_source(
         for segment in loop.get("segments", {}).values()
         for point in _metric_s_q_points(segment.get("points_s_q", []), float(scale))
     ]
+    points_xyz = [
+        point
+        for segment in loop.get("segments", {}).values()
+        for point in segment.get("points_xyz", [])
+    ]
     feature = parameter["feature_geometry"]
     return (
         parameter["resolved_value"] == loop.get("metrics", {}).get("join_status")
         and len(feature) == 1
         and feature[0].get("kind") == "polyline"
-        and feature[0].get("points") == points
+        and feature[0].get("points") == points_xyz
+        and feature[0].get("display_points_s_q_mm") == points
     )
 
 
@@ -912,7 +962,8 @@ def _root_offset_matches_source(
         and parameter["resolved_value"] == resolved
         and len(feature) == 1
         and feature[0].get("kind") == "point"
-        and feature[0].get("coordinates") == _generated_station_reference_point(loop)
+        and feature[0].get("coordinates") == _generated_station_reference_point_xyz(loop)
+        and feature[0].get("display_coordinates_s_q_mm") == _generated_station_reference_point(loop)
     )
 
 
@@ -935,10 +986,24 @@ def _attachment_parameter_matches_source(
     ):
         return False
     points = _attachment_measurement_points(surface, scope.get("source_attachment_measurement")) if surface else None
-    features = [feature.get("coordinates") for feature in parameter["feature_geometry"] if feature.get("kind") == "point"]
+    model_points = _attachment_model_measurement_points(surface, measurement)
+    prefix = parameter["parameter_id"]
+    expected_context = _attachment_context_features(prefix, surface, attachment)
+    context = [
+        feature
+        for feature in parameter["feature_geometry"]
+        if feature.get("rendering_role") == "drawing_context"
+    ]
+    features = [
+        feature.get("coordinates")
+        for feature in _selected_feature_geometry(parameter)
+        if feature.get("kind") == "point"
+    ]
     return (
         points is not None
-        and features == points
+        and model_points is not None
+        and context == expected_context
+        and features == model_points
         and parameter["dimension_definition"].get("measurement_points") == points
         and parameter["resolved_value"] == _distance(*points)
     )
@@ -962,6 +1027,15 @@ def _attachment_measurement_points(surface: Mapping[str, Any], measurement: Any)
         edges = surface.get("edge_samples", {})
         return [copy.deepcopy(edges["blade_tip_loop"][0]), copy.deepcopy(edges["shroud_reference_loop"][0])]
     return None
+
+
+def _attachment_model_measurement_points(
+    surface: Mapping[str, Any], measurement: Any
+) -> list[list[float]] | None:
+    edges = surface.get("edge_samples", {})
+    if measurement == "root_width":
+        return [copy.deepcopy(edges["hub_outer_loop"][0]), copy.deepcopy(edges["blade_inner_loop"][0])]
+    return _attachment_measurement_points(surface, measurement)
 
 
 def _coordinate_vector(value: Any) -> bool:
@@ -1079,6 +1153,7 @@ def _engineering_parameter_records(
         parameter_id = f"{profile_id}.curve"
         feature = copy.deepcopy(dict(profile))
         feature["id"] = f"{parameter_id}:curve"
+        feature["rendering_role"] = "drawing_context"
         parameters.append(
             _inspection_parameter(
                 parameter_id=parameter_id,
@@ -1087,7 +1162,7 @@ def _engineering_parameter_records(
                 requested_value=profile.get("control_points"),
                 resolved_value=profile.get("control_points"),
                 unit="mm",
-                applicable_views=["meridional", "blade_3d"],
+                applicable_views=["meridional"],
                 feature_geometry=[feature],
                 dimension_definition=None,
                 selection_scope={"support_profile_id": profile_id, "source_profile_id": profile_id},
@@ -1142,7 +1217,7 @@ def _engineering_parameter_records(
                 requested_value=station.get("h"),
                 resolved_value=station.get("h"),
                 unit="span fraction",
-                applicable_views=["s_q", "blade_3d"],
+                applicable_views=["s_q"],
                 feature_geometry=[
                     {
                         "kind": "local_frame",
@@ -1160,6 +1235,8 @@ def _engineering_parameter_records(
         )
         thickness_parameter_id = f"blade:{blade_id}:station:{station_id}:thickness"
         thickness_endpoints = _section_thickness_endpoints(loop)
+        thickness_endpoints_xyz = _section_thickness_endpoints_xyz(loop)
+        thickness_frame = _section_thickness_frame(loop)
         thickness_value = _distance_between_points(*thickness_endpoints)
         parameters.append(
             _inspection_parameter(
@@ -1171,25 +1248,29 @@ def _engineering_parameter_records(
                 unit="mm",
                 applicable_views=["s_q", "blade_3d"],
                 feature_geometry=[
+                    *_section_context_features(thickness_parameter_id, loop),
                     {
                         "kind": "point",
                         "id": f"{thickness_parameter_id}:pressure_point",
-                        "coordinate_system": "s_q_mm",
-                        "coordinates": thickness_endpoints[0],
+                        "coordinate_system": "model_xyz",
+                        "coordinates": thickness_endpoints_xyz[0],
+                        "display_coordinates_s_q_mm": thickness_endpoints[0],
                     },
                     {
                         "kind": "point",
                         "id": f"{thickness_parameter_id}:suction_point",
-                        "coordinate_system": "s_q_mm",
-                        "coordinates": thickness_endpoints[1],
+                        "coordinate_system": "model_xyz",
+                        "coordinates": thickness_endpoints_xyz[1],
+                        "display_coordinates_s_q_mm": thickness_endpoints[1],
                     },
                     {
                         "kind": "local_frame",
                         "id": f"{thickness_parameter_id}:frame",
-                        "coordinate_system": "s_q_mm",
-                        "origin": thickness_endpoints[0],
-                        "s_axis": [1.0, 0.0],
-                        "q_axis": [0.0, 1.0],
+                        "coordinate_system": "model_xyz",
+                        **thickness_frame,
+                        "display_origin_s_q_mm": thickness_endpoints[0],
+                        "display_s_axis_s_q_mm": [1.0, 0.0],
+                        "display_q_axis_s_q_mm": [0.0, 1.0],
                     },
                 ],
                 dimension_definition={
@@ -1216,8 +1297,9 @@ def _engineering_parameter_records(
                     {
                         "kind": "polyline",
                         "id": f"{join_parameter_id}:loop",
-                        "coordinate_system": "s_q_mm",
-                        "points": _section_loop_points(loop),
+                        "coordinate_system": "model_xyz",
+                        "points": _section_loop_points_xyz(loop),
+                        "display_points_s_q_mm": _section_loop_points(loop),
                     }
                 ],
                 dimension_definition=None,
@@ -1247,8 +1329,9 @@ def _engineering_parameter_records(
                     {
                         "kind": "point",
                         "id": f"{parameter_id}:point",
-                        "coordinate_system": "s_q_mm",
-                        "coordinates": _station_reference_point(section_loops[loop_id]),
+                        "coordinate_system": "model_xyz",
+                        "coordinates": _station_reference_point_xyz(section_loops[loop_id]),
+                        "display_coordinates_s_q_mm": _station_reference_point(section_loops[loop_id]),
                     }
                 ],
                 dimension_definition=None,
@@ -1299,6 +1382,7 @@ def _append_complete_engineering_parameters(
             continue
         curve = copy.deepcopy(dict(profile))
         curve["id"] = f"{prefix}.degree:curve"
+        curve["rendering_role"] = "drawing_context"
         append(
             parameter_id=f"{prefix}.degree",
             group_id=group_id,
@@ -1306,7 +1390,7 @@ def _append_complete_engineering_parameters(
             requested_value=profile.get("degree"),
             resolved_value=profile.get("degree"),
             unit="degree",
-            applicable_views=["meridional", "blade_3d"],
+            applicable_views=["meridional"],
             feature_geometry=[curve],
             dimension_definition=None,
             selection_scope={"support_profile_id": profile_id, "source_profile_id": profile_id},
@@ -1316,6 +1400,9 @@ def _append_complete_engineering_parameters(
                 continue
             for axis, axis_index in (("r", 0), ("z", 1)):
                 parameter_id = f"{prefix}.control.{index}.{axis}"
+                context_curve = copy.deepcopy(dict(profile))
+                context_curve["id"] = f"{parameter_id}:profile_context"
+                context_curve["rendering_role"] = "drawing_context"
                 append(
                     parameter_id=parameter_id,
                     group_id=group_id,
@@ -1323,8 +1410,9 @@ def _append_complete_engineering_parameters(
                     requested_value=point[axis_index],
                     resolved_value=abs(float(point[axis_index])),
                     unit="mm",
-                    applicable_views=["meridional", "blade_3d"],
+                    applicable_views=["meridional"],
                     feature_geometry=[
+                        context_curve,
                         {
                             "kind": "control_point",
                             "id": f"{parameter_id}:control_point",
@@ -1354,7 +1442,10 @@ def _append_complete_engineering_parameters(
         resolved_value=len(main_directions),
         unit="count",
         applicable_views=["top", "blade_3d"],
-        feature_geometry=[_axis_feature("blade.main.count:axis", [1.0, 0.0])],
+        feature_geometry=[
+            _axis_feature("blade.main.count:axis", [1.0, 0.0]),
+            *_top_context_features(surface_graph),
+        ],
         dimension_definition=None,
         selection_scope={"source_geometry_kind": "blade_population"},
     )
@@ -1416,7 +1507,7 @@ def _append_complete_engineering_parameters(
             requested_value=station.get("h"),
             resolved_value=station.get("h"),
             unit="span fraction",
-            applicable_views=["s_q", "blade_3d"],
+            applicable_views=["s_q"],
             feature_geometry=[
                 {
                     "kind": "local_frame",
@@ -1445,7 +1536,7 @@ def _append_complete_engineering_parameters(
                         requested_value=coordinates[axis_index],
                         resolved_value=abs(float(coordinates[axis_index])),
                         unit="mm",
-                        applicable_views=["s_q", "blade_3d"],
+                        applicable_views=["s_q"],
                         feature_geometry=[
                             {
                                 "kind": "control_point",
@@ -1466,6 +1557,7 @@ def _append_complete_engineering_parameters(
             if segment_name not in {"leading_edge", "trailing_edge"}:
                 continue
             points = segment["display_points_s_q_mm"]
+            points_xyz = segment["points_xyz"]
             sagitta_points = [copy.deepcopy(points[0]), copy.deepcopy(points[-1]), copy.deepcopy(points[len(points) // 2])]
             parameter_id = f"blade:{blade_id}:station:{station_id}:section:{segment_name}:sagitta"
             append(
@@ -1480,9 +1572,11 @@ def _append_complete_engineering_parameters(
                     {
                         "kind": "polyline",
                         "id": f"{parameter_id}:curve",
-                        "coordinate_system": "s_q_mm",
-                        "points": copy.deepcopy(points),
-                    }
+                        "coordinate_system": "model_xyz",
+                        "points": copy.deepcopy(points_xyz),
+                        "display_points_s_q_mm": copy.deepcopy(points),
+                    },
+                    *_sagitta_measurement_features(parameter_id, points_xyz, points),
                 ],
                 dimension_definition={
                     "kind": "arc_height",
@@ -1516,21 +1610,44 @@ def _axis_feature(primitive_id: str, direction: Sequence[float]) -> dict[str, An
     return {
         "kind": "reference_axis",
         "id": primitive_id,
-        "coordinate_system": "xy_mm",
-        "origin": [0.0, 0.0],
-        "direction": copy.deepcopy(list(direction)),
+        "coordinate_system": "model_xyz",
+        "origin": [0.0, 0.0, 0.0],
+        "direction": [float(direction[0]), float(direction[1]), 0.0],
     }
 
 
 def _angular_dimension(reference_direction: Sequence[float], measured_direction: Sequence[float]) -> dict[str, Any]:
     return {
         "kind": "angular",
-        "measurement_points": [[0.0, 0.0], [1.0, 0.0]],
-        "reference_direction": copy.deepcopy(list(reference_direction)),
-        "measured_direction": copy.deepcopy(list(measured_direction)),
+        "measurement_points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        "reference_direction": [float(reference_direction[0]), float(reference_direction[1]), 0.0],
+        "measured_direction": [float(measured_direction[0]), float(measured_direction[1]), 0.0],
         "unit": "deg",
         "tolerance": 1.0e-6,
     }
+
+
+def _top_context_features(surface_graph: Mapping[str, Any]) -> list[dict[str, Any]]:
+    features: list[dict[str, Any]] = []
+    blades = surface_graph.get("blade_to_blade_loop_family", {}).get("blades", [])
+    for blade_index, blade in enumerate(blades):
+        loops = blade.get("loops", []) if isinstance(blade, Mapping) else []
+        if not loops:
+            continue
+        for segment_name, segment in loops[0].get("segments", {}).items():
+            points = segment.get("points_xyz", []) if isinstance(segment, Mapping) else []
+            if not _coordinate_array(points, minimum_count=2):
+                continue
+            features.append(
+                {
+                    "kind": "polyline",
+                    "id": f"top_context:blade_{blade_index}:{segment_name}",
+                    "coordinate_system": "model_xyz",
+                    "rendering_role": "drawing_context",
+                    "points": copy.deepcopy(points),
+                }
+            )
+    return features
 
 
 def _blade_anchor_directions(
@@ -1626,6 +1743,8 @@ def _append_attachment_measurements(
     target = domain.get(target_key, []) if isinstance(domain, Mapping) else []
     if attachment == "root" and _finite_number(scale) and source and target:
         width_points = _metric_s_q_points([source[0], target[0]], float(scale))
+        edges = surface.get("edge_samples", {})
+        model_points = [edges.get("hub_outer_loop", [None])[0], edges.get("blade_inner_loop", [None])[0]]
         _append_linear_parameter(
             append,
             f"{prefix}:width",
@@ -1636,7 +1755,10 @@ def _append_attachment_measurements(
                 "source_attachment_surface_id": surface["id"],
                 "source_attachment_measurement": "root_width",
             },
-            "s_q_mm",
+            "model_xyz",
+            selected_points=model_points,
+            display_points_s_q_mm=width_points,
+            context_features=_attachment_context_features(f"{prefix}:width", surface, attachment),
         )
     elif attachment == "shroud":
         edges = surface.get("edge_samples", {})
@@ -1655,7 +1777,8 @@ def _append_attachment_measurements(
                     "source_attachment_surface_id": surface["id"],
                     "source_attachment_measurement": "shroud_width",
                 },
-                "xyz_mm",
+                "model_xyz",
+                context_features=_attachment_context_features(f"{prefix}:width", surface, attachment),
             )
     if attachment == "root":
         rows = surface.get("uv_grid", [])
@@ -1674,8 +1797,38 @@ def _append_attachment_measurements(
                 "source_attachment_surface_id": surface["id"],
                 "source_attachment_measurement": f"{attachment}_lift",
             },
-            "xyz_mm",
+            "model_xyz",
+            context_features=_attachment_context_features(f"{prefix}:lift", surface, attachment),
         )
+
+
+def _attachment_context_features(
+    prefix: str,
+    surface: Mapping[str, Any],
+    attachment: str,
+) -> list[dict[str, Any]]:
+    edges = surface.get("edge_samples", {})
+    boundary_keys = (
+        (("hub_side", "hub_outer_loop"), ("blade_side", "blade_inner_loop"))
+        if attachment == "root"
+        else (("shroud_side", "shroud_reference_loop"), ("blade_side", "blade_tip_loop"))
+    )
+    features = []
+    for boundary_role, edge_key in boundary_keys:
+        points = edges.get(edge_key, []) if isinstance(edges, Mapping) else []
+        if not _coordinate_array(points, minimum_count=2):
+            continue
+        features.append(
+            {
+                "kind": "polyline",
+                "id": f"{prefix}:context:{boundary_role}",
+                "coordinate_system": "model_xyz",
+                "rendering_role": "drawing_context",
+                "boundary_role": boundary_role,
+                "points": copy.deepcopy(points),
+            }
+        )
+    return features
 
 
 def _append_linear_parameter(
@@ -1685,8 +1838,26 @@ def _append_linear_parameter(
     points: Sequence[Sequence[float]],
     scope: Mapping[str, Any],
     coordinate_system: str,
+    *,
+    selected_points: Sequence[Sequence[float]] | None = None,
+    display_points_s_q_mm: Sequence[Sequence[float]] | None = None,
+    context_features: Sequence[Mapping[str, Any]] = (),
 ) -> None:
     measured = _distance(points[0], points[1])
+    feature_points = selected_points or points
+    selected_features = []
+    for endpoint, point in zip(("start", "end"), feature_points):
+        feature = {
+            "kind": "point",
+            "id": f"{parameter_id}:{endpoint}",
+            "coordinate_system": coordinate_system,
+            "coordinates": copy.deepcopy(list(point)),
+        }
+        if display_points_s_q_mm is not None:
+            feature["display_coordinates_s_q_mm"] = copy.deepcopy(
+                list(display_points_s_q_mm[0 if endpoint == "start" else 1])
+            )
+        selected_features.append(feature)
     append(
         parameter_id=parameter_id,
         group_id="attachments",
@@ -1695,23 +1866,15 @@ def _append_linear_parameter(
         resolved_value=measured,
         unit="mm",
         applicable_views=["meridional", "blade_3d"],
-        feature_geometry=[
-            {
-                "kind": "point",
-                "id": f"{parameter_id}:start",
-                "coordinate_system": coordinate_system,
-                "coordinates": copy.deepcopy(list(points[0])),
-            },
-            {
-                "kind": "point",
-                "id": f"{parameter_id}:end",
-                "coordinate_system": coordinate_system,
-                "coordinates": copy.deepcopy(list(points[1])),
-            },
-        ],
+        feature_geometry=[*context_features, *selected_features],
         dimension_definition={
             "kind": "linear",
             "measurement_points": [copy.deepcopy(list(points[0])), copy.deepcopy(list(points[1]))],
+            **(
+                {"model_measurement_points": copy.deepcopy([list(point) for point in feature_points])}
+                if selected_points is not None
+                else {}
+            ),
             "unit": "mm",
             "tolerance": 1.0e-6,
         },
@@ -1746,7 +1909,7 @@ def _append_shroud_thickness_parameter(
             "source_shroud_inner_surface_id": inner["id"],
             "source_shroud_outer_surface_id": outer["id"],
         },
-        "xyz_mm",
+        "model_xyz",
     )
 
 
@@ -1755,11 +1918,37 @@ def _station_reference_point(loop: Mapping[str, Any]) -> list[float]:
     return copy.deepcopy(pressure[len(pressure) // 2])
 
 
+def _station_reference_point_xyz(loop: Mapping[str, Any]) -> list[float]:
+    pressure = loop["segment_references"]["pressure_side"]["points_xyz"]
+    return copy.deepcopy(pressure[len(pressure) // 2])
+
+
 def _section_thickness_endpoints(loop: Mapping[str, Any]) -> list[list[float]]:
     pressure = loop["segment_references"]["pressure_side"]["display_points_s_q_mm"]
     suction = loop["segment_references"]["suction_side"]["display_points_s_q_mm"]
     sample_index = min(len(pressure), len(suction)) // 2
     return [copy.deepcopy(pressure[sample_index]), copy.deepcopy(suction[sample_index])]
+
+
+def _section_thickness_endpoints_xyz(loop: Mapping[str, Any]) -> list[list[float]]:
+    pressure = loop["segment_references"]["pressure_side"]["points_xyz"]
+    suction = loop["segment_references"]["suction_side"]["points_xyz"]
+    sample_index = min(len(pressure), len(suction)) // 2
+    return [copy.deepcopy(pressure[sample_index]), copy.deepcopy(suction[sample_index])]
+
+
+def _section_thickness_frame(loop: Mapping[str, Any]) -> dict[str, list[float]]:
+    pressure = loop["segment_references"]["pressure_side"]["points_xyz"]
+    suction = loop["segment_references"]["suction_side"]["points_xyz"]
+    sample_index = min(len(pressure), len(suction)) // 2
+    before = pressure[max(0, sample_index - 1)]
+    after = pressure[min(len(pressure) - 1, sample_index + 1)]
+    origin = pressure[sample_index]
+    return {
+        "origin": copy.deepcopy(origin),
+        "s_axis": [float(right) - float(left) for left, right in zip(before, after)],
+        "q_axis": [float(right) - float(left) for left, right in zip(origin, suction[sample_index])],
+    }
 
 
 def _distance_between_points(left: Sequence[float], right: Sequence[float]) -> float:
@@ -1771,6 +1960,48 @@ def _section_loop_points(loop: Mapping[str, Any]) -> list[list[float]]:
         point
         for segment in loop["segment_references"].values()
         for point in segment["display_points_s_q_mm"]
+    ]
+
+
+def _section_loop_points_xyz(loop: Mapping[str, Any]) -> list[list[float]]:
+    return [
+        point
+        for segment in loop["segment_references"].values()
+        for point in segment["points_xyz"]
+    ]
+
+
+def _section_context_features(parameter_id: str, loop: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "kind": "polyline",
+            "id": f"{parameter_id}:context:{segment_name}",
+            "coordinate_system": "model_xyz",
+            "rendering_role": "drawing_context",
+            "source_segment_name": segment_name,
+            "points": copy.deepcopy(segment["points_xyz"]),
+            "display_points_s_q_mm": copy.deepcopy(segment["display_points_s_q_mm"]),
+        }
+        for segment_name, segment in loop["segment_references"].items()
+    ]
+
+
+def _sagitta_measurement_features(
+    parameter_id: str,
+    points_xyz: Sequence[Sequence[float]],
+    display_points_s_q_mm: Sequence[Sequence[float]],
+) -> list[dict[str, Any]]:
+    indices = [0, len(points_xyz) - 1, len(points_xyz) // 2]
+    return [
+        {
+            "kind": "point",
+            "id": f"{parameter_id}:measurement:{label}",
+            "coordinate_system": "model_xyz",
+            "rendering_role": "selected_feature",
+            "coordinates": copy.deepcopy(list(points_xyz[index])),
+            "display_coordinates_s_q_mm": copy.deepcopy(list(display_points_s_q_mm[index])),
+        }
+        for label, index in zip(("start", "end", "arc"), indices)
     ]
 
 
@@ -1959,6 +2190,7 @@ def _segment_record_is_well_formed(
         return False
     segment_id = segment.get("section_segment_id")
     points = segment.get("points_s_q")
+    points_xyz = segment.get("points_xyz")
     controls = segment.get("control_points_s_q")
     display_points = segment.get("display_points_s_q_mm")
     display_controls = segment.get("display_control_points_s_q_mm")
@@ -1967,6 +2199,9 @@ def _segment_record_is_well_formed(
         not _nonempty_string(segment_id)
         or segment_id in segment_ids
         or not _point_array(points)
+        or not _coordinate_array(points_xyz)
+        or len(points_xyz) != len(points)
+        or any(len(point) != 3 for point in points_xyz)
         or not _point_array(controls)
         or not _point_array(display_points)
         or not _point_array(display_controls)

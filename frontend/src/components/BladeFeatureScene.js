@@ -22,6 +22,7 @@ export function BladeFeatureScene({
     () => normalizeBladeSurfaceIds(bladeSurfaceIds),
     [bladeSurfaceIds],
   );
+  const geometryStatus = bladeFeatureGeometryStatus(selectedParameter);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -76,8 +77,8 @@ export function BladeFeatureScene({
       const width = Math.max(1, Math.floor(container.clientWidth));
       const height = Math.max(1, Math.floor(container.clientHeight));
       const radius = Math.max(Number(bounds.radius) || 1, 1);
-      const distance = radius * 2.4;
       camera.aspect = width / height;
+      const distance = bladeFeatureCameraDistance(radius, width, height);
       camera.near = Math.max(radius / 100, 0.1);
       camera.far = Math.max(distance * 20, 100000);
       camera.position.set(distance * 0.8, -distance, distance * 0.55);
@@ -135,7 +136,30 @@ export function BladeFeatureScene({
       "data-visible-uv-overlay-count": "0",
       "data-visible-mesh-overlay-count": "0",
     }),
+    geometryStatus === "geometry unavailable"
+      ? h(
+          "div",
+          {
+            className: "blade-feature-geometry-unavailable",
+            role: "status",
+            style: { position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#444" },
+          },
+          "geometry unavailable",
+        )
+      : null,
   );
+}
+
+export function bladeFeatureGeometryStatus(selectedParameter) {
+  if (!selectedParameter) {
+    return null;
+  }
+  const features = selectedParameter.features || selectedParameter.feature_geometry || [];
+  return features.some((feature) =>
+    feature?.coordinate_system === "model_xyz"
+    && feature?.rendering_role !== "drawing_context")
+    ? "available"
+    : "geometry unavailable";
 }
 
 export function bladeContextSurfaceGraph(surfaceGraph, bladeSurfaceIds) {
@@ -153,6 +177,12 @@ export function normalizeBladeSurfaceIds(bladeSurfaceIds) {
     return EMPTY_BLADE_SURFACE_IDS;
   }
   return [...new Set(bladeSurfaceIds.filter((surfaceId) => typeof surfaceId === "string" && surfaceId.length > 0))];
+}
+
+export function bladeFeatureCameraDistance(radius, width, height) {
+  const safeRadius = Math.max(Number(radius) || 1, 1);
+  const aspect = Math.max(1, Number(width)) / Math.max(1, Number(height));
+  return safeRadius * 2.2 / Math.min(1, aspect);
 }
 
 export function styleBladeContextGroup(contextGroup) {
@@ -189,6 +219,9 @@ export function createEngineeringFeatureGroup(features, center, vectorLength = 1
   const featureGroup = new THREE.Group();
   featureGroup.userData.isEngineeringFeature = true;
   for (const feature of features) {
+    if (feature?.coordinate_system !== "model_xyz" || feature?.rendering_role === "drawing_context") {
+      continue;
+    }
     if (feature.kind === "nurbs_curve") {
       addEngineeringLine(featureGroup, feature.control_points, feature, center);
     }
@@ -224,7 +257,7 @@ function addEngineeringLine(group, points, feature, center) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   const line = new THREE.Line(
     geometry,
-    new THREE.LineBasicMaterial({ color: "#c40000", depthTest: true, depthWrite: false }),
+    new THREE.LineBasicMaterial({ color: "#c40000", depthTest: false, depthWrite: false }),
   );
   line.renderOrder = 2;
   line.userData.isEngineeringFeature = true;
@@ -244,7 +277,7 @@ function addEngineeringPoint(group, point, feature, center) {
   );
   const marker = new THREE.Points(
     geometry,
-    new THREE.PointsMaterial({ color: "#c40000", size: 10, sizeAttenuation: true, depthTest: true }),
+    new THREE.PointsMaterial({ color: "#c40000", size: 10, sizeAttenuation: true, depthTest: false, depthWrite: false }),
   );
   marker.renderOrder = 3;
   marker.userData.isEngineeringFeature = true;
@@ -266,19 +299,10 @@ function addEngineeringVector(group, origin, direction, feature, center, vectorL
 }
 
 function featurePointVector(point, coordinateSystem) {
-  if (!Array.isArray(point) || point.length < 2 || !point.every(Number.isFinite)) {
+  if (coordinateSystem !== "model_xyz" || !Array.isArray(point) || point.length < 3 || !point.every(Number.isFinite)) {
     return null;
   }
-  if (point.length >= 3) {
-    return point.slice(0, 3);
-  }
-  if (point.length === 2 && coordinateSystem === "s_q_mm") {
-    return [point[0], 0, point[1]];
-  }
-  if (point.length === 2) {
-    return [point[0], point[1], 0];
-  }
-  return null;
+  return point.slice(0, 3);
 }
 
 function featureDirectionVector(direction, coordinateSystem) {

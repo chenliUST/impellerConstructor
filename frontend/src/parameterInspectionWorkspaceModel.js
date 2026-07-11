@@ -20,6 +20,30 @@ export const WORKSPACE_TABS = Object.freeze([
   { id: "s_q_blade", label: "S-Q + Blade" },
 ]);
 
+export function engineeringContextFeatures(groups, viewId) {
+  const byId = new Map();
+  for (const group of Array.isArray(groups) ? groups : []) {
+    for (const parameter of Array.isArray(group?.parameters) ? group.parameters : []) {
+      if (!parameter?.applicableViews?.includes(viewId)) {
+        continue;
+      }
+      for (const feature of Array.isArray(parameter.features) ? parameter.features : []) {
+        if (feature?.rendering_role === "drawing_context" && feature.id && !byId.has(feature.id)) {
+          byId.set(feature.id, feature);
+        }
+      }
+    }
+  }
+  return [...byId.values()];
+}
+
+export function inspectionWorkspaceBodyStyle() {
+  return {
+    height: "calc(100vh - 92px)",
+    maxHeight: "calc(100vh - 92px)",
+  };
+}
+
 export function initialWorkspaceState(model) {
   const selection = defaultInspectionSelection(model);
   return {

@@ -171,4 +171,39 @@ describe("EngineeringDrawingView", () => {
     assert.equal(collectElements(dimension, (node) => node.type === "line").length, 3);
     assert.equal(collectElements(dimension, (node) => node.type === "text")[0].props.children[0], "100 mm");
   });
+
+  test("keeps attachment boundaries black while measurement points are red and dimensions blue", () => {
+    const EngineeringDrawingView = loadComponent(drawingPath, "EngineeringDrawingView");
+    const boundary = {
+      id: "hub-boundary",
+      kind: "polyline",
+      coordinate_system: "model_xyz",
+      rendering_role: "drawing_context",
+      points: [[10, 0, 0], [20, 0, 10]],
+    };
+    const contextPrimitives = [projectEngineeringFeature(boundary, "meridional")];
+    const tree = EngineeringDrawingView({
+      viewId: "meridional",
+      contextPrimitives,
+      selectedParameter: {
+        id: "root-lift",
+        features: [
+          boundary,
+          { id: "start", kind: "point", coordinate_system: "model_xyz", rendering_role: "selected_feature", coordinates: [10, 0, 0] },
+          { id: "end", kind: "point", coordinate_system: "model_xyz", rendering_role: "selected_feature", coordinates: [20, 0, 10] },
+        ],
+        dimension: { kind: "linear", measurement_points: [[10, 0, 0], [20, 0, 10]], unit: "mm", resolvedValue: 14.142 },
+      },
+    });
+
+    const contextPaths = collectElements(tree, (node) => node.type === "path" && /engineering-context/.test(node.props.className));
+    const selectedPaths = collectElements(tree, (node) => node.type === "path" && /engineering-feature/.test(node.props.className));
+    const selectedPoints = collectElements(tree, (node) => node.type === "circle" && /engineering-feature/.test(node.props.className));
+    const dimensions = collectElements(tree, (node) => node.type === "g" && node.props.className === "engineering-dimension");
+
+    assert.equal(contextPaths.length, 1);
+    assert.equal(selectedPaths.length, 0);
+    assert.equal(selectedPoints.length, 2);
+    assert.equal(dimensions.length, 1);
+  });
 });

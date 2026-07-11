@@ -251,7 +251,7 @@ async function main() {
           response.clone().json().then((payload) => {
             const manifest = payload?.manifest || {};
             const parameters = (manifest.parameter_inspection?.parameters || []).filter((parameter) =>
-              parameter.parameter_id === "hub.profile.control.0.r"
+              parameter.parameter_id === "blade.angular_pitch"
               || parameter.parameter_id.includes(":attachment:root:lift")
               || parameter.parameter_id.endsWith(":section:leading_edge:sagitta"));
             const rootSurfaceIds = new Set(parameters
@@ -317,10 +317,10 @@ async function main() {
     await assertForbiddenInspectionUiAbsent(page);
     const lifecycleBaseline = await webglLifecycle(page);
 
-    const hubControl = contractParameter(
+    const topParameter = contractParameter(
       manifest,
-      (parameter) => parameter.parameter_id === "hub.profile.control.0.r",
-      "hub.profile.control.0.r",
+      (parameter) => parameter.parameter_id === "blade.angular_pitch",
+      "blade.angular_pitch",
     );
     await runAcceptanceCheck(failures, "parameter inspection desktop Top context", async () => {
       const stats = pixelStats(await page.locator(".engineering-drawing-canvas").screenshot({ animations: "disabled" }));
@@ -328,12 +328,13 @@ async function main() {
     });
     await runAcceptanceCheck(failures, "parameter inspection desktop Top", async () => {
       assert.equal(await workspace.getAttribute("data-active-tab"), "top");
-      assert.ok(hubControl.applicable_views.includes("top"), "hub.profile.control.0.r is not applicable in Top");
-      assert.equal(hubControl.feature_geometry.some((feature) => feature.kind === "control_point"), true);
-      assert.equal(hubControl.dimension_definition?.kind, "control_coordinate");
-      await openAndSelectParameter(page, hubControl.parameter_id);
-      assert.ok(await page.locator("circle.engineering-feature").count() >= 1, "Top lacks red hub control-point evidence");
-      assert.ok(await page.locator(".engineering-dimension line").count() >= 1, "Top lacks blue ordinate dimension");
+      assert.ok(topParameter.applicable_views.includes("top"), "blade.angular_pitch is not applicable in Top");
+      assert.equal(topParameter.feature_geometry.every((feature) => feature.coordinate_system === "model_xyz"), true);
+      assert.equal(topParameter.feature_geometry.some((feature) => feature.kind === "reference_axis"), true);
+      assert.equal(topParameter.dimension_definition?.kind, "angular");
+      await openAndSelectParameter(page, topParameter.parameter_id);
+      assert.ok(await page.locator("path.engineering-feature").count() >= 2, "Top lacks red angular reference evidence");
+      assert.ok(await page.locator(".engineering-dimension line").count() >= 1, "Top lacks blue angular dimension");
       await assertDrawingColors(page);
       await assertWorkspaceRegionsDoNotOverlap(page, "desktop Top");
     });
@@ -432,7 +433,7 @@ async function main() {
     assert.equal(lifecycleDelta.restoredContexts, 0);
 
     console.log(`generated preset: ${manifest.preset_id}`);
-    console.log(`selected Top parameter: ${hubControl.parameter_id}`);
+    console.log(`selected Top parameter: ${topParameter.parameter_id}`);
     console.log(`selected Meridional parameter: ${rootLift.parameter_id}`);
     console.log(`selected S-Q + Blade parameter: ${leadingSagitta.parameter_id}`);
     console.log(`inspection renderer/context lifecycle: ${JSON.stringify(lifecycleDelta)}`);
