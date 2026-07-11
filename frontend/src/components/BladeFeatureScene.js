@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
@@ -7,16 +7,21 @@ import { createSurfaceGraphGroup, disposeObject, surfaceGraphBounds } from "./Mo
 
 const h = React.createElement;
 const EMPTY_SURFACE_GRAPH = { surfaces: [] };
+export const EMPTY_BLADE_SURFACE_IDS = Object.freeze([]);
 
 export function BladeFeatureScene({
   surfaceGraph = EMPTY_SURFACE_GRAPH,
-  bladeSurfaceIds = [],
+  bladeSurfaceIds = EMPTY_BLADE_SURFACE_IDS,
   selectedParameter = null,
   manifest = null,
 }) {
   const containerRef = useRef(null);
   const [rendererStats, setRendererStats] = useState(() => inspectionRendererLifecycle.snapshot());
   const [surfaceCount, setSurfaceCount] = useState(0);
+  const normalizedBladeSurfaceIds = useMemo(
+    () => normalizeBladeSurfaceIds(bladeSurfaceIds),
+    [bladeSurfaceIds],
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -42,7 +47,7 @@ export function BladeFeatureScene({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
-    const contextSurfaceGraph = bladeContextSurfaceGraph(surfaceGraph, bladeSurfaceIds);
+    const contextSurfaceGraph = bladeContextSurfaceGraph(surfaceGraph, normalizedBladeSurfaceIds);
     const bounds = surfaceGraphBounds(contextSurfaceGraph);
     const contextGroup = createSurfaceGraphGroup(
       contextSurfaceGraph,
@@ -52,34 +57,13 @@ export function BladeFeatureScene({
       "off",
       manifest,
     );
-    let contextSurfaceCount = 0;
-    contextGroup.traverse((child) => {
-      if (child.userData.isSurfaceUvWire || child.userData.isMeshOverlay) {
-        child.visible = false;
-      }
-      if (!child.isMesh || !child.userData.surfaceId) {
-        return;
-      }
-      const mesh = child;
-      contextSurfaceCount += 1;
-      forEachMaterial(mesh.material, (material) => {
-        material.color.set("#ffffff");
-        material.emissive.set("#000000");
-        material.emissiveIntensity = 0;
-        material.opacity = 1;
-        material.transparent = false;
-      });
-      const contour = new THREE.LineSegments(
-        new THREE.EdgesGeometry(mesh.geometry, 35),
-        new THREE.LineBasicMaterial({ color: "#111111", depthTest: true, depthWrite: false }),
-      );
-      contour.renderOrder = 1;
-      contour.userData.isBladeContextContour = true;
-      contour.userData.surfaceId = mesh.userData.surfaceId;
-      contextGroup.add(contour);
-    });
+    const contextSurfaceCount = styleBladeContextGroup(contextGroup);
 
-    const featureGroup = createEngineeringFeatureGroup(selectedParameter?.features || selectedParameter?.feature_geometry || [], bounds.center);
+    const featureGroup = createEngineeringFeatureGroup(
+      selectedParameter?.features || selectedParameter?.feature_geometry || [],
+      bounds.center,
+      Math.max(10, (Number(bounds.radius) || 1) * 0.12),
+    );
     scene.add(contextGroup);
     scene.add(featureGroup);
     scene.add(new THREE.HemisphereLight("#ffffff", "#a0a0a0", 2.2));
@@ -117,18 +101,20 @@ export function BladeFeatureScene({
     return () => {
       window.cancelAnimationFrame(frameId);
       observer.disconnect();
-      controls.dispose();
       scene.remove(contextGroup);
       scene.remove(featureGroup);
-      disposeObject(contextGroup);
-      disposeObject(featureGroup);
-      renderer.dispose();
-      releaseRendererLifecycle();
+      disposeBladeFeatureSceneResources({
+        contextGroup,
+        featureGroup,
+        controls,
+        renderer,
+        releaseRendererLifecycle,
+      });
       renderer.domElement.remove();
       setSurfaceCount(0);
       setRendererStats(inspectionRendererLifecycle.snapshot());
     };
-  }, [bladeSurfaceIds, manifest, selectedParameter, surfaceGraph]);
+  }, [manifest, normalizedBladeSurfaceIds, selectedParameter, surfaceGraph]);
 
   return h(
     "div",
@@ -153,7 +139,7 @@ export function BladeFeatureScene({
 }
 
 export function bladeContextSurfaceGraph(surfaceGraph, bladeSurfaceIds) {
-  const selectedSurfaceIdSet = new Set(bladeSurfaceIds);
+  const selectedSurfaceIdSet = new Set(normalizeBladeSurfaceIds(bladeSurfaceIds));
   return {
     ...(surfaceGraph || EMPTY_SURFACE_GRAPH),
     surfaces: (surfaceGraph?.surfaces || []).filter((surface) =>
@@ -162,7 +148,44 @@ export function bladeContextSurfaceGraph(surfaceGraph, bladeSurfaceIds) {
   };
 }
 
-function createEngineeringFeatureGroup(features, center) {
+export function normalizeBladeSurfaceIds(bladeSurfaceIds) {
+  if (!Array.isArray(bladeSurfaceIds) || bladeSurfaceIds.length === 0) {
+    return EMPTY_BLADE_SURFACE_IDS;
+  }
+  return [...new Set(bladeSurfaceIds.filter((surfaceId) => typeof surfaceId === "string" && surfaceId.length > 0))];
+}
+
+export function styleBladeContextGroup(contextGroup) {
+  let contextSurfaceCount = 0;
+  contextGroup.traverse((child) => {
+    if (child.userData.isSurfaceUvWire || child.userData.isMeshOverlay) {
+      child.visible = false;
+    }
+    if (!child.isMesh || !child.userData.surfaceId) {
+      return;
+    }
+    const mesh = child;
+    contextSurfaceCount += 1;
+    forEachMaterial(mesh.material, (material) => {
+      material.color.set("#ffffff");
+      material.emissive.set("#000000");
+      material.emissiveIntensity = 0;
+      material.opacity = 1;
+      material.transparent = false;
+    });
+    const contour = new THREE.LineSegments(
+      new THREE.EdgesGeometry(mesh.geometry, 35),
+      new THREE.LineBasicMaterial({ color: "#111111", depthTest: true, depthWrite: false }),
+    );
+    contour.renderOrder = 1;
+    contour.userData.isBladeContextContour = true;
+    contour.userData.surfaceId = mesh.userData.surfaceId;
+    contextGroup.add(contour);
+  });
+  return contextSurfaceCount;
+}
+
+export function createEngineeringFeatureGroup(features, center, vectorLength = 10) {
   const featureGroup = new THREE.Group();
   featureGroup.userData.isEngineeringFeature = true;
   for (const feature of features) {
@@ -174,6 +197,13 @@ function createEngineeringFeatureGroup(features, center) {
     }
     if (feature.kind === "control_point" || feature.kind === "point") {
       addEngineeringPoint(featureGroup, feature.coordinates, feature, center);
+    }
+    if (feature.kind === "local_frame" && localFrameVectorsAreFinite(feature)) {
+      addEngineeringVector(featureGroup, feature.origin, feature.s_axis, feature, center, vectorLength);
+      addEngineeringVector(featureGroup, feature.origin, feature.q_axis, feature, center, vectorLength);
+    }
+    if (feature.kind === "reference_axis") {
+      addEngineeringVector(featureGroup, feature.origin, feature.direction, feature, center, vectorLength);
     }
   }
   return featureGroup;
@@ -222,8 +252,21 @@ function addEngineeringPoint(group, point, feature, center) {
   group.add(marker);
 }
 
+function addEngineeringVector(group, origin, direction, feature, center, vectorLength) {
+  const originVector = featurePointVector(origin, feature.coordinate_system);
+  const directionVector = featureDirectionVector(direction, feature.coordinate_system);
+  const magnitude = directionVector && Math.hypot(...directionVector);
+  if (!originVector || !directionVector || !Number.isFinite(magnitude) || magnitude <= 1.0e-9) {
+    return;
+  }
+  const endpoint = originVector.map(
+    (coordinate, index) => coordinate + (directionVector[index] * vectorLength) / magnitude,
+  );
+  addEngineeringLine(group, [originVector, endpoint], feature, center);
+}
+
 function featurePointVector(point, coordinateSystem) {
-  if (!Array.isArray(point) || !point.every(Number.isFinite)) {
+  if (!Array.isArray(point) || point.length < 2 || !point.every(Number.isFinite)) {
     return null;
   }
   if (point.length >= 3) {
@@ -236,6 +279,34 @@ function featurePointVector(point, coordinateSystem) {
     return [point[0], point[1], 0];
   }
   return null;
+}
+
+function featureDirectionVector(direction, coordinateSystem) {
+  return featurePointVector(direction, coordinateSystem);
+}
+
+function localFrameVectorsAreFinite(feature) {
+  return [feature.origin, feature.s_axis, feature.q_axis].every((vector) =>
+    featurePointVector(vector, feature.coordinate_system),
+  );
+}
+
+export function disposeBladeFeatureSceneResources({
+  contextGroup,
+  featureGroup,
+  controls = null,
+  renderer = null,
+  releaseRendererLifecycle = null,
+}) {
+  controls?.dispose();
+  if (contextGroup) {
+    disposeObject(contextGroup);
+  }
+  if (featureGroup) {
+    disposeObject(featureGroup);
+  }
+  renderer?.dispose();
+  releaseRendererLifecycle?.();
 }
 
 function forEachMaterial(material, callback) {

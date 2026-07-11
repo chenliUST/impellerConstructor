@@ -1,56 +1,265 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, test } from "node:test";
+
+import { createRendererLifecycleRegistry } from "../inspectionSceneModel.js";
 
 const root = resolve(import.meta.dirname, "..", "..");
 const scenePath = resolve(root, "src/components/BladeFeatureScene.js");
 
-function source() {
-  assert.equal(existsSync(scenePath), true, "BladeFeatureScene.js should exist");
-  return readFileSync(scenePath, "utf-8");
+async function loadSceneHelpers() {
+  globalThis.__bladeFeatureSceneTestRuntime = {
+    React: { createElement: () => null },
+    useEffect: () => undefined,
+    useMemo: (factory) => factory(),
+    useRef: (value) => ({ current: value }),
+    useState: (value) => [typeof value === "function" ? value() : value, () => undefined],
+    THREE: createThreeHarness(),
+    OrbitControls: class {},
+    inspectionRendererLifecycle: createRendererLifecycleRegistry(),
+    createSurfaceGraphGroup: () => new globalThis.__bladeFeatureSceneTestRuntime.THREE.Group(),
+    disposeObject,
+    surfaceGraphBounds: () => ({ center: { x: 0, y: 0, z: 0 }, radius: 100 }),
+  };
+  const source = readFileSync(scenePath, "utf-8")
+    .replace(
+      /import React, \{[^}]+\} from "react";/,
+      "const { React, useEffect, useMemo, useRef, useState } = globalThis.__bladeFeatureSceneTestRuntime;",
+    )
+    .replace('import * as THREE from "three";', "const { THREE } = globalThis.__bladeFeatureSceneTestRuntime;")
+    .replace(
+      'import { OrbitControls } from "three/addons/controls/OrbitControls.js";',
+      "const { OrbitControls } = globalThis.__bladeFeatureSceneTestRuntime;",
+    )
+    .replace(
+      'import { inspectionRendererLifecycle } from "../inspectionSceneModel.js?v=1.1.5";',
+      "const { inspectionRendererLifecycle } = globalThis.__bladeFeatureSceneTestRuntime;",
+    )
+    .replace(
+      'import { createSurfaceGraphGroup, disposeObject, surfaceGraphBounds } from "./ModelViewer.js?v=1.1.5";',
+      "const { createSurfaceGraphGroup, disposeObject, surfaceGraphBounds } = globalThis.__bladeFeatureSceneTestRuntime;",
+    );
+  return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${Date.now()}`);
 }
 
-describe("BladeFeatureScene source contract", () => {
-  test("filters the graph to the selected blade context before creating its group", () => {
-    const component = source();
+describe("BladeFeatureScene behavior", () => {
+  test("keeps only the selected blade context and preserves the stable empty surface-id value", async () => {
+    const { EMPTY_BLADE_SURFACE_IDS, bladeContextSurfaceGraph, normalizeBladeSurfaceIds } = await loadSceneHelpers();
+    const graph = {
+      surfaces: [
+        { id: "blade_0_pressure" },
+        { id: "blade_0_root_attachment" },
+        { id: "blade_1_pressure" },
+      ],
+    };
 
-    assert.match(component, /function bladeContextSurfaceGraph\(surfaceGraph, bladeSurfaceIds\)/);
-    assert.match(component, /const selectedSurfaceIdSet = new Set\(bladeSurfaceIds\)/);
-    assert.match(component, /surfaces:\s*\(surfaceGraph\?\.surfaces \|\| \[\]\)\.filter\(/);
-    assert.match(component, /selectedSurfaceIdSet\.has\(surface\.id \|\| surface\.surface_graph_id\)/);
-    assert.match(component, /const contextSurfaceGraph = bladeContextSurfaceGraph\(surfaceGraph, bladeSurfaceIds\)/);
-    assert.match(component, /createSurfaceGraphGroup\(\s*contextSurfaceGraph,\s*bounds\.center,\s*"cad_review_360",\s*new Set\(\),\s*"off",\s*manifest,?\s*\)/);
+    assert.deepEqual(
+      bladeContextSurfaceGraph(graph, ["blade_0_pressure", "blade_0_root_attachment"]).surfaces.map((surface) => surface.id),
+      ["blade_0_pressure", "blade_0_root_attachment"],
+    );
+    assert.equal(normalizeBladeSurfaceIds(), EMPTY_BLADE_SURFACE_IDS);
+    assert.equal(normalizeBladeSurfaceIds([]), EMPTY_BLADE_SURFACE_IDS);
+    assert.deepEqual(normalizeBladeSurfaceIds(["blade_0_pressure", "blade_0_pressure"]), ["blade_0_pressure"]);
   });
 
-  test("keeps context monochrome and renders selected features separately in red", () => {
-    const component = source();
+  test("builds red lines and points for every supported blade feature primitive", async () => {
+    const { createEngineeringFeatureGroup } = await loadSceneHelpers();
+    const group = createEngineeringFeatureGroup(
+      [
+        { id: "curve", kind: "nurbs_curve", coordinate_system: "xyz_mm", control_points: [[0, 0, 0], [10, 0, 0]] },
+        { id: "polyline", kind: "polyline", coordinate_system: "xyz_mm", points: [[0, 1, 0], [10, 1, 0]] },
+        { id: "control", kind: "control_point", coordinate_system: "xyz_mm", coordinates: [2, 3, 4] },
+        { id: "point", kind: "point", coordinate_system: "xyz_mm", coordinates: [4, 3, 2] },
+        { id: "thickness-frame", kind: "local_frame", coordinate_system: "s_q_mm", origin: [1, 1], s_axis: [1, 0], q_axis: [0, 1] },
+        { id: "axis", kind: "reference_axis", coordinate_system: "xyz_mm", origin: [0, 0, 0], direction: [0, 0, 1] },
+        { id: "invalid", kind: "local_frame", coordinate_system: "s_q_mm", origin: [0, 0], s_axis: [Number.NaN, 0], q_axis: [0, 1] },
+      ],
+      { x: 0, y: 0, z: 0 },
+      20,
+    );
+    const lines = group.children.filter((child) => child.isLine);
+    const points = group.children.filter((child) => child.isPoints);
 
-    assert.match(component, /material\.color\.set\("#ffffff"\)/);
-    assert.match(component, /material\.emissive\.set\("#000000"\)/);
-    assert.match(component, /new THREE\.EdgesGeometry\(mesh\.geometry, 35\)/);
-    assert.match(component, /new THREE\.LineBasicMaterial\(\{ color: "#111111"/);
-    assert.doesNotMatch(component, /selected \? "#111111" : "#ffffff"/);
-    assert.match(component, /const featureGroup = new THREE\.Group\(\)/);
-    assert.match(component, /featureGroup\.userData\.isEngineeringFeature = true/);
-    assert.match(component, /feature\.kind === "nurbs_curve"/);
-    assert.match(component, /feature\.kind === "polyline"/);
-    assert.match(component, /feature\.kind === "control_point" \|\| feature\.kind === "point"/);
-    assert.match(component, /color: "#c40000"/);
-    assert.match(component, /new THREE\.Points\(/);
+    assert.equal(group.userData.isEngineeringFeature, true);
+    assert.equal(lines.length, 5);
+    assert.equal(points.length, 2);
+    assert.equal(lines.every((line) => line.material.color.value === "#c40000"), true);
+    assert.equal(points.every((point) => point.material.color.value === "#c40000"), true);
+    assert.deepEqual(lines.filter((line) => line.userData.featureId === "thickness-frame").length, 2);
+    assert.equal(group.children.some((child) => child.userData.featureId === "invalid"), false);
   });
 
-  test("suppresses source overlays and releases the renderer and context on cleanup", () => {
-    const component = source();
+  test("styles context meshes and disposes all scene resources", async () => {
+    const { styleBladeContextGroup, disposeBladeFeatureSceneResources } = await loadSceneHelpers();
+    const { THREE } = globalThis.__bladeFeatureSceneTestRuntime;
+    const contextGroup = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial({ color: "#123456", emissive: "#ffffff" }));
+    mesh.userData.surfaceId = "blade_0_pressure";
+    const uvOverlay = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: "#00ff00" }));
+    uvOverlay.userData.isSurfaceUvWire = true;
+    const meshOverlay = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: "#00ff00" }));
+    meshOverlay.userData.isMeshOverlay = true;
+    contextGroup.add(mesh, uvOverlay, meshOverlay);
+    const featureGroup = new THREE.Group();
+    featureGroup.add(new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: "#c40000" })));
 
-    assert.match(component, /child\.userData\.isSurfaceUvWire \|\| child\.userData\.isMeshOverlay/);
-    assert.match(component, /child\.visible = false/);
-    assert.match(component, /inspectionRendererLifecycle\.register\(renderer\)/);
-    assert.match(component, /disposeObject\(contextGroup\)/);
-    assert.match(component, /disposeObject\(featureGroup\)/);
-    assert.match(component, /renderer\.dispose\(\)/);
-    assert.match(component, /releaseRendererLifecycle\(\)/);
-    assert.match(component, /data-renderer-live-count/);
-    assert.match(component, /data-context-live-count/);
+    assert.equal(styleBladeContextGroup(contextGroup), 1);
+    const contour = contextGroup.children.find((child) => child.userData.isBladeContextContour);
+    assert.equal(mesh.material.color.value, "#ffffff");
+    assert.equal(mesh.material.emissive.value, "#000000");
+    assert.equal(uvOverlay.visible, false);
+    assert.equal(meshOverlay.visible, false);
+    assert.equal(contour.material.color.value, "#111111");
+
+    const registry = createRendererLifecycleRegistry();
+    const release = registry.register({ getContext: () => ({}) });
+    let controlsDisposed = false;
+    let rendererDisposed = false;
+    disposeBladeFeatureSceneResources({
+      contextGroup,
+      featureGroup,
+      controls: { dispose: () => { controlsDisposed = true; } },
+      renderer: { dispose: () => { rendererDisposed = true; } },
+      releaseRendererLifecycle: release,
+    });
+
+    assert.equal(controlsDisposed, true);
+    assert.equal(rendererDisposed, true);
+    assert.equal(mesh.geometry.disposed, true);
+    assert.equal(mesh.material.disposed, true);
+    assert.equal(featureGroup.children[0].geometry.disposed, true);
+    assert.deepEqual(registry.snapshot(), {
+      createdRendererCount: 1,
+      liveRendererCount: 0,
+      createdContextCount: 1,
+      liveContextCount: 0,
+    });
   });
 });
+
+function disposeObject(object) {
+  object.traverse((child) => {
+    child.geometry?.dispose();
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+      material?.dispose();
+    }
+  });
+}
+
+function createThreeHarness() {
+  class Object3D {
+    constructor() {
+      this.children = [];
+      this.userData = {};
+      this.visible = true;
+    }
+
+    add(...children) {
+      this.children.push(...children);
+    }
+
+    traverse(callback) {
+      callback(this);
+      for (const child of [...this.children]) {
+        child.traverse(callback);
+      }
+    }
+  }
+
+  class Color {
+    constructor(value) {
+      this.value = value;
+    }
+
+    set(value) {
+      this.value = value;
+    }
+  }
+
+  class BufferGeometry {
+    constructor() {
+      this.attributes = {};
+      this.disposed = false;
+    }
+
+    setAttribute(name, value) {
+      this.attributes[name] = value;
+    }
+
+    dispose() {
+      this.disposed = true;
+    }
+  }
+
+  class EdgesGeometry extends BufferGeometry {}
+
+  class Float32BufferAttribute {
+    constructor(values, itemSize) {
+      this.values = values;
+      this.itemSize = itemSize;
+    }
+  }
+
+  class Material {
+    constructor(options = {}) {
+      const { color, emissive, ...properties } = options;
+      this.color = new Color(color);
+      this.emissive = new Color(emissive);
+      this.disposed = false;
+      Object.assign(this, properties);
+    }
+
+    dispose() {
+      this.disposed = true;
+    }
+  }
+
+  class Mesh extends Object3D {
+    constructor(geometry, material) {
+      super();
+      this.geometry = geometry;
+      this.material = material;
+      this.isMesh = true;
+    }
+  }
+
+  class Line extends Object3D {
+    constructor(geometry, material) {
+      super();
+      this.geometry = geometry;
+      this.material = material;
+      this.isLine = true;
+    }
+  }
+
+  class LineSegments extends Line {
+    constructor(geometry, material) {
+      super(geometry, material);
+      this.isLineSegments = true;
+    }
+  }
+
+  class Points extends Object3D {
+    constructor(geometry, material) {
+      super();
+      this.geometry = geometry;
+      this.material = material;
+      this.isPoints = true;
+    }
+  }
+
+  return {
+    BufferGeometry,
+    EdgesGeometry,
+    Float32BufferAttribute,
+    Group: class Group extends Object3D {},
+    Line,
+    LineBasicMaterial: class LineBasicMaterial extends Material {},
+    LineSegments,
+    Mesh,
+    MeshStandardMaterial: class MeshStandardMaterial extends Material {},
+    Points,
+    PointsMaterial: class PointsMaterial extends Material {},
+  };
+}
