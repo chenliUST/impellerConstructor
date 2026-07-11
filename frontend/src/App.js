@@ -23,7 +23,7 @@ import { GeometryLayerPanel } from "./components/GeometryLayerPanel.js?v=1.1.5";
 import { ManifestPanel } from "./components/ManifestPanel.js?v=1.1.5";
 import { ModelViewer } from "./components/ModelViewer.js?v=1.1.5";
 import { ParameterPanel } from "./components/ParameterPanel.js?v=1.1.5";
-import { ParameterInspectionWorkspace } from "./components/ParameterInspectionWorkspace.js?v=1.1.6";
+import { ParameterInspectionWorkspace } from "./components/ParameterInspectionWorkspace.js?v=1.1.7";
 import { ProfileCurveEditor } from "./components/ProfileCurveEditor.js?v=1.1.5";
 import { PresetList } from "./components/PresetList.js?v=1.1.5";
 

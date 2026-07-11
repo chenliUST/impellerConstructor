@@ -120,7 +120,8 @@ describe("EngineeringDrawingView", () => {
     assert.match(paths[0].props.className, /engineering-context/);
     assert.equal(paths[0].props.d, "M 16 108 L 984 108");
     assert.match(featurePath.props.className, /engineering-feature/);
-    assert.equal(featurePath.props.d, "M 16 108 L 500 592 L 984 108");
+    assert.notEqual(featurePath.props.d, "M 16 108 L 500 592 L 984 108");
+    assert.match(featurePath.props.d, /^M 16 108 L /);
     assert.match(polygon.props.className, /engineering-feature/);
     assert.equal(polygon.props.points, "16,108 500,592 984,108");
     assert.deepEqual([contextPoint.props.cx, contextPoint.props.cy], [16, 108]);
@@ -164,7 +165,8 @@ describe("EngineeringDrawingView", () => {
     assert.ok(featurePath, "expected red selected feature path");
     assert.ok(featurePoint, "expected red selected control point");
     assert.equal(contextPath.props.d, "M 0 0 L 100 0");
-    assert.equal(featurePath.props.d, "M 0 0 L 50 50 L 100 0");
+    assert.notEqual(featurePath.props.d, "M 0 0 L 50 50 L 100 0");
+    assert.match(featurePath.props.d, /^M 0 0 L /);
     assert.deepEqual([featurePoint.props.cx, featurePoint.props.cy], [50, 50]);
     assert.ok(dimension);
     assert.equal(collectElements(dimension, (node) => node.type === "line").length, 2);

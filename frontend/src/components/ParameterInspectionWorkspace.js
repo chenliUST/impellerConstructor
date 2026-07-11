@@ -15,10 +15,11 @@ import {
 } from "../parameterInspectionWorkspaceModel.js?v=1.1.5";
 import {
   engineeringDrawingBounds,
+  projectEngineeringDimensionEvidence,
   projectEngineeringFeature,
-} from "../engineeringDrawingModel.js?v=1.1.6";
+} from "../engineeringDrawingModel.js?v=1.1.7";
 import { BladeFeatureScene } from "./BladeFeatureScene.js?v=1.1.5";
-import { EngineeringDrawingView } from "./EngineeringDrawingView.js?v=1.1.6";
+import { EngineeringDrawingView } from "./EngineeringDrawingView.js?v=1.1.7";
 import { ParameterFeatureBrowser } from "./ParameterFeatureBrowser.js?v=1.1.5";
 
 const h = React.createElement;
@@ -55,8 +56,8 @@ export function ParameterInspectionWorkspace({ manifest = null }) {
   );
   const renderProps = workspaceRenderProps(model, workspaceState);
   const drawingContext = useMemo(
-    () => engineeringContextPrimitives(parameterGroups, renderProps.drawing.viewId),
-    [parameterGroups, renderProps.drawing.viewId],
+    () => engineeringContextPrimitives(parameterGroups, renderProps.drawing.viewId, renderProps.drawing.selectedParameter),
+    [parameterGroups, renderProps.drawing.viewId, renderProps.drawing.selectedParameter],
   );
   const selectedBlade = model.indices?.blades?.[navigation.bladeId];
   const bladeSurfaceIds = selectedBlade?.surface_ids || [];
@@ -202,13 +203,18 @@ export function ParameterInspectionWorkspace({ manifest = null }) {
   );
 }
 
-function engineeringContextPrimitives(groups, viewId) {
+function engineeringContextPrimitives(groups, viewId, selectedParameter) {
   const features = engineeringContextFeatures(groups, viewId)
     .map((feature) => ({ ...feature, className: "engineering-context" }));
   const unframed = features
     .map((feature) => projectEngineeringFeature(feature, viewId))
     .filter(Boolean);
-  const bounds = engineeringDrawingBounds(unframed, []);
+  const selected = (selectedParameter?.features || [])
+    .filter((feature) => feature?.rendering_role !== "drawing_context")
+    .map((feature) => projectEngineeringFeature(feature, viewId))
+    .filter(Boolean);
+  const dimensionEvidence = projectEngineeringDimensionEvidence(selectedParameter?.dimension, viewId);
+  const bounds = expandDrawingBounds(engineeringDrawingBounds(unframed, [...selected, ...dimensionEvidence]));
   if (!bounds) {
     return [];
   }
@@ -216,6 +222,19 @@ function engineeringContextPrimitives(groups, viewId) {
   return features
     .map((feature) => projectEngineeringFeature(feature, viewId, frame))
     .filter(Boolean);
+}
+
+function expandDrawingBounds(bounds) {
+  if (!bounds) return null;
+  const marginX = Math.max(bounds.width * 0.12, 1);
+  const marginY = Math.max(bounds.height * 0.12, 1);
+  return {
+    ...bounds,
+    minX: bounds.minX - marginX,
+    maxX: bounds.maxX + marginX,
+    minY: bounds.minY - marginY,
+    maxY: bounds.maxY + marginY,
+  };
 }
 
 function bladeLabel(blade) {

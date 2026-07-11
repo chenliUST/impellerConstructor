@@ -3,7 +3,7 @@ import React from "react";
 import {
   layoutEngineeringDimension,
   projectEngineeringFeature,
-} from "../engineeringDrawingModel.js?v=1.1.6";
+} from "../engineeringDrawingModel.js?v=1.1.7";
 
 const h = React.createElement;
 const VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
@@ -68,7 +68,7 @@ function renderSelectedFeature(primitive, key) {
       h("polygon", {
         key: `${key}:control-polygon`,
         className: "engineering-feature engineering-control-polygon",
-        points: pointsAttribute(primitive.points),
+        points: pointsAttribute(primitive.controlPoints),
         fill: "none",
       }),
     );

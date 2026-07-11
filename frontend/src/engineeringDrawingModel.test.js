@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import {
   engineeringDrawingBounds,
   layoutEngineeringDimension,
+  projectEngineeringDimensionEvidence,
   projectEngineeringFeature,
 } from "./engineeringDrawingModel.js";
 
@@ -64,7 +65,10 @@ describe("engineering drawing projection", () => {
       display_control_points_s_q_mm: [[12, -8], [48, 16]],
     }, "s_q");
 
-    assert.deepEqual(drawing.points, [[12, -8], [48, 16]]);
+    assert.deepEqual(drawing.points[0], [12, -8]);
+    assert.deepEqual(drawing.points.at(-1), [48, 16]);
+    assert.equal(drawing.points.length, 65);
+    assert.deepEqual(drawing.controlPoints, [[12, -8], [48, 16]]);
   });
 
   test("selects view-specific authoritative coordinates and rejects unsupported spaces", () => {
@@ -85,12 +89,13 @@ describe("engineering drawing projection", () => {
       coordinate_system: "s_q_mm",
       points: [[0, 0], [1, 1]],
     }, "top"), null);
-    assert.deepEqual(projectEngineeringFeature({
+    const profile = projectEngineeringFeature({
       id: "hub-profile",
       kind: "nurbs_curve",
       coordinate_system: "profile_rz_mm",
       control_points: [[150, 400], [580, 0]],
-    }, "meridional").points, [[150, 400], [580, 0]]);
+    }, "meridional");
+    assert.deepEqual([profile.points[0], profile.points.at(-1)], [[150, 400], [580, 0]]);
   });
 
   test("returns null for non-finite feature coordinates", () => {
@@ -104,6 +109,38 @@ describe("engineering drawing projection", () => {
       kind: "polyline",
       points: [[0, 0, 0], [10, Number.POSITIVE_INFINITY, 4]],
     }, "top", FRAME), null);
+  });
+
+  test("evaluates the authoritative rational NURBS separately from its control polygon", () => {
+    const curve = projectEngineeringFeature({
+      id: "rational-quarter-arc",
+      kind: "nurbs_curve",
+      degree: 2,
+      knots: [0, 0, 0, 1, 1, 1],
+      weights: [1, Math.SQRT1_2, 1],
+      control_points: [[1, 0], [1, 1], [0, 1]],
+    }, "s_q");
+
+    assert.deepEqual(curve.controlPoints, [[1, 0], [1, 1], [0, 1]]);
+    assert.equal(curve.points.length, 65);
+    assert.ok(Math.abs(curve.points[32][0] - Math.SQRT1_2) < 1e-9);
+    assert.ok(Math.abs(curve.points[32][1] - Math.SQRT1_2) < 1e-9);
+    assert.notDeepEqual(curve.points[32], curve.controlPoints[1]);
+  });
+
+  test("projects raw dimension anchors for joint workspace framing", () => {
+    assert.deepEqual(
+      projectEngineeringDimensionEvidence({ measurement_points: [[10, 20], [30, 40]] }, "meridional")
+        .map((primitive) => primitive.point),
+      [[10, 20], [30, 40]],
+    );
+    assert.deepEqual(
+      projectEngineeringDimensionEvidence({
+        measurement_points: [[0, 0], [1, 1]],
+        display_measurement_points_s_q_mm: [[12, -8], [48, 16]],
+      }, "s_q").map((primitive) => primitive.point),
+      [[12, -8], [48, 16]],
+    );
   });
 });
 
@@ -160,7 +197,7 @@ describe("engineering dimension layout", () => {
       kind: "polyline",
       points: [[3, 4, 10], [4, 4, 10]],
     }, "meridional", frame);
-    const [dimension] = layoutEngineeringDimension({
+    const dimensions = layoutEngineeringDimension({
       kind: "angular",
       measurement_points: [[3, 4, 10], [4, 4, 10]],
       reference_direction: [1, 0, 0],
@@ -169,11 +206,7 @@ describe("engineering dimension layout", () => {
       resolvedValue: 90,
     }, context("meridional", frame, [feature]), VIEWPORT);
 
-    assert.deepEqual(dimension.extensions[0].points[0], feature.points[0]);
-    assert.ok(Math.hypot(
-      dimension.extensions[0].points[1][0] - feature.points[0][0],
-      dimension.extensions[0].points[1][1] - feature.points[0][1],
-    ) >= 120);
+    assert.deepEqual(dimensions, [], "an angular annotation that cannot fit must fail instead of clamping anchors");
   });
 
   test("uses metric S-Q display vectors for angular references", () => {
@@ -184,7 +217,7 @@ describe("engineering dimension layout", () => {
       points: [[0, 0], [1, 0]],
       display_points_s_q_mm: [[12, -8], [24, -8]],
     }, "s_q", frame);
-    const [dimension] = layoutEngineeringDimension({
+    const dimensions = layoutEngineeringDimension({
       kind: "angular",
       measurement_points: [[0, 0], [1, 0]],
       display_measurement_points_s_q_mm: [[12, -8], [24, -8]],
@@ -196,11 +229,7 @@ describe("engineering dimension layout", () => {
       resolvedValue: 90,
     }, context("s_q", frame, [feature]), VIEWPORT);
 
-    assert.deepEqual(dimension.extensions[0].points[0], feature.points[0]);
-    assert.ok(Math.hypot(
-      dimension.extensions[0].points[1][0] - feature.points[0][0],
-      dimension.extensions[0].points[1][1] - feature.points[0][1],
-    ) >= 120);
+    assert.deepEqual(dimensions, [], "an angular annotation that cannot fit must fail instead of clamping anchors");
   });
 
   for (const [kind, definition] of [
@@ -229,7 +258,8 @@ describe("engineering dimension layout", () => {
         ...definition,
       }, context("s_q", frame, [feature]), VIEWPORT);
 
-      assert.equal(primitives.length, 1);
+      assert.equal(primitives.length, kind === "angular" ? 0 : 1);
+      if (kind === "angular") return;
       const [dimension] = primitives;
       assert.equal(dimension.kind, "dimension");
       assert.equal(dimension.className, "engineering-dimension");
@@ -245,7 +275,7 @@ describe("engineering dimension layout", () => {
 
   test("suppresses the secondary note before a dimension reaches context bounds", () => {
     const context = [path([[20, 30], [220, 130]])];
-    const [dimension] = layoutEngineeringDimension({
+    const dimensions = layoutEngineeringDimension({
       kind: "linear",
       measurement_points: [[70, 40], [140, 40]],
       unit: "mm",
@@ -253,6 +283,7 @@ describe("engineering dimension layout", () => {
       note: "outside placement note",
     }, { viewId: "s_q", primitives: context, projectPoint: (point) => [...point] }, VIEWPORT);
 
+    const [dimension] = dimensions;
     const contextBounds = engineeringDrawingBounds(context, []);
     assert.equal(dimension.note, null);
     assert.ok(dimension.line.points.every((point) => point[1] <= contextBounds.minY));
@@ -261,7 +292,7 @@ describe("engineering dimension layout", () => {
 
   test("suppresses a note when a diagonal dimension segment crosses context despite outside endpoints", () => {
     const contextPrimitives = [path([[80, 50], [110, 90]])];
-    const [dimension] = layoutEngineeringDimension({
+    const dimensions = layoutEngineeringDimension({
       kind: "linear",
       measurement_points: [[20, 20], [220, 140]],
       unit: "mm",
@@ -269,7 +300,9 @@ describe("engineering dimension layout", () => {
       note: "secondary note",
     }, { viewId: "s_q", primitives: contextPrimitives, projectPoint: (point) => [...point] }, VIEWPORT);
 
-    assert.ok(dimension.line.points.every(([x, y]) => x < 80 || x > 110 || y < 50 || y > 90));
+    assert.equal(dimensions.length, 1);
+    const [dimension] = dimensions;
+    assert.deepEqual(dimension.line.points, [[20, 20], [220, 140]], "measurement anchors must not be clamped");
     assert.equal(dimension.note, null);
   });
 
@@ -312,7 +345,7 @@ describe("engineering dimension layout", () => {
 
     assert.deepEqual(dimension.line.points, [[40, 70], [160, 70]]);
     assert.equal(dimension.arrows.length, 2);
-    assert.equal(dimension.text.value, "⌀120 mm");
+    assert.equal(dimension.text.value, "DIA 120 mm");
   });
 });
 
@@ -323,5 +356,12 @@ test("combines finite context and selected primitive bounds", () => {
       [{ kind: "point", point: [10, -2], className: "engineering-feature-selected" }],
     ),
     { minX: 0, minY: -2, maxX: 10, maxY: 8, width: 10, height: 10, center: [5, 3] },
+  );
+});
+
+test("includes a NURBS control polygon in drawing bounds", () => {
+  assert.deepEqual(
+    engineeringDrawingBounds([{ kind: "path", points: [[0, 0], [2, 0]], controlPoints: [[0, 0], [1, 5], [2, 0]] }], []),
+    { minX: 0, minY: 0, maxX: 2, maxY: 5, width: 2, height: 5, center: [1, 2.5] },
   );
 });

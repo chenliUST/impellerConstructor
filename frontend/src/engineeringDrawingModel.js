@@ -14,7 +14,7 @@ export function projectEngineeringFeature(feature, viewId, frame) {
 
   switch (feature.kind) {
     case "nurbs_curve":
-      drawing = projectPoints(sqPoints(feature, "control_points", viewId), point);
+      drawing = projectPoints(sampleNurbsCurve(feature, viewId), point);
       break;
     case "polyline":
       drawing = projectPoints(sqPoints(feature, "points", viewId), point);
@@ -67,13 +67,30 @@ export function projectEngineeringFeature(feature, viewId, frame) {
   if (!points) {
     return null;
   }
-  return {
+  const primitive = {
     id: feature.id,
     kind: "path",
     points,
     className,
     projection: { viewId, frame },
   };
+  if (feature.kind === "nurbs_curve") {
+    const controlPoints = transformPoints(projectPoints(sqPoints(feature, "control_points", viewId), point), frame);
+    if (!controlPoints) return null;
+    primitive.controlPoints = controlPoints;
+  }
+  return primitive;
+}
+
+export function projectEngineeringDimensionEvidence(dimension, viewId) {
+  const points = dimensionPoints(dimension, viewId);
+  if (!Array.isArray(points)) return [];
+  return points.map((coordinates, index) => projectEngineeringFeature({
+    id: `dimension-evidence:${index}`,
+    kind: "point",
+    coordinates,
+    coordinate_system: viewId === "s_q" ? "s_q_mm" : viewId === "meridional" && coordinates.length === 2 ? "profile_rz_mm" : "model_xyz",
+  }, viewId)).filter(Boolean);
 }
 
 export function layoutEngineeringDimension(dimension, projectedFeatures, viewport) {
@@ -123,7 +140,7 @@ export function engineeringDrawingBounds(contextPrimitives, selectedPrimitives) 
 }
 
 function linearDimension(dimension, rect, contextBounds) {
-  const [start, end] = dimension.measurement_points.map((point) => clampPoint(point, rect));
+  const [start, end] = dimension.measurement_points;
   const vector = subtract(end, start);
   const length = Math.hypot(...vector);
   if (length === 0) {
@@ -144,10 +161,10 @@ function linearDimension(dimension, rect, contextBounds) {
     || Number(right.fits) - Number(left.fits)
     || right.sign - left.sign,
   );
-  const chosen = candidates.find((candidate) => candidate.fits) || candidates[0];
-  const line = chosen.line.map((point) => clampPoint(point, rect));
+  const chosen = candidates.find((candidate) => candidate.fits);
+  const line = chosen?.line || [start, end];
   const midpoint = midpointOf(line[0], line[1]);
-  const notePoint = addVectors(midpoint, normal.map((value) => value * LABEL_OFFSET * chosen.sign));
+  const notePoint = addVectors(midpoint, normal.map((value) => value * LABEL_OFFSET * (chosen?.sign || 1)));
 
   return dimensionRecord(dimension, line, [
     path([start, line[0]]),
@@ -159,7 +176,7 @@ function linearDimension(dimension, rect, contextBounds) {
 }
 
 function radialDimension(dimension, rect, contextBounds) {
-  const [center, rim] = dimension.measurement_points.map((point) => clampPoint(point, rect));
+  const [center, rim] = dimension.measurement_points;
   const direction = unitVector(subtract(rim, center));
   if (!direction) {
     return null;
@@ -175,7 +192,7 @@ function radialDimension(dimension, rect, contextBounds) {
 }
 
 function diameterDimension(dimension, rect, contextBounds) {
-  const [start, end] = dimension.measurement_points.map((point) => clampPoint(point, rect));
+  const [start, end] = dimension.measurement_points;
   if (distance(start, end) === 0) {
     return null;
   }
@@ -185,11 +202,11 @@ function diameterDimension(dimension, rect, contextBounds) {
   return dimensionRecord(dimension, line, [path([start, end])], [
     arrow(start, end),
     arrow(end, start),
-  ], midpoint, null, rect, contextBounds, crossesContext, "⌀");
+  ], midpoint, null, rect, contextBounds, crossesContext, "DIA ");
 }
 
 function angularDimension(dimension, rect) {
-  const [origin, radiusPoint] = dimension.measurement_points.map((point) => clampPoint(point, rect));
+  const [origin, radiusPoint] = dimension.measurement_points;
   const reference = unitVector(dimension.reference_direction);
   const measured = unitVector(dimension.measured_direction);
   if (!reference || !measured) {
@@ -204,13 +221,14 @@ function angularDimension(dimension, rect) {
   const sweep = normalizedSweep(startAngle, endAngle);
   const line = Array.from({ length: 9 }, (_, index) => {
     const angle = startAngle + (sweep * index) / 8;
-    return clampPoint([origin[0] + Math.cos(angle) * radius, origin[1] + Math.sin(angle) * radius], rect);
+    return [origin[0] + Math.cos(angle) * radius, origin[1] + Math.sin(angle) * radius];
   });
   const labelAngle = startAngle + sweep / 2;
-  const labelPoint = clampPoint([
+  const labelPoint = [
     origin[0] + Math.cos(labelAngle) * (radius + LABEL_OFFSET),
     origin[1] + Math.sin(labelAngle) * (radius + LABEL_OFFSET),
-  ], rect);
+  ];
+  if (![...line, labelPoint].every((point) => insidePaddedViewport(point, rect))) return null;
 
   return dimensionRecord(dimension, line, [
     path([origin, line[0]]),
@@ -222,7 +240,7 @@ function angularDimension(dimension, rect) {
 }
 
 function arcHeightDimension(dimension, rect) {
-  const [start, end, apex] = dimension.measurement_points.map((point) => clampPoint(point, rect));
+  const [start, end, apex] = dimension.measurement_points;
   const chordMidpoint = midpointOf(start, end);
   const labelPoint = midpointOf(chordMidpoint, apex);
   return dimensionRecord(dimension, [chordMidpoint, apex], [
@@ -250,7 +268,7 @@ function dimensionRecord(dimension, linePoints, extensions, arrows, textPoint, n
     arrows,
     text: {
       value: dimensionValue(dimension, valuePrefix),
-      point: clampPoint(textPoint, rect),
+      point: textPoint,
       className: "engineering-dimension",
     },
     note,
@@ -338,6 +356,48 @@ function projectEngineeringPoint(point, viewId, frame) {
   const projected = projectPoint(point, viewId);
   const points = projected ? transformPoints([projected], frame) : null;
   return points?.[0] || null;
+}
+
+function sampleNurbsCurve(feature, viewId, sampleCount = 65) {
+  const controls = sqPoints(feature, "control_points", viewId);
+  if (!Array.isArray(controls) || controls.length < 2 || !controls.every(isPoint)) return null;
+  const degree = Number.isInteger(feature.degree) ? feature.degree : Math.min(3, controls.length - 1);
+  if (degree < 1 || degree >= controls.length) return null;
+  const knots = Array.isArray(feature.knots) ? feature.knots : clampedUniformKnots(controls.length, degree);
+  const weights = Array.isArray(feature.weights) ? feature.weights : controls.map(() => 1);
+  if (knots.length !== controls.length + degree + 1
+    || weights.length !== controls.length
+    || !knots.every(isFiniteNumber)
+    || !weights.every((weight) => isFiniteNumber(weight) && weight > 0)) return null;
+  const start = knots[degree];
+  const end = knots[controls.length];
+  if (!(end > start)) return null;
+  return Array.from({ length: sampleCount }, (_, index) => {
+    const t = index === sampleCount - 1 ? end : start + (end - start) * index / (sampleCount - 1);
+    const basis = controls.map((_, controlIndex) => bsplineBasis(controlIndex, degree, t, knots, end));
+    const denominator = basis.reduce((sum, value, controlIndex) => sum + value * weights[controlIndex], 0);
+    return controls[0].map((_, axis) => basis.reduce(
+      (sum, value, controlIndex) => sum + value * weights[controlIndex] * controls[controlIndex][axis], 0,
+    ) / denominator);
+  });
+}
+
+function bsplineBasis(index, degree, t, knots, end) {
+  if (degree === 0) return (knots[index] <= t && t < knots[index + 1])
+    || (t === end && knots[index + 1] === end) ? 1 : 0;
+  const left = knots[index + degree] - knots[index];
+  const right = knots[index + degree + 1] - knots[index + 1];
+  return (left ? (t - knots[index]) / left * bsplineBasis(index, degree - 1, t, knots, end) : 0)
+    + (right ? (knots[index + degree + 1] - t) / right * bsplineBasis(index + 1, degree - 1, t, knots, end) : 0);
+}
+
+function clampedUniformKnots(controlCount, degree) {
+  const interiorCount = controlCount - degree - 1;
+  return [
+    ...Array(degree + 1).fill(0),
+    ...Array.from({ length: interiorCount }, (_, index) => (index + 1) / (interiorCount + 1)),
+    ...Array(degree + 1).fill(1),
+  ];
 }
 
 function path(points) {
@@ -428,7 +488,7 @@ function primitivePoints(primitives) {
     return [];
   }
   if (primitives.kind === "path") {
-    return primitives.points || [];
+    return [...(primitives.points || []), ...(primitives.controlPoints || [])];
   }
   if (primitives.kind === "point") {
     return [primitives.point];
@@ -456,13 +516,6 @@ function viewportRect(viewport) {
   return [x, y, width, height].every(isFiniteNumber) && width > DRAWING_PADDING * 2 && height > DRAWING_PADDING * 2
     ? { x, y, width, height }
     : null;
-}
-
-function clampPoint(point, viewport) {
-  return [
-    clamp(point[0], viewport.x + DRAWING_PADDING, viewport.x + viewport.width - DRAWING_PADDING),
-    clamp(point[1], viewport.y + DRAWING_PADDING, viewport.y + viewport.height - DRAWING_PADDING),
-  ];
 }
 
 function insidePaddedViewport(point, viewport) {
@@ -530,10 +583,6 @@ function unitVector(vector) {
 
 function distance(left, right) {
   return Math.hypot(...subtract(left, right));
-}
-
-function clamp(value, minimum, maximum) {
-  return Math.min(Math.max(value, minimum), maximum);
 }
 
 function isPoint(point) {
