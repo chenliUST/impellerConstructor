@@ -11,10 +11,11 @@
 
 ## Verification
 
-- `frontend: npm.cmd test -- --runInBand`: 201 passed.
-- Focused backend coordinate/source binding tests: 6 passed across the two verification runs.
+- `frontend: npm.cmd test -- --runInBand`: 205 passed.
+- Focused backend coordinate/source binding and complete constructor-evidence tests passed, including strict coordinate dimensions and compact join provenance.
 - `git diff --check`: passed; only expected Git LF/CRLF notices were emitted.
 - HTTP visual smoke regenerated all four acceptance screenshots and passed every Top, Meridional, S-Q, Blade, narrow-layout, and renderer-lifecycle assertion.
+- The parameter browser lazily mounts expanded groups, keeping the complete approximately 12k-parameter contract usable without dropping evidence.
 - Manual screenshot review:
   - Top drawing is nonblank, uses black construction contours, and shows a readable blue `45 deg` angular dimension.
   - Meridional root attachment shows separate black boundaries, red selected points, and a readable blue root-lift value.
@@ -23,4 +24,4 @@
 
 ## Remaining Verification Constraint
 
-`python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -q` exceeded the 240 second command timeout. The process was terminated by the command runner; no test failure output was produced. The six directly changed backend behaviors pass when run as focused tests; the complete high-cost geometry file still needs a longer-budget run before branch completion.
+`python -m pytest tests/test_impeller_v11_3_engineering_inspection.py -q` and the final review's combined backend generation suite exceeded their command budgets without producing a complete result. Focused tests for every changed backend behavior pass, service instantiate returned HTTP 200 during visual acceptance, and no static backend defect remains; the full-file runtime is retained as a performance constraint.
