@@ -113,14 +113,13 @@ async function assertComputedColor(page, selector, property, expected, message) 
   assert.equal(color, expected, message);
 }
 
-async function openAndSelectParameter(page, parameterId) {
+async function openAndSelectParameter(page, parameterId, groupId) {
   const button = page.locator(`[data-parameter-id="${parameterId}"]`);
+  if (await button.count() === 0) {
+    const summary = page.locator(`[data-parameter-group-id="${groupId}"] > summary`);
+    await summary.evaluate((element) => element.click());
+  }
   await button.waitFor({ state: "attached" });
-  await page.evaluate((id) => {
-    const element = document.querySelector(`[data-parameter-id="${CSS.escape(id)}"]`);
-    const group = element.closest("details");
-    if (group) group.open = true;
-  }, parameterId);
   assert.equal(await button.isDisabled(), false, `${parameterId} is disabled in the active view`);
   await button.click();
   await page.locator(`[data-testid="inspection-workspace"][data-selected-parameter-id="${parameterId}"]`).waitFor();
@@ -233,6 +232,11 @@ async function main() {
   const failures = [];
   try {
     const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
+    const browserErrors = [];
+    page.on("pageerror", (error) => browserErrors.push(`pageerror: ${error.message}`));
+    page.on("console", (message) => {
+      if (message.type() === "error") browserErrors.push(`console: ${message.text()}`);
+    });
     await page.addInitScript(() => {
       const originalGetContext = HTMLCanvasElement.prototype.getContext;
       const seenRenderers = new WeakSet();
@@ -313,7 +317,11 @@ async function main() {
     await page.locator('[data-testid="generate-model"]:not([disabled])').waitFor({ timeout: 300000 });
     await page.locator('[data-testid="simulation-mode-parameter_inspection"]').click();
     const workspace = page.locator('[data-testid="inspection-workspace"]');
-    await workspace.locator(".engineering-drawing-canvas").waitFor({ state: "visible", timeout: 300000 });
+    try {
+      await workspace.locator(".engineering-drawing-canvas").waitFor({ state: "visible", timeout: 30000 });
+    } catch (error) {
+      throw new Error(`${error.message}\nBrowser errors:\n${browserErrors.join("\n") || "none"}`);
+    }
     await assertForbiddenInspectionUiAbsent(page);
     const lifecycleBaseline = await webglLifecycle(page);
 
@@ -332,7 +340,7 @@ async function main() {
       assert.equal(topParameter.feature_geometry.every((feature) => feature.coordinate_system === "model_xyz"), true);
       assert.equal(topParameter.feature_geometry.some((feature) => feature.kind === "reference_axis"), true);
       assert.equal(topParameter.dimension_definition?.kind, "angular");
-      await openAndSelectParameter(page, topParameter.parameter_id);
+      await openAndSelectParameter(page, topParameter.parameter_id, topParameter.group_id);
       assert.ok(await page.locator("path.engineering-feature").count() >= 2, "Top lacks red angular reference evidence");
       assert.ok(await page.locator(".engineering-dimension line").count() >= 1, "Top lacks blue angular dimension");
       assert.ok(await page.locator(".engineering-dimension text").count() >= 1, "Top lacks dimension text");
@@ -366,7 +374,7 @@ async function main() {
       assert.ok(rootSurface, "root lift does not identify its authoritative attachment surface");
       assert.ok(rootSurface.v1_1_root_domain_samples?.hub_outer_loop_s_q?.length > 1, "missing hub root boundary");
       assert.ok(rootSurface.v1_1_root_domain_samples?.blade_inner_loop_s_q?.length > 1, "missing blade root boundary");
-      await openAndSelectParameter(page, rootLift.parameter_id);
+      await openAndSelectParameter(page, rootLift.parameter_id, rootLift.group_id);
       assert.ok(await page.locator(".engineering-context").count() >= 2, "Meridional lacks hub/blade root context boundaries");
       assert.equal(await page.locator("circle.engineering-feature").count(), 2, "Meridional root lift must identify two red endpoints");
       assert.ok(await page.locator(".engineering-dimension line").count() >= 1, "Meridional lacks blue normal dimension");
@@ -401,7 +409,7 @@ async function main() {
       assert.equal(leadingSagitta.feature_geometry.some((feature) => feature.kind === "polyline"), true);
       assert.equal(leadingSagitta.dimension_definition?.kind, "arc_height");
       assert.equal(leadingSagitta.dimension_definition?.measurement_points?.length, 3);
-      await openAndSelectParameter(page, leadingSagitta.parameter_id);
+      await openAndSelectParameter(page, leadingSagitta.parameter_id, leadingSagitta.group_id);
       assert.ok(await page.locator("path.engineering-feature").count() >= 1, "S-Q lacks red leading-edge geometry");
       const dimension = page.locator(".engineering-dimension");
       assert.ok(await dimension.locator("line").count() >= 1, "S-Q lacks blue sagitta ordinate");

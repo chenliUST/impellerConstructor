@@ -33,6 +33,9 @@ function assertPadded(primitives, viewport = VIEWPORT) {
 }
 
 describe("engineering drawing projection", () => {
+  test("treats an absent dimension as no framing evidence", () => {
+    assert.deepEqual(projectEngineeringDimensionEvidence(null, "top"), []);
+  });
   test("projects top coordinates as x and y with an equal-aspect frame", () => {
     const drawing = projectEngineeringFeature({
       id: "blade-edge",

@@ -18,6 +18,7 @@ export function ParameterFeatureBrowser({ groups = [], selectedParameterId = nul
         {
           key: group.groupId,
           className: "engineering-parameter-group",
+          "data-parameter-group-id": group.groupId,
           open,
           onToggle: (event) => setOpenGroups((current) => {
             const next = new Set(current);

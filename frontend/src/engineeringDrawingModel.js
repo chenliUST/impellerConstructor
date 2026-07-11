@@ -83,6 +83,7 @@ export function projectEngineeringFeature(feature, viewId, frame) {
 }
 
 export function projectEngineeringDimensionEvidence(dimension, viewId) {
+  if (!dimension || typeof dimension !== "object") return [];
   const points = dimensionPoints(dimension, viewId);
   if (!Array.isArray(points)) return [];
   return points.map((coordinates, index) => projectEngineeringFeature({
