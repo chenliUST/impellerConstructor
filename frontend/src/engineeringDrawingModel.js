@@ -184,7 +184,7 @@ function diameterDimension(dimension, rect, contextBounds) {
   return dimensionRecord(dimension, line, [path([start, end])], [
     arrow(start, end),
     arrow(end, start),
-  ], midpoint, null, rect, contextBounds, crossesContext, "Ø");
+  ], midpoint, null, rect, contextBounds, crossesContext, "⌀");
 }
 
 function angularDimension(dimension, rect) {

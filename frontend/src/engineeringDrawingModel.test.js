@@ -279,7 +279,7 @@ describe("engineering dimension layout", () => {
 
     assert.deepEqual(dimension.line.points, [[40, 70], [160, 70]]);
     assert.equal(dimension.arrows.length, 2);
-    assert.equal(dimension.text.value, "Ø120 mm");
+    assert.equal(dimension.text.value, "⌀120 mm");
   });
 });
 
