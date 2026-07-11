@@ -14,6 +14,10 @@ const FRAME = {
 
 const VIEWPORT = { x: 0, y: 0, width: 240, height: 160 };
 
+function context(viewId, frame, primitives, projectPoint) {
+  return { viewId, frame, primitives, ...(projectPoint ? { projectPoint } : {}) };
+}
+
 function path(points) {
   return { kind: "path", points, className: "engineering-feature-context" };
 }
@@ -78,25 +82,119 @@ describe("engineering drawing projection", () => {
 });
 
 describe("engineering dimension layout", () => {
+  test("projects raw dimension endpoints through the feature context in every engineering view", () => {
+    const cases = [
+      {
+        viewId: "top",
+        frame: { bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 }, viewport: VIEWPORT },
+        feature: { points: [[10, 20, 30], [70, 80, 90]] },
+        dimension: { measurement_points: [[10, 20, 30], [70, 80, 90]] },
+      },
+      {
+        viewId: "meridional",
+        frame: { bounds: { minX: 0, minY: 0, maxX: 20, maxY: 40 }, viewport: VIEWPORT },
+        feature: { points: [[3, 4, 10], [0, 10, 30]] },
+        dimension: { measurement_points: [[3, 4, 10], [0, 10, 30]] },
+      },
+      {
+        viewId: "s_q",
+        frame: { bounds: { minX: 0, minY: -20, maxX: 60, maxY: 20 }, viewport: VIEWPORT },
+        feature: {
+          points: [[0, 0], [1, 1]],
+          display_points_s_q_mm: [[12, -8], [48, 16]],
+        },
+        dimension: {
+          measurement_points: [[0, 0], [1, 1]],
+          display_measurement_points_s_q_mm: [[12, -8], [48, 16]],
+        },
+      },
+    ];
+
+    for (const fixture of cases) {
+      const feature = projectEngineeringFeature({
+        id: `${fixture.viewId}-feature`,
+        kind: "polyline",
+        ...fixture.feature,
+      }, fixture.viewId, fixture.frame);
+      const [dimension] = layoutEngineeringDimension({
+        kind: "linear",
+        unit: "mm",
+        resolvedValue: 1,
+        ...fixture.dimension,
+      }, context(fixture.viewId, fixture.frame, [feature]), VIEWPORT);
+
+      assert.deepEqual(dimension.extensions.map((extension) => extension.points[0]), feature.points, fixture.viewId);
+    }
+  });
+
+  test("projects meridional angular reference vectors from their engineering origin", () => {
+    const frame = { bounds: { minX: 0, minY: 0, maxX: 20, maxY: 40 }, viewport: VIEWPORT };
+    const feature = projectEngineeringFeature({
+      id: "meridional-reference",
+      kind: "polyline",
+      points: [[3, 4, 10], [4, 4, 10]],
+    }, "meridional", frame);
+    const [dimension] = layoutEngineeringDimension({
+      kind: "angular",
+      measurement_points: [[3, 4, 10], [4, 4, 10]],
+      reference_direction: [1, 0, 0],
+      measured_direction: [0, 0, 1],
+      unit: "deg",
+      resolvedValue: 90,
+    }, context("meridional", frame, [feature]), VIEWPORT);
+
+    assert.deepEqual(dimension.extensions[0].points[0], feature.points[0]);
+    assert.deepEqual(dimension.extensions[0].points[1], feature.points[1]);
+  });
+
+  test("uses metric S-Q display vectors for angular references", () => {
+    const frame = { bounds: { minX: 0, minY: -20, maxX: 60, maxY: 20 }, viewport: VIEWPORT };
+    const feature = projectEngineeringFeature({
+      id: "s-q-reference",
+      kind: "polyline",
+      points: [[0, 0], [1, 0]],
+      display_points_s_q_mm: [[12, -8], [24, -8]],
+    }, "s_q", frame);
+    const [dimension] = layoutEngineeringDimension({
+      kind: "angular",
+      measurement_points: [[0, 0], [1, 0]],
+      display_measurement_points_s_q_mm: [[12, -8], [24, -8]],
+      reference_direction: [1, 0],
+      measured_direction: [0, 1],
+      display_reference_direction_s_q_mm: [12, 0],
+      display_measured_direction_s_q_mm: [0, 12],
+      unit: "deg",
+      resolvedValue: 90,
+    }, context("s_q", frame, [feature]), VIEWPORT);
+
+    assert.deepEqual(dimension.extensions[0].points[1], feature.points[1]);
+  });
+
   for (const [kind, definition] of [
-    ["linear", { measurement_points: [[60, 60], [130, 60]] }],
+    ["linear", { measurement_points: [[25, 25], [60, 25]] }],
     ["angular", {
-      measurement_points: [[90, 90], [120, 90]],
+      measurement_points: [[40, 40], [55, 40]],
       reference_direction: [1, 0],
       measured_direction: [0, 1],
     }],
-    ["arc_height", { measurement_points: [[60, 60], [130, 60], [95, 95]] }],
-    ["ordinate", { measurement_points: [[50, 50], [110, 85]] }],
-    ["control_coordinate", { measurement_points: [[50, 50], [110, 85]] }],
+    ["arc_height", { measurement_points: [[25, 25], [60, 25], [42, 50]] }],
+    ["ordinate", { measurement_points: [[25, 25], [50, 45]] }],
+    ["control_coordinate", { measurement_points: [[25, 25], [50, 45]] }],
   ]) {
     test(`lays out ${kind} dimensions as padded blue dimension primitives`, () => {
+      const frame = { bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 }, viewport: VIEWPORT };
+      const feature = projectEngineeringFeature({
+        id: `${kind}-context`,
+        kind: "polyline",
+        points: [[20, 20], [80, 80]],
+      }, "s_q", frame);
       const primitives = layoutEngineeringDimension({
         kind,
         unit: "mm",
         resolvedValue: 12.5,
         note: "secondary note",
         ...definition,
-      }, [path([[40, 40], [170, 120]])], VIEWPORT);
+      }, context("s_q", frame, [feature]), VIEWPORT);
 
       assert.equal(primitives.length, 1);
       const [dimension] = primitives;
@@ -120,12 +218,68 @@ describe("engineering dimension layout", () => {
       unit: "mm",
       resolvedValue: 70,
       note: "outside placement note",
-    }, context, VIEWPORT);
+    }, { viewId: "s_q", primitives: context, projectPoint: (point) => [...point] }, VIEWPORT);
 
     const contextBounds = engineeringDrawingBounds(context, []);
     assert.equal(dimension.note, null);
     assert.ok(dimension.line.points.every((point) => point[1] <= contextBounds.minY));
     assertPadded([dimension]);
+  });
+
+  test("suppresses a note when a diagonal dimension segment crosses context despite outside endpoints", () => {
+    const contextPrimitives = [path([[80, 50], [110, 90]])];
+    const [dimension] = layoutEngineeringDimension({
+      kind: "linear",
+      measurement_points: [[20, 20], [220, 140]],
+      unit: "mm",
+      resolvedValue: 1,
+      note: "secondary note",
+    }, { viewId: "s_q", primitives: contextPrimitives, projectPoint: (point) => [...point] }, VIEWPORT);
+
+    assert.ok(dimension.line.points.every(([x, y]) => x < 80 || x > 110 || y < 50 || y > 90));
+    assert.equal(dimension.note, null);
+  });
+
+  test("retains a note when the dimension segment does not cross context", () => {
+    const [dimension] = layoutEngineeringDimension({
+      kind: "linear",
+      measurement_points: [[20, 20], [220, 20]],
+      unit: "mm",
+      resolvedValue: 1,
+      note: "secondary note",
+    }, {
+      viewId: "s_q",
+      primitives: [path([[80, 50], [110, 90]])],
+      projectPoint: (point) => [...point],
+    }, VIEWPORT);
+
+    assert.ok(dimension.note);
+  });
+
+  test("lays out radial dimensions from a center to one rim with a radius callout", () => {
+    const [dimension] = layoutEngineeringDimension({
+      kind: "radial",
+      measurement_points: [[40, 70], [100, 70]],
+      unit: "mm",
+      resolvedValue: 60,
+    }, { viewId: "s_q", primitives: [], projectPoint: (point) => [...point] }, VIEWPORT);
+
+    assert.deepEqual(dimension.line.points, [[40, 70], [100, 70]]);
+    assert.equal(dimension.arrows.length, 1);
+    assert.equal(dimension.text.value, "R60 mm");
+  });
+
+  test("lays out diameter dimensions between opposed rims with two arrowheads", () => {
+    const [dimension] = layoutEngineeringDimension({
+      kind: "diameter",
+      measurement_points: [[40, 70], [160, 70]],
+      unit: "mm",
+      resolvedValue: 120,
+    }, { viewId: "s_q", primitives: [], projectPoint: (point) => [...point] }, VIEWPORT);
+
+    assert.deepEqual(dimension.line.points, [[40, 70], [160, 70]]);
+    assert.equal(dimension.arrows.length, 2);
+    assert.equal(dimension.text.value, "Ø120 mm");
   });
 });
 

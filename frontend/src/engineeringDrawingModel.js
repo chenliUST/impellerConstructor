@@ -24,11 +24,16 @@ export function projectEngineeringFeature(feature, viewId, frame) {
       if (!projected) {
         return null;
       }
+      const points = transformPoints([projected], frame);
+      if (!points) {
+        return null;
+      }
       return {
         id: feature.id,
         kind: "point",
-        point: transformPoints([projected], frame)[0],
+        point: points[0],
         className,
+        projection: { viewId, frame },
       };
     }
     case "local_frame": {
@@ -66,22 +71,28 @@ export function projectEngineeringFeature(feature, viewId, frame) {
     kind: "path",
     points,
     className,
+    projection: { viewId, frame },
   };
 }
 
 export function layoutEngineeringDimension(dimension, projectedFeatures, viewport) {
   const rect = viewportRect(viewport);
-  const points = dimension?.measurement_points;
-  if (!rect || !Array.isArray(points) || points.length < 2 || !points.every(isPoint)) {
+  const projection = projectionContext(projectedFeatures);
+  const projectedDimension = projectDimension(dimension, projection);
+  if (!rect || !projectedDimension) {
     return [];
   }
 
-  const contextBounds = engineeringDrawingBounds(projectedFeatures, []);
-  const dimensionPrimitive = dimension.kind === "angular"
-    ? angularDimension(dimension, rect)
-    : dimension.kind === "arc_height"
-      ? arcHeightDimension(dimension, rect)
-      : linearDimension(dimension, rect, contextBounds);
+  const contextBounds = engineeringDrawingBounds(projection.primitives, []);
+  const dimensionPrimitive = projectedDimension.kind === "angular"
+    ? angularDimension(projectedDimension, rect)
+    : projectedDimension.kind === "arc_height"
+      ? arcHeightDimension(projectedDimension, rect)
+      : projectedDimension.kind === "radial"
+        ? radialDimension(projectedDimension, rect, contextBounds)
+        : projectedDimension.kind === "diameter"
+          ? diameterDimension(projectedDimension, rect, contextBounds)
+          : linearDimension(projectedDimension, rect, contextBounds);
 
   return dimensionPrimitive ? [dimensionPrimitive] : [];
 }
@@ -124,11 +135,11 @@ function linearDimension(dimension, rect, contextBounds) {
     return {
       line,
       fits: line.every((point) => insidePaddedViewport(point, rect)),
-      outsideContext: !contextBounds || line.every((point) => outsideBounds(point, contextBounds)),
+      crossesContext: Boolean(contextBounds && segmentIntersectsBounds(line[0], line[1], contextBounds)),
       sign,
     };
   }).sort((left, right) =>
-    Number(right.outsideContext) - Number(left.outsideContext)
+    Number(left.crossesContext) - Number(right.crossesContext)
     || Number(right.fits) - Number(left.fits)
     || right.sign - left.sign,
   );
@@ -143,7 +154,37 @@ function linearDimension(dimension, rect, contextBounds) {
   ], [
     arrow(line[0], line[1]),
     arrow(line[1], line[0]),
-  ], midpoint, notePoint, rect, contextBounds);
+  ], midpoint, notePoint, rect, contextBounds, Boolean(contextBounds && segmentIntersectsBounds(line[0], line[1], contextBounds)));
+}
+
+function radialDimension(dimension, rect, contextBounds) {
+  const [center, rim] = dimension.measurement_points.map((point) => clampPoint(point, rect));
+  const direction = unitVector(subtract(rim, center));
+  if (!direction) {
+    return null;
+  }
+  const normal = [-direction[1], direction[0]];
+  const line = [center, rim];
+  const midpoint = midpointOf(center, rim);
+  const notePoint = addVectors(midpoint, normal.map((value) => value * LABEL_OFFSET));
+  const crossesContext = Boolean(contextBounds && segmentIntersectsBounds(center, rim, contextBounds));
+  return dimensionRecord(dimension, line, [
+    path([center, addVectors(center, normal.map((value) => value * ARROW_SIZE))]),
+  ], [arrow(rim, center)], midpoint, notePoint, rect, contextBounds, crossesContext, "R");
+}
+
+function diameterDimension(dimension, rect, contextBounds) {
+  const [start, end] = dimension.measurement_points.map((point) => clampPoint(point, rect));
+  if (distance(start, end) === 0) {
+    return null;
+  }
+  const line = [start, end];
+  const midpoint = midpointOf(start, end);
+  const crossesContext = Boolean(contextBounds && segmentIntersectsBounds(start, end, contextBounds));
+  return dimensionRecord(dimension, line, [path([start, end])], [
+    arrow(start, end),
+    arrow(end, start),
+  ], midpoint, null, rect, contextBounds, crossesContext, "Ø");
 }
 
 function angularDimension(dimension, rect) {
@@ -153,7 +194,10 @@ function angularDimension(dimension, rect) {
   if (!reference || !measured) {
     return null;
   }
-  const radius = Math.max(12, Math.min(distance(origin, radiusPoint), 30));
+  const radius = distance(origin, radiusPoint);
+  if (radius === 0) {
+    return null;
+  }
   const startAngle = Math.atan2(reference[1], reference[0]);
   const endAngle = Math.atan2(measured[1], measured[0]);
   const sweep = normalizedSweep(startAngle, endAngle);
@@ -173,7 +217,7 @@ function angularDimension(dimension, rect) {
   ], [
     arrow(line[0], line[1]),
     arrow(line.at(-1), line.at(-2)),
-  ], labelPoint, null, rect, null);
+  ], labelPoint, null, rect, null, false);
 }
 
 function arcHeightDimension(dimension, rect) {
@@ -186,11 +230,12 @@ function arcHeightDimension(dimension, rect) {
   ], [
     arrow(chordMidpoint, apex),
     arrow(apex, chordMidpoint),
-  ], labelPoint, null, rect, null);
+  ], labelPoint, null, rect, null, false);
 }
 
-function dimensionRecord(dimension, linePoints, extensions, arrows, textPoint, notePoint, rect, contextBounds) {
+function dimensionRecord(dimension, linePoints, extensions, arrows, textPoint, notePoint, rect, contextBounds, crossesContext, valuePrefix = "") {
   const note = typeof dimension.note === "string"
+    && !crossesContext
     && insidePaddedViewport(notePoint, rect)
     && (!contextBounds || outsideBounds(notePoint, contextBounds))
     ? { value: dimension.note, point: notePoint, className: "engineering-dimension" }
@@ -203,7 +248,7 @@ function dimensionRecord(dimension, linePoints, extensions, arrows, textPoint, n
     extensions,
     arrows,
     text: {
-      value: dimensionValue(dimension),
+      value: dimensionValue(dimension, valuePrefix),
       point: clampPoint(textPoint, rect),
       className: "engineering-dimension",
     },
@@ -212,9 +257,82 @@ function dimensionRecord(dimension, linePoints, extensions, arrows, textPoint, n
   };
 }
 
-function dimensionValue(dimension) {
+function dimensionValue(dimension, prefix = "") {
   const value = dimension.resolvedValue ?? dimension.resolved_value ?? dimension.value ?? "";
-  return dimension.unit ? `${value} ${dimension.unit}`.trim() : String(value);
+  return dimension.unit ? `${prefix}${value} ${dimension.unit}`.trim() : `${prefix}${value}`;
+}
+
+function projectionContext(projectedFeatures) {
+  const supplied = Array.isArray(projectedFeatures) ? { primitives: projectedFeatures } : projectedFeatures;
+  if (!supplied || typeof supplied !== "object") {
+    return null;
+  }
+  const primitives = Array.isArray(supplied.primitives) ? supplied.primitives : [];
+  const descriptor = supplied.viewId ? supplied : primitives.find((primitive) => primitive?.projection)?.projection;
+  const projectPoint = typeof supplied.projectPoint === "function"
+    ? supplied.projectPoint
+    : descriptor?.viewId
+      ? (point) => projectEngineeringPoint(point, descriptor.viewId, descriptor.frame)
+      : null;
+  return projectPoint ? { primitives, viewId: descriptor?.viewId || supplied.viewId, projectPoint } : null;
+}
+
+function projectDimension(dimension, context) {
+  if (!dimension || typeof dimension !== "object" || !context) {
+    return null;
+  }
+  const rawPoints = dimensionPoints(dimension, context.viewId);
+  if (!Array.isArray(rawPoints) || rawPoints.length < 2 || !rawPoints.every(isPoint)) {
+    return null;
+  }
+  const measurementPoints = rawPoints.map(context.projectPoint);
+  if (!measurementPoints.every(isPoint)) {
+    return null;
+  }
+  const origin = rawPoints[0];
+  const projectedOrigin = measurementPoints[0];
+  const rawReferenceDirection = dimensionDirection(dimension, "reference_direction", context.viewId);
+  const rawMeasuredDirection = dimensionDirection(dimension, "measured_direction", context.viewId);
+  const referenceDirection = projectDirection(rawReferenceDirection, origin, projectedOrigin, context.projectPoint);
+  const measuredDirection = projectDirection(rawMeasuredDirection, origin, projectedOrigin, context.projectPoint);
+  if ((rawReferenceDirection && !referenceDirection) || (rawMeasuredDirection && !measuredDirection)) {
+    return null;
+  }
+  return {
+    ...dimension,
+    measurement_points: measurementPoints,
+    ...(referenceDirection ? { reference_direction: referenceDirection } : {}),
+    ...(measuredDirection ? { measured_direction: measuredDirection } : {}),
+  };
+}
+
+function dimensionPoints(dimension, viewId) {
+  return viewId === "s_q"
+    ? dimension.display_measurement_points_s_q_mm || dimension.measurement_points
+    : dimension.measurement_points;
+}
+
+function dimensionDirection(dimension, field, viewId) {
+  return viewId === "s_q"
+    ? dimension[`display_${field}_s_q_mm`] || dimension[field]
+    : dimension[field];
+}
+
+function projectDirection(direction, origin, projectedOrigin, project) {
+  if (direction == null) {
+    return null;
+  }
+  if (!Array.isArray(direction) || direction.length !== origin.length || !direction.every(isFiniteNumber)) {
+    return null;
+  }
+  const projectedEnd = project(addVectors(origin, direction));
+  return isPoint(projectedEnd) ? subtract(projectedEnd, projectedOrigin) : null;
+}
+
+function projectEngineeringPoint(point, viewId, frame) {
+  const projected = projectPoint(point, viewId);
+  const points = projected ? transformPoints([projected], frame) : null;
+  return points?.[0] || null;
 }
 
 function path(points) {
@@ -334,6 +452,30 @@ function insidePaddedViewport(point, viewport) {
 
 function outsideBounds([x, y], bounds) {
   return x <= bounds.minX || x >= bounds.maxX || y <= bounds.minY || y >= bounds.maxY;
+}
+
+function segmentIntersectsBounds(start, end, bounds) {
+  let minimumT = 0;
+  let maximumT = 1;
+  for (let axis = 0; axis < 2; axis += 1) {
+    const delta = end[axis] - start[axis];
+    const minimum = axis === 0 ? bounds.minX : bounds.minY;
+    const maximum = axis === 0 ? bounds.maxX : bounds.maxY;
+    if (delta === 0) {
+      if (start[axis] < minimum || start[axis] > maximum) {
+        return false;
+      }
+      continue;
+    }
+    const first = (minimum - start[axis]) / delta;
+    const second = (maximum - start[axis]) / delta;
+    minimumT = Math.max(minimumT, Math.min(first, second));
+    maximumT = Math.min(maximumT, Math.max(first, second));
+    if (minimumT > maximumT) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function normalizedSweep(start, end) {
