@@ -19,13 +19,13 @@ describe("frontend application files", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 
-    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.5"/);
-    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.5"/);
+    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.6"/);
+    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.6"/);
     assert.match(appSource, /from "\.\/apiClient\.js\?v=1\.1\.5"/);
     assert.match(appSource, /from "\.\/appModel\.js\?v=1\.1\.5"/);
     assert.match(appSource, /from "\.\/workspaceModel\.js\?v=1\.1\.5"/);
     assert.match(appSource, /from "\.\/components\/ModelViewer\.js\?v=1\.1\.5"/);
-    assert.match(appSource, /from "\.\/components\/ParameterInspectionWorkspace\.js\?v=1\.1\.5"/);
+    assert.match(appSource, /from "\.\/components\/ParameterInspectionWorkspace\.js\?v=1\.1\.6"/);
     assert.match(viewerSource, /from "\.\.\/meshOverlayModel\.js\?v=1\.1\.5"/);
     assert.match(viewerSource, /from "\.\.\/workspaceModel\.js\?v=1\.1\.5"/);
     assert.match(readFileSync(resolve(root, "src/apiClient.js"), "utf-8"), /from "\.\/appModel\.js\?v=1\.1\.5"/);

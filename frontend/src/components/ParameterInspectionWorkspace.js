@@ -16,9 +16,9 @@ import {
 import {
   engineeringDrawingBounds,
   projectEngineeringFeature,
-} from "../engineeringDrawingModel.js?v=1.1.5";
+} from "../engineeringDrawingModel.js?v=1.1.6";
 import { BladeFeatureScene } from "./BladeFeatureScene.js?v=1.1.5";
-import { EngineeringDrawingView } from "./EngineeringDrawingView.js?v=1.1.5";
+import { EngineeringDrawingView } from "./EngineeringDrawingView.js?v=1.1.6";
 import { ParameterFeatureBrowser } from "./ParameterFeatureBrowser.js?v=1.1.5";
 
 const h = React.createElement;

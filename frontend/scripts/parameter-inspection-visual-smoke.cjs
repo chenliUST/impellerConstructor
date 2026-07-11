@@ -227,7 +227,7 @@ async function runAcceptanceCheck(failures, label, callback) {
 }
 
 async function main() {
-  const outputDir = path.resolve("docs/evidence/assets/v1.1.3-engineering-parameter-inspection");
+  const outputDir = path.resolve(__dirname, "..", "..", "docs/evidence/assets/v1.1.3-engineering-parameter-inspection");
   fs.mkdirSync(outputDir, { recursive: true });
   const browser = await chromium.launch({ headless: true });
   const failures = [];
@@ -335,8 +335,16 @@ async function main() {
       await openAndSelectParameter(page, topParameter.parameter_id);
       assert.ok(await page.locator("path.engineering-feature").count() >= 2, "Top lacks red angular reference evidence");
       assert.ok(await page.locator(".engineering-dimension line").count() >= 1, "Top lacks blue angular dimension");
+      assert.ok(await page.locator(".engineering-dimension text").count() >= 1, "Top lacks dimension text");
+      assert.match(
+        (await page.locator(".engineering-dimension text").first().textContent())?.trim() || "",
+        /\d.*deg/,
+        "Top dimension text lacks its resolved value",
+      );
       await assertDrawingColors(page);
       await assertWorkspaceRegionsDoNotOverlap(page, "desktop Top");
+      const stats = pixelStats(await page.locator(".engineering-drawing-canvas").screenshot({ animations: "disabled" }));
+      assert.ok(stats.blue >= 4, `Top blue dimension is not visible: ${JSON.stringify(stats)}`);
     });
     const topBuffer = await captureElement(page, workspace, path.join(outputDir, "desktop-top.png"));
     assert.ok(pixelStats(topBuffer).darkRatio >= 0.001, "desktop Top screenshot is blank");
@@ -362,10 +370,17 @@ async function main() {
       assert.ok(await page.locator(".engineering-context").count() >= 2, "Meridional lacks hub/blade root context boundaries");
       assert.equal(await page.locator("circle.engineering-feature").count(), 2, "Meridional root lift must identify two red endpoints");
       assert.ok(await page.locator(".engineering-dimension line").count() >= 1, "Meridional lacks blue normal dimension");
+      assert.ok(await page.locator(".engineering-dimension text").count() >= 1, "Meridional lacks dimension text");
+      assert.match(
+        (await page.locator(".engineering-dimension text").first().textContent())?.trim() || "",
+        /\d.*mm/,
+        "Meridional dimension text lacks its resolved value",
+      );
       await assertDrawingColors(page);
       await assertWorkspaceRegionsDoNotOverlap(page, "desktop Meridional");
       const stats = pixelStats(await page.locator(".engineering-drawing-canvas").screenshot({ animations: "disabled" }));
       assert.ok(stats.black >= 20, `Meridional lacks visible black hub/blade root boundaries: ${JSON.stringify(stats)}`);
+      assert.ok(stats.blue >= 4, `Meridional blue dimension is not visible: ${JSON.stringify(stats)}`);
     });
     const meridionalBuffer = await captureElement(page, workspace, path.join(outputDir, "desktop-meridional.png"));
     assert.ok(pixelStats(meridionalBuffer).darkRatio >= 0.001, "desktop Meridional screenshot is blank");

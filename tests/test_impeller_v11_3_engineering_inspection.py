@@ -151,6 +151,18 @@ def test_feature_coordinate_spaces_are_explicit_and_blade_applicability_requires
             assert all(feature["coordinate_system"] == "model_xyz" for feature in selected)
 
 
+def test_validator_rejects_view_incompatible_coordinate_spaces():
+    graph = graph_for()
+    contract = deepcopy(graph["parameter_inspection"])
+    parameter = parameter_by_id(contract, "blade.angular_pitch")
+    for feature in parameter["feature_geometry"]:
+        feature["coordinate_system"] = "s_q_mm"
+
+    assert validate_parameter_inspection_contract(graph, contract) == [
+        {"reason": "parameter_inspection_contract_unsupported"}
+    ]
+
+
 def test_attachment_parameters_expose_authoritative_boundary_context_and_selected_measurements():
     graph = graph_for()
     contract = graph["parameter_inspection"]
@@ -194,6 +206,20 @@ def test_top_and_meridional_context_come_from_generated_loop_and_profile_evidenc
     assert len(profile_context) == 1
     assert profile_context[0]["coordinate_system"] == "profile_rz_mm"
     assert profile_context[0]["control_points"] == contract["support_profiles"]["hub_profile"]["control_points"]
+
+
+def test_validator_rejects_top_context_that_does_not_match_generated_loop_geometry():
+    graph = graph_for()
+    contract = deepcopy(graph["parameter_inspection"])
+    parameter = parameter_by_id(contract, "blade.main.count")
+    context = next(
+        feature for feature in parameter["feature_geometry"] if feature["rendering_role"] == "drawing_context"
+    )
+    context["points"][0][0] += 123.0
+
+    assert validate_parameter_inspection_contract(graph, contract) == [
+        {"reason": "parameter_inspection_contract_unsupported"}
+    ]
 
 
 def _metric_s_q_points_for_test(points: list[list[float]], scale: float) -> list[list[float]]:

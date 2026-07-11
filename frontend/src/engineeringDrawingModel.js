@@ -1,6 +1,7 @@
 const DRAWING_PADDING = 16;
 const LABEL_OFFSET = 18;
 const ARROW_SIZE = 6;
+const MIN_ANGULAR_RADIUS = 120;
 
 export function projectEngineeringFeature(feature, viewId, frame) {
   if (!feature || typeof feature !== "object") {
@@ -194,7 +195,7 @@ function angularDimension(dimension, rect) {
   if (!reference || !measured) {
     return null;
   }
-  const radius = distance(origin, radiusPoint);
+  const radius = Math.max(distance(origin, radiusPoint), MIN_ANGULAR_RADIUS);
   if (radius === 0) {
     return null;
   }
@@ -259,7 +260,10 @@ function dimensionRecord(dimension, linePoints, extensions, arrows, textPoint, n
 
 function dimensionValue(dimension, prefix = "") {
   const value = dimension.resolvedValue ?? dimension.resolved_value ?? dimension.value ?? "";
-  return dimension.unit ? `${prefix}${value} ${dimension.unit}`.trim() : `${prefix}${value}`;
+  const formatted = Number.isFinite(Number(value))
+    ? Number(Number(value).toFixed(3)).toString()
+    : String(value);
+  return dimension.unit ? `${prefix}${formatted} ${dimension.unit}`.trim() : `${prefix}${formatted}`;
 }
 
 function projectionContext(projectedFeatures) {

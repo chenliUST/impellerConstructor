@@ -3,7 +3,7 @@ import React from "react";
 import {
   layoutEngineeringDimension,
   projectEngineeringFeature,
-} from "../engineeringDrawingModel.js?v=1.1.5";
+} from "../engineeringDrawingModel.js?v=1.1.6";
 
 const h = React.createElement;
 const VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
@@ -87,7 +87,7 @@ function renderPrimitive(primitive, className, key) {
     return h(
       "g",
       { key, className },
-      renderLine(primitive.line, `${key}:line`),
+      renderPath(primitive.line, `${key}:line`),
       (primitive.extensions || []).map((line, index) => renderLine(line, `${key}:extension:${index}`)),
       (primitive.arrows || []).map((arrow, index) => renderArrow(arrow, `${key}:arrow:${index}`)),
       renderText(primitive.text, `${key}:text`),
@@ -95,6 +95,12 @@ function renderPrimitive(primitive, className, key) {
     );
   }
   return null;
+}
+
+function renderPath(primitive, key) {
+  return Array.isArray(primitive?.points)
+    ? h("path", { key, d: pathData(primitive.points), fill: "none" })
+    : null;
 }
 
 function renderLine(primitive, key) {

@@ -170,7 +170,10 @@ describe("engineering dimension layout", () => {
     }, context("meridional", frame, [feature]), VIEWPORT);
 
     assert.deepEqual(dimension.extensions[0].points[0], feature.points[0]);
-    assert.deepEqual(dimension.extensions[0].points[1], feature.points[1]);
+    assert.ok(Math.hypot(
+      dimension.extensions[0].points[1][0] - feature.points[0][0],
+      dimension.extensions[0].points[1][1] - feature.points[0][1],
+    ) >= 120);
   });
 
   test("uses metric S-Q display vectors for angular references", () => {
@@ -193,7 +196,11 @@ describe("engineering dimension layout", () => {
       resolvedValue: 90,
     }, context("s_q", frame, [feature]), VIEWPORT);
 
-    assert.deepEqual(dimension.extensions[0].points[1], feature.points[1]);
+    assert.deepEqual(dimension.extensions[0].points[0], feature.points[0]);
+    assert.ok(Math.hypot(
+      dimension.extensions[0].points[1][0] - feature.points[0][0],
+      dimension.extensions[0].points[1][1] - feature.points[0][1],
+    ) >= 120);
   });
 
   for (const [kind, definition] of [

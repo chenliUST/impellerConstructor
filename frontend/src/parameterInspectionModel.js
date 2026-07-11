@@ -606,7 +606,9 @@ function normalizeEngineeringParameters(contract, indices) {
     unit: parameter.unit,
     applicableViews: [...parameter.applicable_views],
     features: parameter.feature_geometry.map((feature) => ({ ...feature })),
-    dimension: parameter.dimension_definition == null ? null : { ...parameter.dimension_definition },
+    dimension: parameter.dimension_definition == null
+      ? null
+      : { ...parameter.dimension_definition, resolvedValue: parameter.resolved_value },
     selectionScope: { ...parameter.selection_scope },
     order: parameter.order,
   }));

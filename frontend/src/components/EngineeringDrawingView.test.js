@@ -19,7 +19,7 @@ function loadComponent(path, exportName) {
       'import React from "react";',
       'const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props || {}), children } }) };',
     )
-    .replace(/import \{[\s\S]*?\} from "\.\.\/engineeringDrawingModel\.js\?v=1\.1\.5";\n/, '')
+    .replace(/import \{[\s\S]*?\} from "\.\.\/engineeringDrawingModel\.js\?v=[^"]+";\n/, '')
     .replace(/export function /g, "function ");
   const module = { exports: {} };
   const context = vm.createContext({
@@ -125,11 +125,10 @@ describe("EngineeringDrawingView", () => {
     assert.equal(polygon.props.points, "16,108 500,592 984,108");
     assert.deepEqual([contextPoint.props.cx, contextPoint.props.cy], [16, 108]);
     assert.deepEqual([featurePoint.props.cx, featurePoint.props.cy], [500, 592]);
-    assert.equal(dimensionLines.length, 3);
-    assert.deepEqual([dimensionLines[0].props.x1, dimensionLines[0].props.y1], [16, 90]);
-    assert.deepEqual([dimensionLines[1].props.x1, dimensionLines[1].props.y1], [16, 108]);
-    assert.deepEqual([dimensionLines[2].props.x1, dimensionLines[2].props.y1], [984, 108]);
-    assert.equal(dimensionPaths.length, 2);
+    assert.equal(dimensionLines.length, 2);
+    assert.deepEqual([dimensionLines[0].props.x1, dimensionLines[0].props.y1], [16, 108]);
+    assert.deepEqual([dimensionLines[1].props.x1, dimensionLines[1].props.y1], [984, 108]);
+    assert.equal(dimensionPaths.length, 3);
     assert.equal(dimensionText.props.children[0], "100 mm");
     assert.equal(collectElements(tree, (node) => node.type === "canvas").length, 0);
   });
@@ -168,7 +167,8 @@ describe("EngineeringDrawingView", () => {
     assert.equal(featurePath.props.d, "M 0 0 L 50 50 L 100 0");
     assert.deepEqual([featurePoint.props.cx, featurePoint.props.cy], [50, 50]);
     assert.ok(dimension);
-    assert.equal(collectElements(dimension, (node) => node.type === "line").length, 3);
+    assert.equal(collectElements(dimension, (node) => node.type === "line").length, 2);
+    assert.equal(collectElements(dimension, (node) => node.type === "path").length, 3);
     assert.equal(collectElements(dimension, (node) => node.type === "text")[0].props.children[0], "100 mm");
   });
 

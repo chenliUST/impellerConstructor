@@ -392,7 +392,9 @@ def _engineering_records_are_well_formed(
             or not _applicable_views_are_well_formed(parameter["applicable_views"])
             or not isinstance(parameter["selection_scope"], Mapping)
             or not _engineering_value_is_finite(parameter["selection_scope"])
-            or not _feature_geometry_is_well_formed(parameter["feature_geometry"], primitive_ids)
+            or not _feature_geometry_is_well_formed(
+                parameter["feature_geometry"], primitive_ids, parameter["applicable_views"]
+            )
             or not _dimension_definition_is_well_formed(parameter["dimension_definition"])
         ):
             return False
@@ -423,7 +425,9 @@ def _applicable_views_are_well_formed(value: Any) -> bool:
     )
 
 
-def _feature_geometry_is_well_formed(features: Any, primitive_ids: set[str]) -> bool:
+def _feature_geometry_is_well_formed(
+    features: Any, primitive_ids: set[str], applicable_views: Sequence[str]
+) -> bool:
     if not isinstance(features, list) or not features:
         return False
     for feature in features:
@@ -439,10 +443,32 @@ def _feature_geometry_is_well_formed(features: Any, primitive_ids: set[str]) -> 
             or feature.get("rendering_role") not in ENGINEERING_RENDERING_ROLES
             or not _engineering_value_is_finite(feature)
             or not _feature_coordinates_are_well_formed(kind, feature)
+            or not all(_feature_supports_view(feature, view) for view in applicable_views)
         ):
             return False
         primitive_ids.add(primitive_id)
     return True
+
+
+def _feature_supports_view(feature: Mapping[str, Any], view: str) -> bool:
+    coordinate_system = feature.get("coordinate_system")
+    if view in {"blade_3d", "top"}:
+        return coordinate_system == "model_xyz"
+    if view == "meridional":
+        return coordinate_system in {"model_xyz", "profile_rz_mm"}
+    if view != "s_q":
+        return False
+    if coordinate_system == "s_q_mm":
+        return True
+    display_fields = {
+        "nurbs_curve": ("display_control_points_s_q_mm",),
+        "polyline": ("display_points_s_q_mm",),
+        "control_point": ("display_coordinates_s_q_mm",),
+        "point": ("display_coordinates_s_q_mm",),
+        "local_frame": ("display_origin_s_q_mm", "display_s_axis_s_q_mm", "display_q_axis_s_q_mm"),
+        "reference_axis": ("display_origin_s_q_mm", "display_direction_s_q_mm"),
+    }.get(feature.get("kind"), ())
+    return bool(display_fields) and all(field in feature for field in display_fields)
 
 
 def _feature_coordinates_are_well_formed(kind: str, feature: Mapping[str, Any]) -> bool:
@@ -852,6 +878,9 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
         )
     if parameter_id == "blade.main.count":
         feature = _selected_feature_geometry(parameter)
+        context = [
+            item for item in parameter["feature_geometry"] if item.get("rendering_role") == "drawing_context"
+        ]
         return (
             parameter["resolved_value"] == main_count
             and parameter["selection_scope"].get("source_geometry_kind") == "blade_population"
@@ -859,6 +888,7 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
             and feature[0].get("kind") == "reference_axis"
             and feature[0].get("origin") == [0.0, 0.0, 0.0]
             and feature[0].get("direction") == [1.0, 0.0, 0.0]
+            and context == _top_context_features(surface_graph)
         )
     if parameter_id == "blade.angular_pitch":
         expected = _angular_dimension(main_directions[0], main_directions[1]) if len(main_directions) >= 2 else None

@@ -1314,7 +1314,7 @@ circle.engineering-feature {
 
 .engineering-dimension text {
   fill: var(--engineering-dimension);
-  font: 12px Arial, sans-serif;
+  font: 30px Arial, sans-serif;
   font-weight: 700;
 }
 
