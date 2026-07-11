@@ -2187,6 +2187,16 @@ def _section_loop_points(loop: Mapping[str, Any]) -> list[list[float]]:
 
 def _join_feature_points(loop: Mapping[str, Any], join_name: str) -> list[list[float]]:
     segments = loop.get("segment_references", {})
+    if not segments:
+        scale = loop.get("streamwise_metric_scale_mm")
+        source_segments = loop.get("segments", {})
+        if not _finite_number(scale) or not isinstance(source_segments, Mapping):
+            return []
+        segments = {
+            name: {"display_points_s_q_mm": _metric_s_q_points(segment.get("points_s_q", []), float(scale))}
+            for name, segment in source_segments.items()
+            if isinstance(segment, Mapping)
+        }
     roles = {
         "pressure_to_leading": ("pressure_side", "start", "leading_edge", "start"),
         "leading_to_suction": ("leading_edge", "end", "suction_side", "start"),
