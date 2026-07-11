@@ -1,12 +1,16 @@
 import React, { useLayoutEffect, useMemo, useState } from "react";
 
 import {
-  defaultInspectionSelection,
-  engineeringParameterById,
   engineeringParameterGroups,
-  equivalentParameterId,
   resolveParameterInspection,
 } from "../parameterInspectionModel.js?v=1.1.5";
+import {
+  WORKSPACE_TABS,
+  initialWorkspaceState,
+  parameterAppliesToWorkspaceView,
+  transitionWorkspaceState,
+  workspaceRenderProps,
+} from "../parameterInspectionWorkspaceModel.js?v=1.1.5";
 import {
   engineeringDrawingBounds,
   projectEngineeringFeature,
@@ -18,32 +22,15 @@ import { ParameterFeatureBrowser } from "./ParameterFeatureBrowser.js?v=1.1.5";
 const h = React.createElement;
 const EMPTY_INSPECTION_ERROR = "parameter_inspection_not_generated";
 const DRAWING_VIEWPORT = { x: 0, y: 0, width: 1000, height: 700 };
-const NAVIGATION_SCOPE_KEYS = new Set([
-  "blade_instance_id",
-  "section_loop_id",
-  "source_attachment_surface_id",
-  "source_control_point_id",
-  "source_station_index",
-  "span_station_id",
-]);
-
-export const WORKSPACE_TABS = Object.freeze([
-  { id: "top", label: "Top" },
-  { id: "meridional", label: "Meridional" },
-  { id: "s_q_blade", label: "S-Q + Blade" },
-]);
 
 export function ParameterInspectionWorkspace({ manifest = null }) {
-  const [activeTab, setActiveTab] = useState("top");
   const model = useMemo(() => resolveParameterInspection(manifest), [manifest]);
-  const [navigation, setNavigation] = useState(() => defaultInspectionSelection(model));
-  const [selectedParameterId, setSelectedParameterId] = useState(null);
+  const [workspaceState, setWorkspaceState] = useState(() => initialWorkspaceState(model));
   const generationId = model.contract?.generation_id;
+  const { activeTab, navigation, selectedParameterId } = workspaceState;
 
   useLayoutEffect(() => {
-    setActiveTab("top");
-    setNavigation(defaultInspectionSelection(model));
-    setSelectedParameterId(null);
+    setWorkspaceState(initialWorkspaceState(model));
   }, [generationId, model]);
 
   const context = {
@@ -64,56 +51,32 @@ export function ParameterInspectionWorkspace({ manifest = null }) {
     })),
     [activeTab, parameterGroups],
   );
-  const selectedParameter = engineeringParameterById(model, selectedParameterId);
-  const drawingViewId = activeTab === "s_q_blade" ? "s_q" : activeTab;
+  const renderProps = workspaceRenderProps(model, workspaceState);
   const drawingContext = useMemo(
-    () => engineeringContextPrimitives(parameterGroups, drawingViewId),
-    [drawingViewId, parameterGroups],
+    () => engineeringContextPrimitives(parameterGroups, renderProps.drawing.viewId),
+    [parameterGroups, renderProps.drawing.viewId],
   );
-  const drawingSelectedParameter = selectedParameter?.applicableViews.includes(drawingViewId)
-    ? selectedParameter
-    : null;
-  const bladeSelectedParameter = activeTab === "s_q_blade"
-    && selectedParameter?.applicableViews.includes("blade_3d")
-    ? selectedParameter
-    : null;
   const selectedBlade = model.indices?.blades?.[navigation.bladeId];
   const bladeSurfaceIds = selectedBlade?.surface_ids || [];
 
   function handleBladeSelection(bladeId) {
-    const blade = model.indices.blades[bladeId];
-    if (!blade) {
-      return;
-    }
-    const nextContext = {
-      bladeId,
-      spanStationId: blade.span_station_ids?.[0] || null,
-    };
-    setNavigation((current) => ({ ...current, ...nextContext }));
-    setSelectedParameterId((current) =>
-      preserveEquivalentParameterId(model, current, nextContext, activeTab));
+    setWorkspaceState((current) =>
+      transitionWorkspaceState(model, current, { type: "blade", bladeId }));
   }
 
   function handleStationSelection(spanStationId) {
-    const station = model.indices.stations[spanStationId];
-    if (!station) {
-      return;
-    }
-    const nextContext = {
-      bladeId: station.blade_instance_id,
-      spanStationId,
-    };
-    setNavigation((current) => ({ ...current, ...nextContext }));
-    setSelectedParameterId((current) =>
-      preserveEquivalentParameterId(model, current, nextContext, activeTab));
+    setWorkspaceState((current) =>
+      transitionWorkspaceState(model, current, { type: "station", spanStationId }));
   }
 
   function handleTabSelection(viewId) {
-    setActiveTab(viewId);
-    setSelectedParameterId((current) => {
-      const parameter = engineeringParameterById(model, current);
-      return parameterAppliesToWorkspaceView(parameter, viewId) ? current : null;
-    });
+    setWorkspaceState((current) =>
+      transitionWorkspaceState(model, current, { type: "tab", viewId }));
+  }
+
+  function handleParameterSelection(parameterId) {
+    setWorkspaceState((current) =>
+      transitionWorkspaceState(model, current, { type: "parameter", parameterId }));
   }
 
   if (model.status === "empty" && model.errorCode === EMPTY_INSPECTION_ERROR) {
@@ -208,23 +171,20 @@ export function ParameterInspectionWorkspace({ manifest = null }) {
       h(ParameterFeatureBrowser, {
         groups: browserGroups,
         selectedParameterId: selectedParameterId,
-        onSelect: setSelectedParameterId,
+        onSelect: handleParameterSelection,
       }),
       activeTab === "s_q_blade"
         ? h(
             "div",
             { className: "inspection-drawing-grid inspection-s-q-blade-grid" },
             h(EngineeringDrawingView, {
-              viewId: "s_q",
               contextPrimitives: drawingContext,
-              selectedParameter: drawingSelectedParameter,
-              selectedParameterId: selectedParameterId,
+              ...renderProps.drawing,
             }),
             h(BladeFeatureScene, {
               surfaceGraph: model.inspectionSurfaceGraph,
               bladeSurfaceIds,
-              selectedParameter: bladeSelectedParameter,
-              selectedParameterId: selectedParameterId,
+              ...renderProps.blade,
               manifest,
             }),
           )
@@ -232,83 +192,12 @@ export function ParameterInspectionWorkspace({ manifest = null }) {
             "div",
             { className: "inspection-drawing-grid" },
             h(EngineeringDrawingView, {
-              viewId: drawingViewId,
               contextPrimitives: drawingContext,
-              selectedParameter: drawingSelectedParameter,
-              selectedParameterId: selectedParameterId,
+              ...renderProps.drawing,
             }),
           ),
     ),
   );
-}
-
-export function parameterAppliesToWorkspaceView(parameter, viewId) {
-  const applicableViews = Array.isArray(parameter?.applicableViews) ? parameter.applicableViews : [];
-  return viewId === "s_q_blade"
-    ? applicableViews.includes("s_q") || applicableViews.includes("blade_3d")
-    : applicableViews.includes(viewId);
-}
-
-export function preserveEquivalentParameterId(
-  model,
-  currentId,
-  nextContext,
-  viewId,
-  resolveEquivalent = equivalentParameterId,
-) {
-  if (!currentId) {
-    return null;
-  }
-  const nextId = resolveEquivalent(model, currentId, nextContext)
-    || stationEquivalentParameterId(model, currentId, nextContext);
-  const nextParameter = model?.engineeringParameters?.find((parameter) => parameter.id === nextId) || null;
-  return parameterAppliesToWorkspaceView(nextParameter, viewId) ? nextId : null;
-}
-
-function stationEquivalentParameterId(model, currentId, nextContext) {
-  if (!nextContext?.spanStationId) {
-    return null;
-  }
-  const parameters = Array.isArray(model?.engineeringParameters) ? model.engineeringParameters : [];
-  const current = parameters.find((parameter) => parameter.id === currentId);
-  if (!current) {
-    return null;
-  }
-  const currentScope = semanticScope(current.selectionScope);
-  const match = parameters.find((parameter) =>
-    parameter.groupId === current.groupId
-    && parameter.label === current.label
-    && scopeMatchesNavigation(parameter.selectionScope, nextContext)
-    && engineeringValuesEqual(semanticScope(parameter.selectionScope), currentScope));
-  return match?.id || null;
-}
-
-function scopeMatchesNavigation(scope, context) {
-  return (!context.bladeId || scope?.blade_instance_id === context.bladeId)
-    && (!context.spanStationId || scope?.span_station_id === context.spanStationId);
-}
-
-function semanticScope(scope) {
-  return Object.fromEntries(
-    Object.entries(scope || {}).filter(([key]) => !NAVIGATION_SCOPE_KEYS.has(key)),
-  );
-}
-
-function engineeringValuesEqual(left, right) {
-  if (left === right) {
-    return true;
-  }
-  if (Array.isArray(left) || Array.isArray(right)) {
-    return Array.isArray(left)
-      && Array.isArray(right)
-      && left.length === right.length
-      && left.every((value, index) => engineeringValuesEqual(value, right[index]));
-  }
-  if (!left || !right || typeof left !== "object" || typeof right !== "object") {
-    return false;
-  }
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-  return [...keys].every((key) => engineeringValuesEqual(left[key], right[key]));
 }
 
 function engineeringContextPrimitives(groups, viewId) {

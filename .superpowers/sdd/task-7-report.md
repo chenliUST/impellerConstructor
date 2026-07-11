@@ -78,3 +78,53 @@ The temporary backend used for current-contract smoke was stopped after verifica
 `rg -n "from .*InspectionScene|from .*ParameterAnnotationOverlay" frontend/src --glob '*.js'` returns no imports.
 
 `ParameterAnnotationOverlay.js` was not deleted because the unowned `SectionLoopInspectionView.test.js` directly loads and tests it. Deleting it within the assigned Task 7 file scope would fail the required full frontend suite. It has no production consumer and can be removed when that legacy test contract is retired by its owner.
+
+## Findings Correction
+
+### Equivalent Preservation
+
+Extracted `frontend/src/parameterInspectionWorkspaceModel.js` as the pure owner of workspace state transitions and child render props. Its contextual equivalence fallback now treats generated `section_segment_id` values as instance-specific together with blade, station, loop, attachment, and control-point ids. `source_segment_name` and `source_control_index` remain semantic and must match.
+
+Generated-shape tests cover:
+
+- thickness across station ids;
+- control-coordinate parameters across blade ids while rejecting a different segment name or control index;
+- leading-edge sagitta across station-specific segment ids;
+- active parameter click clearing;
+- inapplicable tab clearing;
+- same-index blade navigation and station event mapping;
+- synchronized drawing/blade selected records and null selected evidence.
+
+The RED command failed on the missing pure module. After implementation, the focused workspace and S-Q command passed `13` tests with `0` failures.
+
+### Executable Workspace Behavior
+
+Removed the source-rewrite `ParameterInspectionWorkspace.test.js`. The new test imports and executes the production pure model directly. `ParameterInspectionWorkspace` delegates parameter, tab, blade, and station events to `transitionWorkspaceState` and spreads `workspaceRenderProps` into `EngineeringDrawingView` and `BladeFeatureScene`.
+
+React/generated-manifest mount smoke remains assigned to Task 8. A lightweight browser retry was attempted, but the in-app browser connection was unavailable; no new browser result is claimed for this correction.
+
+### Obsolete UI Removal
+
+Deleted `ParameterAnnotationOverlay.js` and removed its dedicated block from `SectionLoopInspectionView.test.js`. Removed the overlay rows, maximize controls, annotation controls, quad layout, legacy narrow modifiers, deleted scene/section wrappers, and unused drawing-layout/toolbar CSS.
+
+The dead-reference audit returns no matches for the deleted component or selector families. The earlier overlay deletion concern is resolved.
+
+### Correction Verification
+
+```powershell
+Set-Location frontend
+node --test src/parameterInspectionWorkspaceModel.test.js src/components/SectionLoopInspectionView.test.js
+npm.cmd test
+npm.cmd run build
+node --check src/parameterInspectionWorkspaceModel.js
+node --check src/components/ParameterInspectionWorkspace.js
+Set-Location ..
+git diff --check
+```
+
+Results before the final commit pass:
+
+- Focused pure workspace and S-Q suite: `13` passed, `0` failed.
+- Full frontend suite: `196` passed, `0` failed.
+- Frontend build check: passed.
+- Syntax, whitespace, deleted-import, source-rewrite, and dead-selector audits: passed.

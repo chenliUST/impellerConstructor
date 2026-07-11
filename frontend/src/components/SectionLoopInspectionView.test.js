@@ -6,7 +6,6 @@ import vm from "node:vm";
 
 const root = resolve(import.meta.dirname, "..", "..");
 const sectionViewPath = resolve(root, "src/components/SectionLoopInspectionView.js");
-const overlayPath = resolve(root, "src/components/ParameterAnnotationOverlay.js");
 const stylesPath = resolve(root, "src/styles.css");
 
 function loadComponent(path, exportName) {
@@ -255,105 +254,5 @@ describe("SectionLoopInspectionView source contract", () => {
 
     assert.equal(metrics.length, 1);
     assert.ok(metrics[0].props.y >= 500);
-  });
-});
-
-describe("ParameterAnnotationOverlay source contract", () => {
-  test("uses native parameter buttons without SVG leaders", () => {
-    assert.equal(existsSync(overlayPath), true, "ParameterAnnotationOverlay.js should exist");
-
-    const source = readFileSync(overlayPath, "utf-8");
-    assert.doesNotMatch(source, /inspection-leader/);
-    assert.doesNotMatch(source, /clipPath/);
-    assert.match(source, /"button"/);
-    assert.match(source, /type:\s*"button"/);
-    assert.match(source, /onSelectAnnotation/);
-    assert.match(source, /aria-pressed/);
-    assert.match(source, /sort\(.*id/);
-
-    const styles = readFileSync(stylesPath, "utf-8");
-    assert.match(styles, /button\.inspection-label-row/);
-    assert.match(styles, /text-overflow:\s*ellipsis/);
-  });
-
-  test("sorts rows, preserves values, and toggles one actionable parameter", () => {
-    const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
-    const selected = [];
-    const tree = ParameterAnnotationOverlay({
-      annotations: [
-        {
-          id: "b",
-          label: "Thickness max",
-          requestedValue: 20,
-          requestedUnit: "mm",
-          resolvedValue: 18,
-          unit: "mm",
-          targetSurfaceIds: ["surface-b"],
-        },
-        {
-          id: "a",
-          label: "Thickness min",
-          requestedValue: 6.8,
-          requestedUnit: "mm",
-          resolvedValue: 6.8,
-          unit: "mm",
-          targetSurfaceIds: [],
-        },
-      ],
-      selectedAnnotationId: "b",
-      onSelectAnnotation: (annotation) => selected.push(annotation.id),
-    });
-
-    const rows = collectElements(tree, (node) => node.type === "button" || node.type === "div");
-    const buttons = collectElements(tree, (node) => node.type === "button");
-
-    assert.equal(rows.length, 3);
-    assert.match(visibleText(rows[1]), /Thickness min: 6.8 mm/);
-    assert.match(visibleText(rows[2]), /Thickness max: 20 mm -> 18 mm/);
-    assert.equal(buttons.length, 1);
-    assert.match(buttons[0].props.className, /selected/);
-    assert.equal(buttons[0].props["aria-pressed"], true);
-    buttons[0].props.onClick();
-    assert.deepEqual(selected, ["b"]);
-  });
-
-  test("compacts structured values and preserves full text in the native title", () => {
-    const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
-    const requestedValue = Array.from({ length: 12 }, (_, index) => index);
-    const resolvedValue = { first: "resolved-a", second: "resolved-b" };
-    const tree = ParameterAnnotationOverlay({
-      annotations: [{
-        id: "structured",
-        label: "Points",
-        requestedValue,
-        resolvedValue,
-      }],
-    });
-
-    const row = collectElements(tree, (node) => node.type === "div" && node.props["data-annotation-id"])[0];
-
-    assert.equal(visibleText(row), "Points: [12 items] -> {2 fields}");
-    assert.match(row.props.title, /\[0,1,2,3,4,5,6,7,8,9,10,11\]/);
-    assert.match(row.props.title, /resolved-b/);
-  });
-
-  test("renders long values as one CSS-clipped selected button", () => {
-    const ParameterAnnotationOverlay = loadComponent(overlayPath, "ParameterAnnotationOverlay");
-    const longValue = "W".repeat(160);
-    const tree = ParameterAnnotationOverlay({
-      annotations: [{
-        id: "long",
-        label: "Long parameter",
-        requestedValue: longValue,
-        resolvedValue: longValue,
-        targetSurfaceIds: ["surface-long"],
-      }],
-      selectedAnnotationId: "long",
-    });
-
-    const button = collectElements(tree, (node) => node.type === "button")[0];
-    assert.match(button.props.className, /selected/);
-    assert.match(button.props.title, new RegExp(longValue));
-    assert.match(visibleText(button), new RegExp(longValue));
   });
 });
