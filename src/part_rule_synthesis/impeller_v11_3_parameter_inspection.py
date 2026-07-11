@@ -443,11 +443,27 @@ def _feature_geometry_is_well_formed(
             or feature.get("rendering_role") not in ENGINEERING_RENDERING_ROLES
             or not _engineering_value_is_finite(feature)
             or not _feature_coordinates_are_well_formed(kind, feature)
+            or not _feature_coordinate_dimension_is_valid(kind, feature)
             or not all(_feature_supports_view(feature, view) for view in applicable_views)
         ):
             return False
         primitive_ids.add(primitive_id)
     return True
+
+
+def _feature_coordinate_dimension_is_valid(kind: str, feature: Mapping[str, Any]) -> bool:
+    expected = 3 if feature.get("coordinate_system") == "model_xyz" else 2
+    if kind == "nurbs_curve":
+        return all(len(point) == expected for point in feature["control_points"])
+    if kind == "polyline":
+        return all(len(point) == expected for point in feature["points"])
+    if kind in {"control_point", "point"}:
+        return len(feature["coordinates"]) == expected
+    if kind == "local_frame":
+        return all(len(feature[field]) == expected for field in ("origin", "s_axis", "q_axis"))
+    if kind == "reference_axis":
+        return all(len(feature[field]) == expected for field in ("origin", "direction"))
+    return False
 
 
 def _feature_supports_view(feature: Mapping[str, Any], view: str) -> bool:

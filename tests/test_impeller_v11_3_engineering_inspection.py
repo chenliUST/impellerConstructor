@@ -163,6 +163,17 @@ def test_validator_rejects_view_incompatible_coordinate_spaces():
     ]
 
 
+def test_validator_rejects_coordinate_vectors_with_the_wrong_space_dimension():
+    graph = graph_for()
+    contract = deepcopy(graph["parameter_inspection"])
+    parameter = parameter_by_id(contract, "blade.angular_pitch")
+    parameter["feature_geometry"][0]["origin"] = [0.0, 0.0]
+
+    assert validate_parameter_inspection_contract(graph, contract) == [
+        {"reason": "parameter_inspection_contract_unsupported"}
+    ]
+
+
 def test_attachment_parameters_expose_authoritative_boundary_context_and_selected_measurements():
     graph = graph_for()
     contract = graph["parameter_inspection"]
