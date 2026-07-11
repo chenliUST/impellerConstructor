@@ -1356,6 +1356,130 @@ button.inspection-label-row.selected {
   pointer-events: none;
 }
 
+:root {
+  --engineering-context: #111111;
+  --engineering-feature: #c40000;
+  --engineering-dimension: #005ea8;
+  --engineering-paper: #ffffff;
+}
+
+.engineering-drawing-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.engineering-parameter-browser {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.engineering-parameter-group {
+  border: 1px solid #cbd4cf;
+  background: var(--engineering-paper);
+}
+
+.engineering-parameter-group summary {
+  cursor: pointer;
+  padding: 6px 8px;
+  color: #26332e;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.engineering-parameter-list {
+  display: grid;
+  gap: 4px;
+  padding: 0 6px 6px;
+}
+
+.engineering-parameter-button {
+  min-width: 0;
+  min-height: 28px;
+  overflow: hidden;
+  border: 1px solid #cbd4cf;
+  border-radius: 4px;
+  background: var(--engineering-paper);
+  color: #26332e;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engineering-parameter-button.selected {
+  border-color: var(--engineering-feature);
+  color: var(--engineering-feature);
+}
+
+.engineering-parameter-button.control-point {
+  padding-left: 10px;
+}
+
+.engineering-parameter-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.engineering-drawing-view {
+  min-width: 0;
+}
+
+.engineering-drawing-toolbar {
+  max-block-size: 32px;
+  overflow: hidden;
+}
+
+.engineering-drawing-canvas {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  border: 1px solid #cbd4cf;
+  background: var(--engineering-paper);
+}
+
+.engineering-context {
+  fill: none;
+  stroke: var(--engineering-context);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.engineering-feature {
+  fill: none;
+  stroke: var(--engineering-feature);
+  stroke-width: 1.8px;
+  vector-effect: non-scaling-stroke;
+}
+
+circle.engineering-feature {
+  fill: var(--engineering-feature);
+}
+
+.engineering-control-polygon {
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+}
+
+.engineering-dimension line,
+.engineering-dimension path {
+  fill: none;
+  stroke: var(--engineering-dimension);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.engineering-dimension text {
+  fill: var(--engineering-dimension);
+  font: 12px Arial, sans-serif;
+  font-weight: 700;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: minmax(340px, 420px) minmax(420px, 1fr);
