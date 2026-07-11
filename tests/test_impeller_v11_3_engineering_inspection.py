@@ -362,6 +362,92 @@ def test_open_and_closed_contracts_cover_constructor_parameters_with_generated_e
             )
 
 
+def test_contract_exposes_authoritative_nurbs_pose_thickness_and_join_records():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    parameters = {item["parameter_id"]: item for item in contract["parameters"]}
+    canonical = graph["canonical_nurbs_parameterization"]
+
+    for prefix, profile_name in (
+        ("hub.profile", "hub_profile"),
+        ("tip_or_shroud.profile", "tip_or_shroud_profile"),
+    ):
+        profile = canonical["support_profiles"][profile_name]
+        assert parameters[f"{prefix}.degree"]["resolved_value"] == profile["degree"]
+        for field_name in ("knots", "weights"):
+            assert [
+                parameters[f"{prefix}.{field_name}.{index}"]["resolved_value"]
+                for index in range(len(profile[field_name]))
+            ] == profile[field_name]
+
+    for field_name in ("blade_skeleton_field", "pose_field", "thickness_field"):
+        field = canonical[field_name]
+        for metadata_name in ("degree_u", "degree_v", "knots_u", "knots_v", "weights"):
+            assert parameters[f"canonical.{field_name}.{metadata_name}"]["resolved_value"] == field[metadata_name]
+        for row_index, row in enumerate(field["control_points"]):
+            for column_index, point in enumerate(row):
+                assert parameters[
+                    f"canonical.{field_name}.control.{row_index}.{column_index}.value"
+                ]["resolved_value"] == point[2]
+
+    station_id = contract["blade_instances"]["blade_0"]["span_station_ids"][0]
+    loop_id = contract["span_stations"][station_id]["section_loop_id"]
+    joins = contract["section_loops"][loop_id]["join_metrics"]
+    for join_name, metrics in joins.items():
+        for metric_name, value in metrics.items():
+            assert parameters[
+                f"blade:blade_0:station:{station_id}:join:{join_name}:{metric_name}"
+            ]["resolved_value"] == value
+
+
+def test_section_nurbs_metadata_is_not_invented_when_generated_segments_do_not_carry_it():
+    graph = graph_for()
+    contract = graph["parameter_inspection"]
+    source_segments = graph["blade_to_blade_loop_family"]["blades"][0]["loops"][0]["segments"]
+
+    assert all(
+        not any(name in segment for name in ("degree", "knots", "weights"))
+        for segment in source_segments.values()
+    )
+    assert not any(
+        ":section:" in item["parameter_id"]
+        and any(token in item["parameter_id"] for token in (":degree", ":knots", ":weights"))
+        for item in contract["parameters"]
+    )
+
+
+def test_validator_rejects_mutated_canonical_and_join_parameter_evidence():
+    graph = graph_for()
+    parameter_ids = [
+        "hub.profile.knots.4",
+        "canonical.pose_field.control.0.0.value",
+        "canonical.thickness_field.weights",
+        next(
+            item["parameter_id"]
+            for item in graph["parameter_inspection"]["parameters"]
+            if ":join:" in item["parameter_id"] and item["parameter_id"].endswith(":tangent_angle_deg")
+        ),
+    ]
+
+    for parameter_id in parameter_ids:
+        malformed = deepcopy(graph["parameter_inspection"])
+        parameter = parameter_by_id(malformed, parameter_id)
+        if isinstance(parameter["resolved_value"], list):
+            parameter["resolved_value"] = deepcopy(parameter["resolved_value"])
+            parameter["resolved_value"][0] = deepcopy(parameter["resolved_value"][0])
+            if isinstance(parameter["resolved_value"][0], list):
+                parameter["resolved_value"][0][0] += 0.25
+            else:
+                parameter["resolved_value"][0] += 0.25
+            parameter["requested_value"] = deepcopy(parameter["resolved_value"])
+        else:
+            parameter["resolved_value"] = float(parameter["resolved_value"]) + 0.25
+            parameter["requested_value"] = parameter["resolved_value"]
+        assert validate_parameter_inspection_contract(graph, malformed) == [
+            {"reason": "parameter_inspection_contract_unsupported"}
+        ]
+
+
 def test_engineering_dimension_records_measure_generated_geometry_and_detect_mutation():
     graph = graph_for()
     contract = graph["parameter_inspection"]

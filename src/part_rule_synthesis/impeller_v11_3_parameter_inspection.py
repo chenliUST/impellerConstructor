@@ -607,6 +607,10 @@ def _engineering_parameters_match_source_geometry(
             parameter, scope, support_profiles
         ):
             return False
+        if "source_canonical_path" in scope and not _canonical_parameter_matches_source(
+            parameter, scope, surface_graph
+        ):
+            return False
         if parameter_id.endswith(".profile.degree") and not _profile_curve_matches_source(
             parameter, scope, support_profiles
         ):
@@ -645,9 +649,40 @@ def _engineering_parameters_match_source_geometry(
             return False
         if parameter_id.endswith("join_status") and not _join_status_matches_source(parameter, scope, surface_graph):
             return False
+        if "source_join_metric" in scope and not _loop_join_parameter_matches_source(
+            parameter, scope, surface_graph
+        ):
+            return False
         if parameter_id.endswith("root_offset") and not _root_offset_matches_source(parameter, scope, surface_graph):
             return False
     return True
+
+
+def _canonical_parameter_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surface_graph: Mapping[str, Any]
+) -> bool:
+    value: Any = surface_graph.get("canonical_nurbs_parameterization", {})
+    path = scope.get("source_canonical_path")
+    if not isinstance(path, list) or not path:
+        return False
+    try:
+        for part in path:
+            value = value[part] if isinstance(part, int) else value[str(part)]
+    except (KeyError, IndexError, TypeError):
+        return False
+    return parameter.get("requested_value") == value and parameter.get("resolved_value") == value
+
+
+def _loop_join_parameter_matches_source(
+    parameter: Mapping[str, Any], scope: Mapping[str, Any], surface_graph: Mapping[str, Any]
+) -> bool:
+    loop = _generated_loop(surface_graph, scope)
+    join_name = scope.get("source_join_name")
+    metric_name = scope.get("source_join_metric")
+    if loop is None or not isinstance(join_name, str) or not isinstance(metric_name, str):
+        return False
+    value = loop.get("join_metrics", {}).get(join_name, {}).get(metric_name)
+    return parameter.get("requested_value") == value and parameter.get("resolved_value") == value
 
 
 def _selected_feature_geometry(parameter: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -1474,6 +1509,34 @@ def _append_complete_engineering_parameters(
                     },
                 )
 
+        for field_name, unit in (("knots", "knot"), ("weights", "weight")):
+            values = profile.get(field_name)
+            if not isinstance(values, list):
+                continue
+            for index, value in enumerate(values):
+                append(
+                    parameter_id=f"{prefix}.{field_name}.{index}",
+                    group_id=group_id,
+                    label=f"{label} {field_name[:-1]} {index}",
+                    requested_value=value,
+                    resolved_value=value,
+                    unit=unit,
+                    applicable_views=["meridional"],
+                    feature_geometry=[{
+                        **copy.deepcopy(dict(profile)),
+                        "id": f"{prefix}.{field_name}.{index}:curve",
+                        "rendering_role": "selected_feature",
+                    }],
+                    dimension_definition=None,
+                    selection_scope={
+                        "support_profile_id": profile_id,
+                        "source_profile_id": profile_id,
+                        "source_canonical_path": ["support_profiles", profile_key, field_name, index],
+                    },
+                )
+
+    _append_canonical_field_parameters(parameters, canonical)
+
     surface_by_id = {
         surface.get("id"): surface
         for surface in surface_graph.get("surfaces", [])
@@ -1637,8 +1700,115 @@ def _append_complete_engineering_parameters(
                 },
             )
 
+        for join_name, metrics in loop.get("join_metrics", {}).items():
+            for metric_name, unit in (
+                ("position_gap_mm", "mm"),
+                ("tangent_angle_deg", "deg"),
+                ("normal_angle_deg", "deg"),
+                ("curvature_proxy_mismatch", "ratio"),
+                ("status", "status"),
+            ):
+                if metric_name not in metrics:
+                    continue
+                parameter_id = f"blade:{blade_id}:station:{station_id}:join:{join_name}:{metric_name}"
+                append(
+                    parameter_id=parameter_id,
+                    group_id="inspection_results",
+                    label=f"{join_name} {metric_name}",
+                    requested_value=metrics[metric_name],
+                    resolved_value=metrics[metric_name],
+                    unit=unit,
+                    applicable_views=["s_q"],
+                    feature_geometry=[{
+                        "kind": "polyline",
+                        "id": f"{parameter_id}:loop",
+                        "coordinate_system": "s_q_mm",
+                        "points": _section_loop_points(loop),
+                    }],
+                    dimension_definition=None,
+                    selection_scope={
+                        **scope,
+                        "source_join_name": join_name,
+                        "source_join_metric": metric_name,
+                    },
+                )
+
     _append_attachment_parameters(parameters, blade_instances, span_stations, section_loops, surface_by_id)
     _append_shroud_thickness_parameter(parameters, surface_by_id)
+
+
+def _append_canonical_field_parameters(
+    parameters: list[dict[str, Any]], canonical: Mapping[str, Any]
+) -> None:
+    def append(**kwargs: Any) -> None:
+        parameters.append(_inspection_parameter(order=len(parameters), **kwargs))
+
+    for field_name, group_id, label, value_axis, unit in (
+        ("blade_skeleton_field", "spanwise_pose", "Blade skeleton", 2, "mm"),
+        ("pose_field", "spanwise_pose", "Pose theta offset", 2, "deg"),
+        ("thickness_field", "section_loop", "Thickness distribution", 2, "mm"),
+    ):
+        field = canonical.get(field_name)
+        if not isinstance(field, Mapping):
+            continue
+        controls = field.get("control_points")
+        if not isinstance(controls, list):
+            continue
+        display_points = [
+            [float(point[0]), float(point[value_axis])]
+            for row in controls if isinstance(row, list)
+            for point in row if _coordinate_vector(point) and len(point) > value_axis
+        ]
+        if not display_points:
+            continue
+        feature = {
+            "kind": "polyline",
+            "id": "",
+            "coordinate_system": "s_q_mm",
+            "points": display_points,
+        }
+        for metadata_name in ("degree_u", "degree_v", "knots_u", "knots_v", "weights"):
+            if metadata_name not in field:
+                continue
+            value = field[metadata_name]
+            append(
+                parameter_id=f"canonical.{field_name}.{metadata_name}",
+                group_id=group_id,
+                label=f"{label} {metadata_name}",
+                requested_value=value,
+                resolved_value=value,
+                unit="degree" if metadata_name.startswith("degree") else "nurbs",
+                applicable_views=["s_q"],
+                feature_geometry=[{**feature, "id": f"canonical.{field_name}.{metadata_name}:net"}],
+                dimension_definition=None,
+                selection_scope={"source_canonical_path": [field_name, metadata_name]},
+            )
+        for row_index, row in enumerate(controls):
+            if not isinstance(row, list):
+                continue
+            for column_index, point in enumerate(row):
+                if not _coordinate_vector(point) or len(point) <= value_axis:
+                    continue
+                coordinates = [float(point[0]), float(point[value_axis])]
+                append(
+                    parameter_id=f"canonical.{field_name}.control.{row_index}.{column_index}.value",
+                    group_id=group_id,
+                    label=f"{label} control {row_index},{column_index}",
+                    requested_value=point[value_axis],
+                    resolved_value=point[value_axis],
+                    unit=unit,
+                    applicable_views=["s_q"],
+                    feature_geometry=[{
+                        "kind": "control_point",
+                        "id": f"canonical.{field_name}.control.{row_index}.{column_index}:point",
+                        "coordinate_system": "s_q_mm",
+                        "coordinates": coordinates,
+                    }],
+                    dimension_definition=None,
+                    selection_scope={
+                        "source_canonical_path": [field_name, "control_points", row_index, column_index, value_axis]
+                    },
+                )
 
 
 def _coordinate_dimension(point: Sequence[float], axis_index: int, unit: str) -> dict[str, Any]:
