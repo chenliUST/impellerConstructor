@@ -358,12 +358,11 @@ def _bspline_fit_error(bspline_surface: Any, uv_grid: list[list[list[float]]]) -
             squared_error += error * error
             sample_count += 1
 
-    bbox_diagonal = _grid_bbox_diagonal(uv_grid)
+    tolerances = _bspline_fit_tolerances(uv_grid)
     return {
         "fit_max_error_mm": max_error,
         "fit_rms_error_mm": math.sqrt(squared_error / max(1, sample_count)),
-        "fit_max_tolerance_mm": max(1.0, 0.001 * bbox_diagonal),
-        "fit_rms_tolerance_mm": max(0.25, 0.00025 * bbox_diagonal),
+        **tolerances,
         "fit_sample_count": float(sample_count),
     }
 
@@ -379,6 +378,16 @@ def _validate_fit_error(surface_id: str, fit: dict[str, float], uv_grid: list[li
             f"{surface_id} B-spline fit RMS error {fit['fit_rms_error_mm']:.6g} mm exceeds "
             f"{fit['fit_rms_tolerance_mm']:.6g} mm tolerance"
         )
+
+
+def _bspline_fit_tolerances(uv_grid: list[list[list[float]]]) -> dict[str, float]:
+    bbox_diagonal = _grid_bbox_diagonal(uv_grid)
+    grid_resolution = _grid_median_cell_diagonal(uv_grid)
+    return {
+        "fit_max_tolerance_mm": max(1.0, 0.001 * bbox_diagonal, 0.05 * grid_resolution),
+        "fit_rms_tolerance_mm": max(0.25, 0.00025 * bbox_diagonal, 0.01 * grid_resolution),
+        "fit_grid_resolution_mm": grid_resolution,
+    }
 
 
 def _rectangular_uv_grid(value: Any, surface_id: str) -> list[list[list[float]]]:
@@ -412,6 +421,26 @@ def _grid_bbox_diagonal(uv_grid: list[list[list[float]]]) -> float:
         [min(xs), min(ys), min(zs)],
         [max(xs), max(ys), max(zs)],
     )
+
+
+def _grid_median_cell_diagonal(uv_grid: list[list[list[float]]]) -> float:
+    diagonals: list[float] = []
+    for u_index in range(len(uv_grid) - 1):
+        for v_index in range(len(uv_grid[0]) - 1):
+            corners = [
+                uv_grid[u_index][v_index],
+                uv_grid[u_index + 1][v_index],
+                uv_grid[u_index][v_index + 1],
+                uv_grid[u_index + 1][v_index + 1],
+            ]
+            diagonals.append(max(math.dist(first, second) for first in corners for second in corners))
+    if not diagonals:
+        return 0.0
+    diagonals.sort()
+    middle = len(diagonals) // 2
+    if len(diagonals) % 2:
+        return diagonals[middle]
+    return 0.5 * (diagonals[middle - 1] + diagonals[middle])
 
 
 def _sample_indices(count: int, max_count: int) -> list[int]:

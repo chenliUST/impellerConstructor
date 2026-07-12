@@ -12,6 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from part_rule_synthesis.service import IMPELLER_PRESETS, ONTOLOGY, PRIMITIVES, RuleSynthesisService
+from part_rule_synthesis.impeller_v11_5_engineering_drawing import (
+    build_engineering_drawing_contract,
+    engineering_drawing_view,
+    validate_engineering_drawing_contract,
+)
 
 
 class SynthesizeRequest(BaseModel):
@@ -28,6 +33,7 @@ class InstantiateRequest(BaseModel):
     blade_to_blade_loop_family_overrides: dict[str, Any] | None = None
     transition_overrides: dict[str, Any] | None = None
     geometry_stage: str = "full"
+    response_mode: str = "full"
 
 
 class FeedbackRequest(BaseModel):
@@ -42,6 +48,7 @@ def create_app(root: Path | None = None) -> FastAPI:
     if root is None:
         model_output_root = Path(os.environ.get("PART_RULE_SYNTHESIS_MODEL_OUTPUT_DIR", Path.cwd() / "Model Output"))
     service = RuleSynthesisService(service_root, model_output_root=model_output_root)
+    engineering_drawing_cache: dict[str, dict[str, Any]] = {}
     app = FastAPI(title="Part Rule Synthesis", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -67,6 +74,7 @@ def create_app(root: Path | None = None) -> FastAPI:
         return PRIMITIVES
 
     @app.get("/api/impeller-presets")
+    @app.get("/api/presets/impeller")
     def impeller_presets():
         return {
             "presets": [
@@ -92,6 +100,8 @@ def create_app(root: Path | None = None) -> FastAPI:
     @app.post("/api/rule-engines/{engine_id}/instantiate")
     def instantiate(engine_id: str, request: InstantiateRequest):
         try:
+            if request.response_mode not in {"full", "review_summary"}:
+                raise ValueError(f"unsupported instantiate response_mode: {request.response_mode}")
             run = service.instantiate(
                 engine_id,
                 request.parameters,
@@ -101,10 +111,18 @@ def create_app(root: Path | None = None) -> FastAPI:
                 blade_to_blade_loop_family_overrides=request.blade_to_blade_loop_family_overrides,
                 transition_overrides=request.transition_overrides,
                 geometry_stage=request.geometry_stage,
+                review_only=request.response_mode == "review_summary",
             )
-            return {"run_id": run.run_id, "manifest": run.manifest}
+            manifest = (
+                _review_manifest_summary(run.manifest)
+                if request.response_mode == "review_summary"
+                else run.manifest
+            )
+            return {"run_id": run.run_id, "manifest": manifest}
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            preset_id = service.engines.get(engine_id, {}).get("preset_id")
+            suffix = f" [preset_id={preset_id}]" if preset_id else ""
+            raise HTTPException(status_code=400, detail=f"{exc}{suffix}") from exc
 
     @app.get("/api/model-runs/{run_id}/manifest")
     def manifest(run_id: str):
@@ -112,6 +130,47 @@ def create_app(root: Path | None = None) -> FastAPI:
         if run is None:
             raise HTTPException(status_code=404, detail="unknown run")
         return run.manifest
+
+    def resolved_engineering_drawing(run_id: str):
+        run = service.runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="unknown run")
+        graph = run.manifest.get("geometry", {}).get("surface_graph", {})
+        if run.manifest.get("dsl_version") != "1.1" or not graph:
+            raise HTTPException(status_code=404, detail="engineering drawing unavailable")
+        contract = engineering_drawing_cache.get(run_id)
+        if contract is None:
+            contract = build_engineering_drawing_contract(
+                graph,
+                preset_id=run.manifest.get("preset_id"),
+            )
+            engineering_drawing_cache[run_id] = contract
+        failures = validate_engineering_drawing_contract(graph, contract)
+        if failures:
+            raise HTTPException(status_code=422, detail=failures)
+        return contract
+
+    @app.get("/api/model-runs/{run_id}/engineering-drawing")
+    def engineering_drawing(run_id: str):
+        return resolved_engineering_drawing(run_id)
+
+    @app.get("/api/model-runs/{run_id}/engineering-drawing/views/{view_id}")
+    def engineering_drawing_view_endpoint(run_id: str, view_id: str):
+        try:
+            return engineering_drawing_view(resolved_engineering_drawing(run_id), view_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown engineering drawing view: {view_id}") from exc
+
+    @app.get("/api/model-runs/{run_id}/engineering-drawing/construction-tables")
+    def engineering_drawing_construction_tables(run_id: str):
+        contract = resolved_engineering_drawing(run_id)
+        return {
+            "contract_version": contract["contract_version"],
+            "generation_id": contract["generation_id"],
+            "preset_id": contract["preset_id"],
+            "construction_tables": contract["construction_tables"],
+            "construction_parameter_registry": contract["construction_parameter_registry"],
+        }
 
     @app.get("/api/model-runs/{run_id}/exports/{export_format}")
     def export(run_id: str, export_format: str):
@@ -165,3 +224,27 @@ def create_app(root: Path | None = None) -> FastAPI:
 
 
 app = create_app()
+
+
+def _review_manifest_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    keys = {
+        "run_id",
+        "engine_id",
+        "part_family",
+        "preset_id",
+        "dsl_version",
+        "rule_version",
+        "geometry_version",
+        "geometry_patch_version",
+        "runtime_release_version",
+        "parameter_inspection_contract_version",
+        "generation_id",
+        "geometry_generation_status",
+        "geometry_validation_status",
+        "transition_geometry_status",
+        "mesh_strategy",
+        "facets",
+        "parameters",
+        "notice",
+    }
+    return {key: value for key, value in manifest.items() if key in keys}

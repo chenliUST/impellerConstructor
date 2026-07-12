@@ -69,6 +69,7 @@ def build_v11_surface_graph(
     del profile_defaults
     resolved_overrides = overrides or {}
     resolved_defaults = _merge_v11_profile_overrides(defaults, profile_overrides or {})
+    canonical = resolved_defaults.get("canonical_nurbs_parameterization")
     loop_family = build_v11_blade_to_blade_loop_family(
         parameters,
         resolved_defaults,
@@ -90,7 +91,7 @@ def build_v11_surface_graph(
         graph_failures = [*copy.deepcopy(failures), *_surface_failures(surfaces)]
     status = "PASS" if not graph_failures else "FAIL"
     topology_graph = build_v10_topology_graph(surfaces)
-    return {
+    graph = {
         "transition_geometry_status": TRANSITION_GEOMETRY_STATUS,
         "geometry_version": GEOMETRY_VERSION,
         "geometry_patch_version": GEOMETRY_PATCH_VERSION,
@@ -98,6 +99,13 @@ def build_v11_surface_graph(
         "mesh_strategy": MESH_STRATEGY,
         "source_kernel": SOURCE_KERNEL,
         "source_math_policy": "blade_to_blade_5_loop_shared_boundary_surface_family",
+        "math_parameterization": (
+            canonical.get("math_parameterization")
+            if isinstance(canonical, dict)
+            else "v1_1_2_canonical_nurbs_parameterization"
+        ),
+        "canonical_nurbs_parameterization": copy.deepcopy(canonical) if isinstance(canonical, dict) else {},
+        "canonical_metrics": copy.deepcopy(canonical.get("metrics", {})) if isinstance(canonical, dict) else {},
         "surface_graph_status": status,
         "surfaces": surfaces,
         "edges": [],
@@ -120,6 +128,14 @@ def build_v11_surface_graph(
         "sampled_blades": copy.deepcopy(loop_family.get("blades", [])),
         "cad_features": [],
     }
+    from part_rule_synthesis.impeller_v11_3_parameter_inspection import (
+        build_parameter_inspection_contract,
+    )
+
+    inspection = build_parameter_inspection_contract(graph)
+    graph["generation_id"] = inspection["generation_id"]
+    graph["parameter_inspection"] = inspection
+    return graph
 
 
 def _merge_v11_profile_overrides(defaults: dict[str, Any], profile_overrides: dict[str, Any]) -> dict[str, Any]:

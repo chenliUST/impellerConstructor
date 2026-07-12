@@ -68,6 +68,11 @@ export function curveControlsForPreset(presetRef) {
   return clonePlainObject(preset?.curveControls || v10SectionLoopCurveControls());
 }
 
+export function canonicalParameterizationForPreset(presetRef) {
+  const preset = resolvePresetReference(presetRef);
+  return clonePlainObject(preset?.canonicalNurbsParameterization || {});
+}
+
 export function editorVisibilityForPreset(presetRef) {
   const preset = resolvePresetReference(presetRef);
   const presetId = String(preset?.presetId || preset?.id || "");
@@ -211,14 +216,14 @@ function v11ProfileOverrides() {
 function v11OpenReferenceProfileOverrides() {
   return axialProfileOverrides(
     [[150, 400], [170, 250], [220, 150], [330, 50], [480, 10], [580, 0]],
-    [[300, 407], [320, 305], [350, 218], [400, 130], [490, 70], [581, 34]],
+    [[300, 430], [325, 340], [365, 260], [430, 190], [520, 140], [581, 110]],
   );
 }
 
 function v11ClosedReferenceProfileOverrides() {
   return axialProfileOverrides(
     [[180, 300], [210, 220], [270, 145], [380, 75], [500, 24], [610, 0]],
-    [[260, 306], [290, 240], [350, 165], [450, 95], [540, 50], [615, 34]],
+    [[270, 330], [300, 290], [350, 240], [450, 170], [555, 140], [635, 110]],
   );
 }
 
@@ -300,14 +305,56 @@ function v111Metadata() {
   };
 }
 
+function v112CanonicalFromPreset({ parameters, profileOverrides, loopFamilyDefaults }) {
+  const hub = profileOverrides?.hub_profile?.control_points || [];
+  const tip = profileOverrides?.tip_or_shroud_profile?.control_points || [];
+  return {
+    canonical_payload_version: "1.1.2",
+    math_parameterization: "v1_1_2_canonical_nurbs_parameterization",
+    canonical_input_source: "translated_from_legacy_v1_1",
+    support_profiles: {
+      hub_profile: profile(hub),
+      tip_or_shroud_profile: profile(tip),
+    },
+    active_span_policy: {
+      root_offset: {
+        mode: "thickness_ratio",
+        resolved_constant_mm: loopFamilyDefaults.root_attachment_lift_mm || parameters.root_fillet_radius_mm || 0,
+      },
+      tip_offset: {
+        mode: "closed_shroud_thickness_ratio_or_open_zero",
+        resolved_constant_mm: loopFamilyDefaults.shroud_blade_inset_mm || 0,
+      },
+    },
+    blade_population: { ...loopFamilyDefaults },
+    section_loop_family: {
+      mode: "skeleton_thickness_caps",
+      span_stations_h: loopFamilyDefaults.span_stations_h || [0, 0.25, 0.5, 0.75, 1],
+    },
+  };
+}
+
+function withV112CanonicalPreset(preset) {
+  return {
+    ...preset,
+    geometryPatchVersion: "1.1.2",
+    metadata: {
+      ...v111Metadata(),
+      geometryPatchVersion: "1.1.2",
+      mathParameterization: "v1_1_2_canonical_nurbs_parameterization",
+    },
+    canonicalNurbsParameterization: v112CanonicalFromPreset(preset),
+  };
+}
+
 export const presets = [
   {
     id: "axisymmetric-nurbs-open-throughflow",
     presetId: "radial_open_reference_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "Topology first open throughflow v1.1",
-    summary: "Open impeller: V1.1.1 representative throughflow preset aligned with the backend main and splitter population contract.",
-    tags: ["open", "topology-first", "v1.1", "representative"],
+    name: "Topology first open throughflow V1.1.5",
+    summary: "Open impeller: runtime V1.1.5 engineering-drawing review over canonical V1.1.2 geometry.",
+    tags: ["open", "topology-first", "v1.1.5", "representative"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -359,9 +406,9 @@ export const presets = [
     id: "axisymmetric-nurbs-closed-throughflow",
     presetId: "radial_closed_reference_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "Topology first closed throughflow v1.1",
-    summary: "Closed impeller: V1.1.1 representative throughflow preset aligned with the backend closed-loop population contract.",
-    tags: ["closed", "topology-first", "v1.1", "representative"],
+    name: "Topology first closed throughflow V1.1.5",
+    summary: "Closed impeller: runtime V1.1.5 engineering-drawing review over canonical V1.1.2 geometry.",
+    tags: ["closed", "topology-first", "v1.1.5", "representative"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -414,9 +461,9 @@ export const presets = [
     id: "public-nasa-stage37-stator-ring",
     presetId: "nasa_stage37_stator_ring_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "NASA Stage 37 stator ring v1.1",
-    summary: "Representative public axial stator-ring approximation migrated to the V1.1.1 blade-to-blade loop surface-family contract.",
-    tags: ["public-data", "axial", "stator", "stage37", "v1.1"],
+    name: "NASA Stage 37 stator ring V1.1.5",
+    summary: "Representative public axial stator-ring approximation in the V1.1.5 engineering-drawing review runtime.",
+    tags: ["public-data", "axial", "stator", "stage37", "v1.1.5"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -479,9 +526,9 @@ export const presets = [
     id: "public-rr-ultrafan-cti-fan",
     presetId: "rr_ultrafan_cti_fan_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "RR UltraFan CTi fan v1.1",
-    summary: "Representative public UltraFan CTi fan approximation migrated to the V1.1.1 blade-to-blade loop surface-family contract.",
-    tags: ["public-data", "axial", "fan", "ultrafan", "v1.1"],
+    name: "RR UltraFan CTi fan V1.1.5",
+    summary: "Representative public UltraFan CTi fan approximation in the V1.1.5 engineering-drawing review runtime.",
+    tags: ["public-data", "axial", "fan", "ultrafan", "v1.1.5"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -543,9 +590,9 @@ export const presets = [
     id: "public-liquid-rocket-turbopump-inducer",
     presetId: "public_rocket_turbopump_inducer_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "Public rocket turbopump inducer v1.1",
-    summary: "Representative public liquid-rocket turbopump inducer approximation migrated to the V1.1.1 blade-to-blade loop surface-family contract.",
-    tags: ["public-data", "axial", "inducer", "pump", "v1.1"],
+    name: "Public rocket turbopump inducer V1.1.5",
+    summary: "Representative public liquid-rocket turbopump inducer approximation in the V1.1.5 engineering-drawing review runtime.",
+    tags: ["public-data", "axial", "inducer", "pump", "v1.1.5"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -603,7 +650,7 @@ export const presets = [
       [[0, 2.5], [0.45, 2.1], [1, 1.2]],
     ),
   },
-].sort((left, right) => presetDisplayRank(left) - presetDisplayRank(right));
+].map(withV112CanonicalPreset).sort((left, right) => presetDisplayRank(left) - presetDisplayRank(right));
 
 function presetDisplayRank(preset) {
   const preferredOrder = {
@@ -651,6 +698,10 @@ export function buildInstantiatePayload(
     payload.blade_to_blade_loop_family_overrides = bladeToBladeLoopFamilyOverrides;
   }
   return payload;
+}
+
+export function buildPresetInstantiatePayload(geometryStage = "edge_closures") {
+  return { parameters: {}, geometry_stage: geometryStage };
 }
 
 export function buildSynthesizePayload(preset) {

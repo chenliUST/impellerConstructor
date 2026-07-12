@@ -4,7 +4,9 @@
   "display_name": "Radial closed reference v1.1",
   "summary": "Closed radial throughflow impeller using topology-first blade-to-blade loop surface-family defaults.",
   "geometry_version": "1.1",
-  "geometry_patch_version": "1.1.1",
+  "geometry_patch_version": "1.1.2",
+  "math_parameterization": "v1_1_2_canonical_nurbs_parameterization",
+  "canonical_input_source": "translated_from_legacy_v1_1",
   "mesh_strategy": "v1_1_1_all_surface_uv_grid_mesh",
   "transition_geometry_status": "topology_first_blade_to_blade_5_loop_surface_family_graph",
   "constructor_id": "axisymmetric_throughflow_radial_closed_impeller_v1_1",
@@ -50,9 +52,10 @@
     "maximum_blade_thickness_mm": 26.0,
     "average_blade_thickness_mm": 22.0,
     "root_attachment_width_mm": 22.0,
-    "root_attachment_lift_mm": 22.0,
-    "root_blade_lift_mm": 22.0,
-    "shroud_blade_inset_mm": 22.0,
+    "root_attachment_lift_mm": 19.0,
+    "root_blade_lift_mm": 19.0,
+    "shroud_blade_inset_mm": 24.0,
+    "shroud_attachment_width_mm": 28.0,
     "main_flow_turn_q_mm": 160.0,
     "splitter_flow_turn_q_mm": 0.0,
     "spanwise_flow_turn_delta_q_mm": 32.0,
@@ -73,8 +76,10 @@
       "trailing_edge": 13
     },
     "hub_profile_rz_mm": [[180, 300], [210, 220], [270, 145], [380, 75], [500, 24], [610, 0]],
-    "tip_or_shroud_profile_rz_mm": [[260, 306], [290, 240], [350, 165], [450, 95], [540, 50], [615, 34]],
-    "blade_hub_angle_contract_deg": [60.0, 120.0]
+    "tip_or_shroud_profile_rz_mm": [[270, 330], [300, 290], [350, 240], [450, 170], [555, 140], [635, 110]],
+    "blade_hub_angle_contract_deg": [60.0, 120.0],
+    "minimum_active_blade_height_mm": 55.0,
+    "enforce_support_profile_contract": true
   },
   "editable_parameters": [
     "mounting_bore_radius_mm",

@@ -8,6 +8,7 @@ from part_rule_synthesis.impeller_bounded_brep_export import (
     DIAGNOSTIC_BOUNDED_UNSEWN_EXACTNESS,
     FINITE_REIMPORT_BBOX_MAX_SPAN_MM,
     _bbox_passes_exactness_gate,
+    _bspline_fit_tolerances,
     bounded_step_contains_no_unbounded_plane_marker,
     make_annular_plane_face,
     reimport_step_bbox,
@@ -165,6 +166,20 @@ def test_write_bounded_brep_step_reimported_bounds_stay_near_outer_radius(tmp_pa
     assert bbox["y_span_mm"] <= 310.0
     assert bbox["z_span_mm"] <= 1.0
     assert all(math.isfinite(value) for value in bbox.values())
+
+
+def test_bspline_fit_tolerance_uses_sample_grid_resolution_for_large_review_surfaces():
+    grid = [
+        [[0.0, 0.0, 0.0], [0.0, 100.0, 4.0], [0.0, 200.0, 0.0]],
+        [[100.0, 0.0, 10.0], [100.0, 100.0, 25.0], [100.0, 200.0, 10.0]],
+        [[200.0, 0.0, 0.0], [200.0, 100.0, 4.0], [200.0, 200.0, 0.0]],
+    ]
+
+    tolerances = _bspline_fit_tolerances(grid)
+
+    assert tolerances["fit_grid_resolution_mm"] > 100.0
+    assert tolerances["fit_max_tolerance_mm"] == pytest.approx(0.05 * tolerances["fit_grid_resolution_mm"])
+    assert tolerances["fit_rms_tolerance_mm"] == pytest.approx(0.01 * tolerances["fit_grid_resolution_mm"])
 
 
 def test_write_bounded_brep_step_uses_surface_graph_id_when_id_is_missing(tmp_path: Path):

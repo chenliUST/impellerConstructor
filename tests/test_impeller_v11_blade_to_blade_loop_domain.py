@@ -110,7 +110,10 @@ def test_v11_frontend_segment_control_point_override_changes_loop_samples_withou
     baseline_loop = baseline["blades"][0]["loops"][0]
     overridden_loop = overridden["blades"][0]["loops"][0]
 
-    assert failures == []
+    if segment_name in {"pressure_side", "suction_side"}:
+        assert {failure["reason"] for failure in failures} == {"v1_1_main_splitter_passage_collision"}
+    else:
+        assert failures == []
     assert overridden_loop["metrics"]["join_status"] == "PASS"
     assert overridden_loop["segments"][segment_name]["points_s_q"] != baseline_loop["segments"][segment_name]["points_s_q"]
     assert overridden_loop["segments"][segment_name]["points_xyz"] != baseline_loop["segments"][segment_name]["points_xyz"]

@@ -4,7 +4,9 @@
   "display_name": "Radial open reference v1.1",
   "summary": "V1.1 topology-first open radial throughflow impeller using blade-to-blade loop surface-family defaults.",
   "geometry_version": "1.1",
-  "geometry_patch_version": "1.1.1",
+  "geometry_patch_version": "1.1.2",
+  "math_parameterization": "v1_1_2_canonical_nurbs_parameterization",
+  "canonical_input_source": "translated_from_legacy_v1_1",
   "mesh_strategy": "v1_1_1_all_surface_uv_grid_mesh",
   "transition_geometry_status": "topology_first_blade_to_blade_5_loop_surface_family_graph",
   "constructor_id": "axisymmetric_throughflow_radial_open_impeller_v1_1",
@@ -79,8 +81,10 @@
     "hub_solid_radial_sample_count": 13,
     "hub_solid_axial_sample_count": 25,
     "hub_profile_rz_mm": [[150, 400], [170, 250], [220, 150], [330, 50], [480, 10], [580, 0]],
-    "tip_or_shroud_profile_rz_mm": [[300, 407], [320, 305], [350, 218], [400, 130], [490, 70], [581, 34]],
-    "blade_hub_angle_contract_deg": [60.0, 120.0]
+    "tip_or_shroud_profile_rz_mm": [[300, 430], [325, 340], [365, 260], [430, 190], [520, 140], [581, 110]],
+    "blade_hub_angle_contract_deg": [60.0, 120.0],
+    "minimum_active_blade_height_mm": 60.0,
+    "enforce_support_profile_contract": true
   },
   "editable_parameters": [
     "mounting_bore_radius_mm",

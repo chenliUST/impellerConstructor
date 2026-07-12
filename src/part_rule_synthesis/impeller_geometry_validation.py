@@ -167,7 +167,7 @@ def build_geometry_validation_report(
                 },
             ]
         )
-    if graph.get("geometry_patch_version") in {"1.1.0", "1.1.1"}:
+    if graph.get("geometry_patch_version") in {"1.1.0", "1.1.1", "1.1.2"}:
         checks.extend(
             [
                 {

@@ -26,7 +26,10 @@ def _graph(preset_id: str = "radial_open_reference_v1_1") -> dict[str, object]:
     return build_v11_surface_graph(
         runtime["parameters"],
         runtime["facets"],
-        runtime["resolved_blade_to_blade_loop_family_defaults"],
+        {
+            **runtime["resolved_blade_to_blade_loop_family_defaults"],
+            "canonical_nurbs_parameterization": runtime["canonical_nurbs_parameterization"],
+        },
     )
 
 
@@ -34,6 +37,7 @@ def _v1_1_carrier(runtime: dict[str, object]) -> dict[str, object]:
     return {
         "geometry_patch_version": runtime["geometry_patch_version"],
         "resolved_blade_to_blade_loop_family_defaults": runtime["resolved_blade_to_blade_loop_family_defaults"],
+        "canonical_nurbs_parameterization": runtime["canonical_nurbs_parameterization"],
     }
 
 
@@ -41,7 +45,7 @@ def test_v11_generates_six_named_face_families_per_open_blade():
     graph = _graph()
 
     assert graph["geometry_version"] == "1.1"
-    assert graph["geometry_patch_version"] == "1.1.1"
+    assert graph["geometry_patch_version"] == "1.1.2"
     assert graph["surface_graph_status"] == "PASS"
 
     first_blade = [
@@ -132,7 +136,10 @@ def test_v11_hub_support_is_full_profile_revolve_surface():
     graph = build_v11_surface_graph(
         runtime["parameters"],
         runtime["facets"],
-        runtime["resolved_blade_to_blade_loop_family_defaults"],
+        {
+            **runtime["resolved_blade_to_blade_loop_family_defaults"],
+            "canonical_nurbs_parameterization": runtime["canonical_nurbs_parameterization"],
+        },
     )
     defaults = runtime["resolved_blade_to_blade_loop_family_defaults"]
     hub = next(surface for surface in graph["surfaces"] if surface["id"] == "hub_support_surface")
@@ -161,7 +168,10 @@ def test_v11_hub_is_explicit_solid_with_bottom_thickness_and_mounting_bore():
     graph = build_v11_surface_graph(
         runtime["parameters"],
         runtime["facets"],
-        runtime["resolved_blade_to_blade_loop_family_defaults"],
+        {
+            **runtime["resolved_blade_to_blade_loop_family_defaults"],
+            "canonical_nurbs_parameterization": runtime["canonical_nurbs_parameterization"],
+        },
     )
     surfaces = {surface["id"]: surface for surface in graph["surfaces"]}
     parameters = runtime["parameters"]
@@ -237,7 +247,7 @@ def test_v10_surface_graph_routes_explicit_v1_1_request():
     )
 
     assert graph["geometry_version"] == "1.1"
-    assert graph["geometry_patch_version"] == "1.1.1"
+    assert graph["geometry_patch_version"] == "1.1.2"
     assert graph["surface_graph_status"] == "PASS"
     assert "open_tip_dome" in {surface["role"] for surface in graph["surfaces"]}
 
