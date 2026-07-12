@@ -39,6 +39,25 @@ def _validate_loop_family_invariants(loop_family: Mapping[str, Any]) -> list[dic
     expected_defaults, default_failures = _resolved_blade_graph_defaults(loop_family)
     failures.extend(default_failures)
     failures.extend(_validate_blade_graph_invariants(loop_family.get("blades", []), expected_defaults))
+    metrics = loop_family.get("metrics")
+    if isinstance(metrics, Mapping) and metrics.get("splitter_positioning_status") == "FAIL":
+        failures.append(
+            _failure(
+                "v1_1_main_splitter_passage_collision",
+                minimum_fraction=metrics.get("splitter_passage_fraction_min"),
+                maximum_fraction=metrics.get("splitter_passage_fraction_max"),
+            )
+        )
+    support_metrics = loop_family.get("support_profile_contract_metrics")
+    if isinstance(support_metrics, Mapping) and support_metrics.get("status") == "FAIL":
+        failures.append(
+            _failure(
+                "v1_1_4_support_profile_contract_failed",
+                minimum_angle_deg=support_metrics.get("minimum_angle_deg"),
+                maximum_angle_deg=support_metrics.get("maximum_angle_deg"),
+                minimum_active_blade_height_mm=support_metrics.get("minimum_active_blade_height_mm"),
+            )
+        )
     return failures
 
 

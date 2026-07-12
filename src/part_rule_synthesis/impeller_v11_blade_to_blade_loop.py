@@ -70,6 +70,7 @@ def build_v11_blade_to_blade_loop_family(
         )
     )
     splitter_passage_metrics = _splitter_passage_fraction_metrics(values, blades)
+    support_profile_metrics = _support_profile_contract_metrics(values)
     family = {
         "status": "PASS",
         "loop_family_id": values["loop_family_id"],
@@ -78,6 +79,7 @@ def build_v11_blade_to_blade_loop_family(
         "span_stations_h": copy.deepcopy(values["span_stations_h"]),
         "canonical_nurbs_parameterization": copy.deepcopy(values.get("canonical_nurbs_parameterization")),
         "active_span_policy_metrics": active_span_policy_metrics,
+        "support_profile_contract_metrics": support_profile_metrics,
         "segment_control_count_minimums": copy.deepcopy(values["segment_control_count_minimums"]),
         "resolved_defaults": {
             "main_streamwise_interval_s": copy.deepcopy(values["main_streamwise_interval_s"]),
@@ -105,9 +107,47 @@ def build_v11_blade_to_blade_loop_family(
                 if loop["metrics"]["join_status"] != "PASS"
             ),
             **splitter_passage_metrics,
+            "support_profile_contract_status": support_profile_metrics["status"],
         },
     }
     return family
+
+
+def _support_profile_contract_metrics(values: Mapping[str, Any]) -> dict[str, Any]:
+    if not values.get("enforce_support_profile_contract"):
+        return {"status": "NOT_APPLICABLE"}
+    interval = values["main_streamwise_interval_s"]
+    lower, upper = [float(value) for value in values["blade_hub_angle_contract_deg"]]
+    minimum_height = float(values["minimum_active_blade_height_mm"])
+    root_offset, tip_offset = _resolved_active_span_offsets(values)
+    angles: list[float] = []
+    active_heights: list[float] = []
+    for index in range(17):
+        s = _lerp(float(interval[0]), float(interval[1]), index / 16.0)
+        hub = _profile_sample(values["hub_profile_rz_mm"], s)
+        tip = _profile_sample(values["tip_or_shroud_profile_rz_mm"], s)
+        before = _profile_sample(values["hub_profile_rz_mm"], max(0.0, s - 1.0e-4))
+        after = _profile_sample(values["hub_profile_rz_mm"], min(1.0, s + 1.0e-4))
+        tangent = _point_diff(after, before)
+        span = _point_diff(tip, hub)
+        denominator = _distance_2d([0.0, 0.0], tangent) * _distance_2d([0.0, 0.0], span)
+        cosine = sum(left * right for left, right in zip(tangent, span)) / max(denominator, 1.0e-12)
+        angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
+        active_heights.append(_distance_2d(hub, tip) - root_offset - tip_offset)
+    angle_min = min(angles)
+    angle_max = max(angles)
+    height_min = min(active_heights)
+    status = "PASS" if angle_min >= lower and angle_max <= upper and height_min >= minimum_height else "FAIL"
+    return {
+        "status": status,
+        "angle_definition": "span_direction_to_local_hub_meridional_tangent",
+        "angle_contract_deg": [lower, upper],
+        "minimum_angle_deg": _round(angle_min),
+        "maximum_angle_deg": _round(angle_max),
+        "minimum_active_blade_height_mm": _round(height_min),
+        "required_minimum_active_blade_height_mm": minimum_height,
+        "sample_count": len(angles),
+    }
 
 
 def _validated_defaults(
@@ -222,7 +262,13 @@ def _validated_defaults(
     if values["splitter_blade_count"] < 0:
         raise ValueError("splitter_blade_count must be zero or positive")
     if values["main_blade_count"] + values["splitter_blade_count"] != values["blade_count"]:
-        raise ValueError("blade_count must equal main_blade_count + splitter_blade_count")
+        raise ValueError(
+            "blade_count must equal main_blade_count + splitter_blade_count "
+            f"(received blade_count={values['blade_count']}; "
+            f"expected {values['main_blade_count'] + values['splitter_blade_count']} from "
+            f"main_blade_count={values['main_blade_count']} + "
+            f"splitter_blade_count={values['splitter_blade_count']})"
+        )
     if values["splitter_blade_count"] == 0:
         values["splitter_flow_turn_q_mm"] = 0.0
     if values["average_blade_thickness_mm"] <= 0.0:
@@ -551,10 +597,21 @@ def _sample_side_points(
     for index in range(sample_count):
         s_norm = index / max(sample_count - 1, 1)
         s = _lerp(s0, s1, s_norm)
-        canonical_camber_q = _sample_surface_q(skeleton_field, s_norm, h)
+        canonical_s = s_norm
+        if blade_class == "splitter" and values.get("splitter_positioning_mode") == "main_passage_bisector":
+            main_s0, main_s1 = values["main_streamwise_interval_s"]
+            canonical_s = max(0.0, min(1.0, (s - main_s0) / max(main_s1 - main_s0, 1.0e-9)))
+        canonical_camber_q = _sample_surface_q(skeleton_field, canonical_s, h)
         canonical_thickness = _sample_surface_q(thickness_field, s_norm, h)
         if canonical_camber_q is not None and canonical_thickness is not None:
             camber_q = canonical_camber_q
+            if blade_class == "splitter" and values.get("splitter_positioning_mode") == "main_passage_bisector":
+                blade_pitch_rad = 2.0 * math.pi / max(int(values["main_blade_count"]), 1)
+                pitch_arc_mm = _effective_radius_mm(values, s, h) * blade_pitch_rad
+                camber_q += (
+                    float(values["splitter_passage_fraction"])
+                    - float(values["splitter_phase_offset_pitch"])
+                ) * pitch_arc_mm
             local_thickness = max(1.0e-9, canonical_thickness)
         else:
             camber_q = _camber_q(

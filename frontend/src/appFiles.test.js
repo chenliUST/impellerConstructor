@@ -19,16 +19,16 @@ describe("frontend application files", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 
-    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.6"/);
-    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.6"/);
-    assert.match(appSource, /from "\.\/apiClient\.js\?v=1\.1\.5"/);
-    assert.match(appSource, /from "\.\/appModel\.js\?v=1\.1\.5"/);
+    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.7"/);
+    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.7"/);
+    assert.match(appSource, /from "\.\/apiClient\.js\?v=1\.1\.9"/);
+    assert.match(appSource, /from "\.\/appModel\.js\?v=1\.1\.8"/);
     assert.match(appSource, /from "\.\/workspaceModel\.js\?v=1\.1\.5"/);
-    assert.match(appSource, /from "\.\/components\/ModelViewer\.js\?v=1\.1\.5"/);
-    assert.match(appSource, /from "\.\/components\/ParameterInspectionWorkspace\.js\?v=1\.1\.7"/);
+    assert.match(appSource, /from "\.\/components\/ModelViewer\.js\?v=1\.1\.8"/);
+    assert.match(appSource, /from "\.\/components\/ReviewEngineeringDrawing\.js\?v=1\.1\.5\.1"/);
     assert.match(viewerSource, /from "\.\.\/meshOverlayModel\.js\?v=1\.1\.5"/);
     assert.match(viewerSource, /from "\.\.\/workspaceModel\.js\?v=1\.1\.5"/);
-    assert.match(readFileSync(resolve(root, "src/apiClient.js"), "utf-8"), /from "\.\/appModel\.js\?v=1\.1\.5"/);
+    assert.match(readFileSync(resolve(root, "src/apiClient.js"), "utf-8"), /from "\.\/appModel\.js\?v=1\.1\.9"/);
     assert.match(
       readFileSync(resolve(root, "src/workspaceModel.js"), "utf-8"),
       /from "\.\/meshOverlayModel\.js\?v=1\.1\.5"/,
@@ -102,7 +102,7 @@ describe("frontend application files", () => {
     assert.match(appSource, /useState\(false\)/);
   });
 
-  test("viewer exposes mesh overlay layers for CFD360 mesh inspection", () => {
+  test("viewer retains mesh rendering internals without exposing the removed CFD workspace", () => {
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const panelSource = readFileSync(resolve(root, "src/components/MeshInspectionPanel.js"), "utf-8");
@@ -110,9 +110,8 @@ describe("frontend application files", () => {
     const workspaceSource = readFileSync(resolve(root, "src/workspaceModel.js"), "utf-8");
 
     assert.match(viewerSource, /meshOverlayMode\s*=\s*"triangle_edges"/);
-    assert.match(appSource, /meshOverlayMode/);
-    assert.match(appSource, /setMeshOverlayMode/);
-    assert.match(appSource, /meshOverlayMode,\s*setMeshOverlayMode,/);
+    assert.match(appSource, /meshOverlayMode: "triangle_edges"/);
+    assert.doesNotMatch(appSource, /MeshInspectionPanel|workspace-mesh/);
     assert.match(viewerSource, /meshOverlayOptions/);
     assert.match(viewerSource, /WireframeGeometry/);
     assert.match(viewerSource, /createSurfaceGraphGroup\(\s*visibleSurfaceGraph,\s*bounds\.center,\s*simulationViewMode,\s*selectedSurfaceIds,\s*activeMeshOverlayMode,\s*manifest,\s*\)/);
@@ -311,27 +310,26 @@ describe("frontend application files", () => {
     assert.match(manifestSource, /surface_graph_status/);
   });
 
-  test("application exposes geometry layer controls to the model viewer", () => {
+  test("application uses stable default layers without an active layer editor", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const panelSource = readFileSync(resolve(root, "src/components/GeometryLayerPanel.js"), "utf-8");
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
 
-    assert.match(appSource, /GeometryLayerPanel/);
-    assert.match(appSource, /visibleLayers/);
+    assert.doesNotMatch(appSource, /GeometryLayerPanel/);
+    assert.match(appSource, /visibleLayers: defaultVisibleLayers/);
     assert.match(panelSource, /layerSchema/);
     assert.match(viewerSource, /layerForSurface/);
     assert.match(viewerSource, /layerForConstructionFeature/);
   });
 
-  test("application includes cfd simulation inspection view controls", () => {
+  test("application omits cfd simulation inspection controls", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
     const cfdPanelSource = readFileSync(resolve(root, "src/components/CfdManifestPanel.js"), "utf-8");
     const manifestPanelSource = readFileSync(resolve(root, "src/components/ManifestPanel.js"), "utf-8");
 
-    assert.match(appSource, /simulationViewMode/);
-    assert.match(appSource, /CfdManifestPanel/);
-    assert.match(appSource, /h\(ManifestPanel,\s*\{[\s\S]*before:\s*h\(CfdManifestPanel,/);
+    assert.match(appSource, /simulationViewMode: "cad_review_360"/);
+    assert.doesNotMatch(appSource, /CfdManifestPanel|ManifestPanel/);
     assert.match(viewerSource, /surfaceVisibleInView/);
     assert.match(viewerSource, /patchSurfaceIds/);
     assert.match(cfdPanelSource, /cfdPatchGroups/);
@@ -339,7 +337,7 @@ describe("frontend application files", () => {
     assert.match(manifestPanelSource, /before/);
   });
 
-  test("application includes curve editors and staged generation controls", () => {
+  test("legacy editor files remain historical but the active application does not import them", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
 
     for (const file of [
@@ -356,23 +354,14 @@ describe("frontend application files", () => {
       assert.equal(existsSync(resolve(root, file)), true, `${file} should exist`);
     }
 
-    assert.match(appSource, /profileOverrides/);
-    assert.match(appSource, /curveOverrides/);
-    assert.match(appSource, /CurveControlPanel/);
-    assert.match(appSource, /transitionOverrides/);
-    assert.match(appSource, /geometryStage/);
-    assert.match(appSource, /GenerationStagePanel/);
-    assert.match(appSource, /EdgeTreatmentPanel/);
+    assert.doesNotMatch(appSource, /curveOverrides|CurveControlPanel|transitionOverrides|geometryStage|GenerationStagePanel|EdgeTreatmentPanel/);
   });
 
-  test("application gates legacy editors off for V1.1 while keeping profile and curve-control panels", () => {
+  test("application has no editor visibility branch in preset-only review mode", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
 
-    assert.match(appSource, /editorVisibilityForPreset/);
-    assert.match(appSource, /editorVisibility\.edgeTreatmentPanel[\s\S]*EdgeTreatmentPanel/);
-    assert.match(appSource, /editorVisibility\.bladeCurveEditor[\s\S]*BladeCurveEditor/);
-    assert.match(appSource, /ProfileCurveEditor/);
-    assert.match(appSource, /CurveControlPanel/);
+    assert.doesNotMatch(appSource, /editorVisibilityForPreset|ProfileCurveEditor|BladeCurveEditor|CurveControlPanel/);
+    assert.match(appSource, /WORKSPACES/);
   });
 
   test("curve editors expose engineering-unit numeric control-point inputs", () => {
@@ -392,30 +381,28 @@ describe("frontend application files", () => {
     assert.match(styles, /curve-control-table/);
   });
 
-  test("application includes CFD manifest panel and simulation view model", () => {
+  test("application removes CFD and feature-debug panels from the active shell", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const modelSource = readFileSync(resolve(root, "src/simulationViewModel.js"), "utf-8");
 
-    assert.match(appSource, /CfdManifestPanel/);
-    assert.match(modelSource, /cfdPatchGroups/);
-    assert.match(modelSource, /surfaceVisibleInView/);
+    assert.doesNotMatch(appSource, /CfdManifestPanel|MeshInspectionPanel|feature_debug|cfd_full_360/);
+    assert.match(modelSource, /engineering_drawing/);
   });
 
-  test("application removes the text-only parameter panel and declares its inspection model", () => {
+  test("application is preset-only and has no active parameter editors", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
-    const simulationSource = readFileSync(resolve(root, "src/simulationViewModel.js"), "utf-8");
 
-    assert.equal(existsSync(resolve(root, "src/parameterInspectionModel.js")), true);
-    assert.doesNotMatch(appSource, /Parameter views/);
-    assert.match(simulationSource, /parameter_inspection/);
+    assert.doesNotMatch(appSource, /ParameterPanel|CurveControlPanel|EdgeTreatmentPanel|ProfileCurveEditor|BladeCurveEditor/);
+    assert.match(appSource, /instantiatePresetImpeller\(/);
+    assert.match(appSource, /review_summary/);
+    assert.doesNotMatch(appSource, /instantiateImpeller\(apiBase, synthesized\.engine_id, \{\}\)/);
   });
 
-  test("application routes parameter inspection through the integrated workspace", () => {
+  test("application routes the full workspace through CAD review and engineering drawing", () => {
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
 
-    assert.match(appSource, /simulationViewMode === "parameter_inspection"/);
-    assert.match(appSource, /h\(ParameterInspectionWorkspace/);
+    assert.match(appSource, /ReviewEngineeringDrawing/);
     assert.match(appSource, /h\(ModelViewer/);
-    assert.doesNotMatch(appSource, /ParameterViewsPanel/);
+    assert.doesNotMatch(appSource, /ParameterInspectionWorkspace/);
   });
 });

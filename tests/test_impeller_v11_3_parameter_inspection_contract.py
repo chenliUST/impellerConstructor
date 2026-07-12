@@ -41,7 +41,7 @@ def graph_for(preset_id="radial_open_reference_v1_1", edits=None):
 def test_contract_has_release_and_geometry_provenance():
     graph = graph_for()
     contract = graph["parameter_inspection"]
-    assert contract["contract_version"] == "1.1.3"
+    assert contract["contract_version"] == "1.1.4"
     assert contract["source_geometry_patch_version"] == "1.1.2"
     assert contract["source_canonical_payload_version"] == "1.1.2"
     assert contract["generation_id"] == graph["generation_id"]
@@ -201,5 +201,5 @@ def test_control_point_ids_are_authoritative_unique_and_stable_under_reorder():
 def test_all_active_presets_emit_contracts():
     for preset_id in ACTIVE_PRESETS:
         graph = graph_for(preset_id)
-        assert graph["parameter_inspection"]["contract_version"] == "1.1.3", preset_id
+        assert graph["parameter_inspection"]["contract_version"] == "1.1.4", preset_id
         assert graph["parameter_inspection"]["blade_instances"], preset_id

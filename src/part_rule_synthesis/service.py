@@ -142,6 +142,7 @@ class RuleSynthesisService:
         blade_to_blade_loop_family_overrides: dict[str, Any] | None = None,
         transition_overrides: dict[str, Any] | None = None,
         geometry_stage: str = "full",
+        review_only: bool = False,
     ) -> ModelRun:
         dsl = self._engine(engine_id)
         is_v11_impeller = dsl["part_family"] == "impeller" and _dsl_version(dsl) == "1.1"
@@ -230,7 +231,7 @@ class RuleSynthesisService:
             edge_families=edge_families,
             transition_policies=transition_policies,
         )
-        exports, export_manifests = _write_exports(
+        exports, export_manifests = ({}, {}) if review_only else _write_exports(
             run_dir,
             dsl["part_family"],
             bound,
@@ -253,7 +254,7 @@ class RuleSynthesisService:
                 cfd_view,
                 blade_count=int(bound.get("blade_count", 0)),
             )
-        if dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.6", "0.7", "0.8", "0.9", "1.0", "1.1"}:
+        if not review_only and dsl["part_family"] == "impeller" and _dsl_version(dsl) in {"0.6", "0.7", "0.8", "0.9", "1.0", "1.1"}:
             surface_graph_for_mesh = geometry_metadata.get("surface_graph", {})
             if _is_deferred_v10_3_surface_graph(surface_graph_for_mesh):
                 deferred_reason = _section_loop_deferred_reason(surface_graph_for_mesh)
@@ -346,9 +347,9 @@ class RuleSynthesisService:
         if manifest["dsl_version"] == "1.1":
             manifest["geometry_version"] = surface_graph.get("geometry_version")
             manifest["geometry_patch_version"] = surface_graph.get("geometry_patch_version")
-            manifest["runtime_release_version"] = dsl.get("runtime_release_version", "1.1.3")
+            manifest["runtime_release_version"] = dsl.get("runtime_release_version", "1.1.5")
             manifest["parameter_inspection_contract_version"] = dsl.get(
-                "parameter_inspection_contract_version", "1.1.3"
+                "parameter_inspection_contract_version", "1.1.4"
             )
             manifest["parameter_inspection_capabilities"] = copy.deepcopy(
                 dsl.get("parameter_inspection_capabilities", [])
@@ -381,11 +382,12 @@ class RuleSynthesisService:
                 normalized_profile_overrides,
                 dsl.get("feature_states"),
             )
-        manifest_json = json.dumps(manifest, indent=2, sort_keys=True)
-        (run_dir / "manifest.json").write_text(manifest_json, encoding="utf-8")
-        manifest_copy = exports.get("manifest")
-        if manifest_copy:
-            Path(manifest_copy).write_text(manifest_json, encoding="utf-8")
+        if not review_only:
+            manifest_json = json.dumps(manifest, indent=2, sort_keys=True)
+            (run_dir / "manifest.json").write_text(manifest_json, encoding="utf-8")
+            manifest_copy = exports.get("manifest")
+            if manifest_copy:
+                Path(manifest_copy).write_text(manifest_json, encoding="utf-8")
         run = ModelRun(run_id=run_id, engine_id=engine_id, manifest=manifest)
         self.runs[run_id] = run
         return run

@@ -81,8 +81,10 @@
     "hub_solid_radial_sample_count": 13,
     "hub_solid_axial_sample_count": 25,
     "hub_profile_rz_mm": [[150, 400], [170, 250], [220, 150], [330, 50], [480, 10], [580, 0]],
-    "tip_or_shroud_profile_rz_mm": [[300, 407], [320, 305], [350, 218], [400, 130], [490, 70], [581, 34]],
-    "blade_hub_angle_contract_deg": [60.0, 120.0]
+    "tip_or_shroud_profile_rz_mm": [[300, 430], [325, 340], [365, 260], [430, 190], [520, 140], [581, 110]],
+    "blade_hub_angle_contract_deg": [60.0, 120.0],
+    "minimum_active_blade_height_mm": 60.0,
+    "enforce_support_profile_contract": true
   },
   "editable_parameters": [
     "mounting_bore_radius_mm",

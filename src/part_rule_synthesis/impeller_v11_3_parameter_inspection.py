@@ -7,8 +7,8 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-RUNTIME_RELEASE_VERSION = "1.1.3"
-INSPECTION_CONTRACT_VERSION = "1.1.3"
+RUNTIME_RELEASE_VERSION = "1.1.5"
+INSPECTION_CONTRACT_VERSION = "1.1.4"
 
 ENGINEERING_FEATURE_KINDS = {
     "nurbs_curve",
@@ -155,8 +155,10 @@ def parameter_inspection_generation_id(surface_graph: Mapping[str, Any]) -> str:
     surfaces = basis.get("surfaces")
     if isinstance(surfaces, list):
         for surface in surfaces:
-            if isinstance(surface, dict) and not _surface_is_inspectable(surface):
-                surface["uv_grid"] = []
+            if isinstance(surface, dict):
+                surface.pop("wireframe", None)
+                if not _surface_is_inspectable(surface):
+                    surface["uv_grid"] = []
     encoded = json.dumps(basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:24]
 
@@ -926,7 +928,7 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
         feature = _selected_feature_geometry(parameter)
         return (
             expected is not None
-            and math.isclose(float(parameter["resolved_value"]), expected, rel_tol=0.0, abs_tol=1.0e-9)
+            and math.isclose(float(parameter["resolved_value"]), expected, rel_tol=0.0, abs_tol=1.0e-6)
             and parameter["selection_scope"].get("source_geometry_kind") == "blade_placement"
             and len(feature) == 1
             and feature[0].get("kind") == "reference_axis"
@@ -971,7 +973,12 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
                 and feature[0].get("direction") == [*main_directions[0], 0.0]
             )
         feature = _selected_feature_geometry(parameter)
-        return parameter["resolved_value"] == "not_applicable" and feature[0].get("direction") == [1.0, 0.0, 0.0]
+        expected_direction = [*main_directions[0], 0.0] if main_directions else [1.0, 0.0, 0.0]
+        return (
+            parameter["resolved_value"] == "not_applicable"
+            and len(feature) == 1
+            and feature[0].get("direction") == expected_direction
+        )
     return False
 
 

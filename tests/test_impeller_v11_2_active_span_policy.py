@@ -67,8 +67,8 @@ def test_active_span_policy_reports_pointwise_infeasible_offsets():
     runtime, parameters = _runtime("radial_closed_reference_v1_1")
     defaults = _defaults_with_canonical(runtime)
     canonical = defaults["canonical_nurbs_parameterization"]
-    canonical["active_span_policy"]["root_offset"]["resolved_constant_mm"] = 25.0
-    canonical["active_span_policy"]["tip_offset"]["resolved_constant_mm"] = 25.0
+    canonical["active_span_policy"]["root_offset"]["resolved_constant_mm"] = 80.0
+    canonical["active_span_policy"]["tip_offset"]["resolved_constant_mm"] = 80.0
     family = build_v11_blade_to_blade_loop_family(parameters, defaults)
 
     metrics = family["active_span_policy_metrics"]

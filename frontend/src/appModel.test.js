@@ -42,7 +42,7 @@ describe("impeller frontend model", () => {
     }
   });
 
-  test("v1.1.3 frontend catalog contains exactly five representative presets", () => {
+  test("v1.1.5 frontend catalog contains exactly five representative presets", () => {
     assert.deepEqual(
       presets.map((preset) => preset.id),
       [
@@ -64,9 +64,9 @@ describe("impeller frontend model", () => {
       ],
     );
     assert.ok(presets.every((preset) => preset.geometryPatchVersion === "1.1.2"));
-    assert.ok(presets.every((preset) => preset.name.includes("V1.1.3")));
-    assert.ok(presets.every((preset) => preset.summary.includes("V1.1.3")));
-    assert.ok(presets.every((preset) => preset.tags.includes("v1.1.3")));
+    assert.ok(presets.every((preset) => preset.name.includes("V1.1.5")));
+    assert.ok(presets.every((preset) => preset.summary.includes("V1.1.5")));
+    assert.ok(presets.every((preset) => preset.tags.includes("v1.1.5")));
   });
 
   test("v1.1.2 parameter panel schema follows preset editableParameters", () => {
@@ -121,7 +121,7 @@ describe("impeller frontend model", () => {
       [180, 300], [210, 220], [270, 145], [380, 75], [500, 24], [610, 0],
     ]);
     assert.deepEqual(closed.profileOverrides.tip_or_shroud_profile.control_points, [
-      [260, 306], [290, 240], [350, 165], [450, 95], [540, 50], [615, 34],
+      [270, 330], [300, 290], [350, 240], [450, 170], [555, 140], [635, 110],
     ]);
   });
 
@@ -253,10 +253,10 @@ describe("impeller frontend model", () => {
     assert.equal("blade_to_blade_loop_family_overrides" in payload, false);
   });
 
-  test("first UI preset advertises the V1.1.3 release over the v1.1.2 geometry contract", () => {
+  test("first UI preset advertises the V1.1.5 release over the v1.1.2 geometry contract", () => {
     assert.equal(presets[0].presetId, "radial_open_reference_v1_1");
     assert.equal(presets[0].geometryPatchVersion, "1.1.2");
-    assert.match(presets[0].name, /V1\.1\.3/);
+    assert.match(presets[0].name, /V1\.1\.5/);
     assert.equal(
       presets[0].metadata.transitionGeometryStatus,
       "topology_first_blade_to_blade_5_loop_surface_family_graph",

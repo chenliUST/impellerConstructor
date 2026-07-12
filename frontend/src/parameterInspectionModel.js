@@ -52,7 +52,7 @@ export function resolveParameterInspection(manifest) {
 
   const contract = manifest.parameter_inspection;
   const surfaceGraph = manifest.geometry?.surface_graph;
-  if (!isRecord(contract) || contract.contract_version !== "1.1.3") {
+  if (!isRecord(contract) || !["1.1.3", "1.1.4"].includes(contract.contract_version)) {
     return inspectionError("parameter_inspection_contract_unsupported");
   }
   if (!isRecord(surfaceGraph) || contract.generation_id !== surfaceGraph.generation_id || contract.generation_id !== manifest.generation_id) {

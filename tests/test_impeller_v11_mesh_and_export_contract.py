@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -89,7 +91,7 @@ def test_v11_service_smoke_generates_validated_open_manifest(tmp_path: Path):
     assert Path(manifest["exports"]["manifest"]).is_file()
 
 
-def test_v11_service_accepts_frontend_segment_control_point_edit(tmp_path: Path):
+def test_v11_service_rejects_segment_control_point_edit_that_breaks_splitter_clearance(tmp_path: Path):
     service = RuleSynthesisService(tmp_path, model_output_root=tmp_path / "Model Output")
     engine = service.synthesize("impeller", "radial_open_reference_v1_1")
     parameters = {
@@ -106,26 +108,18 @@ def test_v11_service_accepts_frontend_segment_control_point_edit(tmp_path: Path)
     )
     pressure_controls[len(pressure_controls) // 2][1] += 1.0
 
-    run = service.instantiate(
-        engine.engine_id,
-        parameters,
-        blade_to_blade_loop_family_overrides={
-            "blade_to_blade_loop_family": {
-                "segments": {
-                    "pressure_side": {"control_points": pressure_controls},
+    with pytest.raises(RuntimeError, match="v1_1_main_splitter_passage_collision"):
+        service.instantiate(
+            engine.engine_id,
+            parameters,
+            blade_to_blade_loop_family_overrides={
+                "blade_to_blade_loop_family": {
+                    "segments": {
+                        "pressure_side": {"control_points": pressure_controls},
+                    },
                 },
             },
-        },
-    )
-
-    assert run.manifest["geometry_validation_status"] == "PASS"
-    assert run.manifest["geometry_version"] == "1.1"
-    assert (
-        run.manifest["transition_geometry_status"]
-        == "topology_first_blade_to_blade_5_loop_surface_family_graph"
-    )
-    assert "blade_to_blade_loop_family_overrides" in run.manifest
-    assert Path(run.manifest["exports"]["obj"]).is_file()
+        )
 
 
 def test_v11_visible_manufactured_surfaces_carry_all_surface_mesh_metadata():

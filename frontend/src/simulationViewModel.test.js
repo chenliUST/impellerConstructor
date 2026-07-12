@@ -23,13 +23,10 @@ const RECTANGULAR_UV_GRID = [
 ];
 
 describe("simulation view model", () => {
-  test("viewModeOptions includes CAD, CFD, feature debug, and parameter inspection views", () => {
+  test("viewModeOptions exposes only the two V1.1.4 review workspaces", () => {
     assert.deepEqual(viewModeOptions().map((option) => option.id), [
       "cad_review_360",
-      "cfd_full_360",
-      "mesh",
-      "feature_debug",
-      "parameter_inspection",
+      "engineering_drawing",
     ]);
   });
 

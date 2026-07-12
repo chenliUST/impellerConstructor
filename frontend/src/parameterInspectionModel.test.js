@@ -797,14 +797,13 @@ describe("parameter inspection model", () => {
     );
   });
 
-  test("active display names identify v1.1.3 while backend preset ids remain stable", () => {
+  test("active display names identify v1.1.5 while backend preset ids remain stable", () => {
     for (const preset of presets) {
-      assert.match(preset.name, /v1\.1\.3/i);
-      assert.match(preset.summary, /V1\.1\.3/);
+      assert.match(preset.name, /v1\.1\.5/i);
+      assert.match(preset.summary, /V1\.1\.5/);
       assert.match(preset.summary, /runtime/i);
-      assert.match(preset.summary, /inspection/i);
-      assert.match(preset.summary, /canonical V1\.1\.2/i);
-      assert.ok(preset.tags.includes("v1.1.3"));
+      assert.match(preset.summary, /review/i);
+      assert.ok(preset.tags.includes("v1.1.5"));
       assert.match(preset.presetId, /_v1_1$/);
     }
   });

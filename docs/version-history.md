@@ -314,6 +314,65 @@ docs/evidence/2026-07-10-impeller-v1-1-3-insight-log.md
 docs/evidence/2026-07-10-impeller-v1-1-3-graphical-parameter-inspection-evidence.md
 ```
 
+### V1.1.4 - Preset Hardening And Review Workspace
+
+- Keeps the canonical NURBS parameterization at `1.1.2` while advancing the runtime
+  and resolved inspection contract to `1.1.4`.
+- Corrects canonical splitter placement at the same physical streamwise coordinate
+  as adjacent main blades and blocks failed passage positioning.
+- Fixes no-splitter inspection semantics and engineering angular tolerance so all
+  five representative presets instantiate through the service.
+- Raises the open tip and closed shroud flowpath profiles in the first two presets.
+- Adds sampled support-profile angle and active-height gates for the first two
+  review presets.
+- Replaces the active parameter editor with a full-width, preset-only CAD Review
+  and Engineering Drawing workspace.
+- Separates preset-only instantiation from the historical parameter editor payload,
+  preventing the first preset defaults from contaminating no-splitter presets.
+- Adds a generation-bound semantic Engineering Drawing contract with Top plus
+  active-root/midspan/active-tip sections, NURBS meridional construction evidence,
+  and S-Q plus shared-renderer representative blade views.
+- Removes CFD full-360, CFD mesh, feature-debug, parameter, transition and curve
+  editing controls from the active frontend while retaining historical source files.
+
+Spec and evidence:
+
+```text
+docs/superpowers/specs/2026-07-12-impeller-v1-1-4-review-workspace-and-preset-hardening-spec.md
+docs/superpowers/plans/2026-07-12-impeller-v1-1-4-review-workspace-and-preset-hardening-implementation.md
+docs/evidence/2026-07-12-impeller-v1-1-4-semantic-change-log.md
+docs/evidence/2026-07-12-impeller-v1-1-4-insight-log.md
+docs/evidence/2026-07-12-impeller-v1-1-4-verification-evidence.md
+```
+
+### V1.1.5 - Engineering Drawing Fidelity
+
+- Advances the runtime and Engineering Drawing contract to `1.1.5` while keeping
+  canonical geometry at `1.1.2` and Parameter Inspection at `1.1.4`.
+- Replaces section-loop Top outlines with dense resolved blade-surface projections
+  and restores explicit hub-top and mounting-bore topology.
+- Shows main and splitter root/mid/tip sections in Top, five span stations in S-Q,
+  and matching XYZ loop overlays on enlarged high-DPI blade scenes.
+- Evaluates actual rational NURBS support profiles separately from dashed control
+  polygons and adds section material hatching plus an orthographic side view.
+- Adds six construction tables and a validated registry covering every canonical
+  parameter leaf.
+- Adds cached per-view drawing endpoints so the read-only frontend does not mount
+  the complete drawing payload at once.
+- Adds compact Drawing-mode instantiation and representative-blade view payloads,
+  preventing public presets from transporting full repeated surface graphs.
+- Replaces variadic drawing-bounds reduction with an iterative accumulator so
+  high-blade-count public presets cannot overflow the JavaScript call stack.
+
+Plan and evidence:
+
+```text
+docs/superpowers/plans/2026-07-12-impeller-v1-1-5-engineering-drawing-fidelity-implementation.md
+docs/evidence/2026-07-12-impeller-v1-1-5-semantic-change-log.md
+docs/evidence/2026-07-12-impeller-v1-1-5-insight-log.md
+docs/evidence/2026-07-12-impeller-v1-1-5-verification-evidence.md
+```
+
 ## How To Run A Specific Version
 
 In Python tests or scripts:

@@ -13,10 +13,7 @@ const MESH_HIDDEN_ROLES = new Set(["open_tip_reference", "reference_only", "cons
 export function viewModeOptions() {
   return [
     { id: "cad_review_360", label: "CAD review" },
-    { id: "cfd_full_360", label: "CFD full 360" },
-    { id: "mesh", label: "CFD360 mesh" },
-    { id: "feature_debug", label: "Feature debug" },
-    { id: "parameter_inspection", label: "Parameter inspection" },
+    { id: "engineering_drawing", label: "Engineering Drawing" },
   ];
 }
 

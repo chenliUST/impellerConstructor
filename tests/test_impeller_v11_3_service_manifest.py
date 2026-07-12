@@ -39,8 +39,8 @@ def test_service_manifest_separates_runtime_and_geometry_versions(tmp_path):
     engine = service.synthesize("impeller", preset_id="radial_open_reference_v1_1")
     manifest = service.instantiate(engine.engine_id, {}).manifest
 
-    assert manifest["runtime_release_version"] == "1.1.3"
-    assert manifest["parameter_inspection_contract_version"] == "1.1.3"
+    assert manifest["runtime_release_version"] == "1.1.5"
+    assert manifest["parameter_inspection_contract_version"] == "1.1.4"
     assert manifest["geometry_patch_version"] == "1.1.2"
     assert (
         manifest["geometry"]["surface_graph"]["canonical_nurbs_parameterization"]["canonical_payload_version"]
@@ -243,5 +243,5 @@ def test_all_active_presets_expose_service_inspection_contracts(tmp_path):
         engine = service.synthesize("impeller", preset_id=preset_id)
         manifest = service.instantiate(engine.engine_id, {}).manifest
 
-        assert manifest["parameter_inspection_contract_version"] == "1.1.3", preset_id
+        assert manifest["parameter_inspection_contract_version"] == "1.1.4", preset_id
         assert manifest["parameter_inspection"]["generation_id"] == manifest["generation_id"], preset_id

@@ -216,14 +216,14 @@ function v11ProfileOverrides() {
 function v11OpenReferenceProfileOverrides() {
   return axialProfileOverrides(
     [[150, 400], [170, 250], [220, 150], [330, 50], [480, 10], [580, 0]],
-    [[300, 407], [320, 305], [350, 218], [400, 130], [490, 70], [581, 34]],
+    [[300, 430], [325, 340], [365, 260], [430, 190], [520, 140], [581, 110]],
   );
 }
 
 function v11ClosedReferenceProfileOverrides() {
   return axialProfileOverrides(
     [[180, 300], [210, 220], [270, 145], [380, 75], [500, 24], [610, 0]],
-    [[260, 306], [290, 240], [350, 165], [450, 95], [540, 50], [615, 34]],
+    [[270, 330], [300, 290], [350, 240], [450, 170], [555, 140], [635, 110]],
   );
 }
 
@@ -352,9 +352,9 @@ export const presets = [
     id: "axisymmetric-nurbs-open-throughflow",
     presetId: "radial_open_reference_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "Topology first open throughflow V1.1.3",
-    summary: "Open impeller: runtime V1.1.3 with inspection contract V1.1.3 over canonical V1.1.2 geometry and the representative main/splitter population.",
-    tags: ["open", "topology-first", "v1.1.3", "representative"],
+    name: "Topology first open throughflow V1.1.5",
+    summary: "Open impeller: runtime V1.1.5 engineering-drawing review over canonical V1.1.2 geometry.",
+    tags: ["open", "topology-first", "v1.1.5", "representative"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -406,9 +406,9 @@ export const presets = [
     id: "axisymmetric-nurbs-closed-throughflow",
     presetId: "radial_closed_reference_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "Topology first closed throughflow V1.1.3",
-    summary: "Closed impeller: runtime V1.1.3 with inspection contract V1.1.3 over canonical V1.1.2 geometry and the representative closed-loop population.",
-    tags: ["closed", "topology-first", "v1.1.3", "representative"],
+    name: "Topology first closed throughflow V1.1.5",
+    summary: "Closed impeller: runtime V1.1.5 engineering-drawing review over canonical V1.1.2 geometry.",
+    tags: ["closed", "topology-first", "v1.1.5", "representative"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -461,9 +461,9 @@ export const presets = [
     id: "public-nasa-stage37-stator-ring",
     presetId: "nasa_stage37_stator_ring_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "NASA Stage 37 stator ring V1.1.3",
-    summary: "Representative public axial stator-ring approximation: runtime V1.1.3 with inspection contract V1.1.3 over canonical V1.1.2 geometry.",
-    tags: ["public-data", "axial", "stator", "stage37", "v1.1.3"],
+    name: "NASA Stage 37 stator ring V1.1.5",
+    summary: "Representative public axial stator-ring approximation in the V1.1.5 engineering-drawing review runtime.",
+    tags: ["public-data", "axial", "stator", "stage37", "v1.1.5"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -526,9 +526,9 @@ export const presets = [
     id: "public-rr-ultrafan-cti-fan",
     presetId: "rr_ultrafan_cti_fan_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "RR UltraFan CTi fan V1.1.3",
-    summary: "Representative public UltraFan CTi fan approximation: runtime V1.1.3 with inspection contract V1.1.3 over canonical V1.1.2 geometry.",
-    tags: ["public-data", "axial", "fan", "ultrafan", "v1.1.3"],
+    name: "RR UltraFan CTi fan V1.1.5",
+    summary: "Representative public UltraFan CTi fan approximation in the V1.1.5 engineering-drawing review runtime.",
+    tags: ["public-data", "axial", "fan", "ultrafan", "v1.1.5"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -590,9 +590,9 @@ export const presets = [
     id: "public-liquid-rocket-turbopump-inducer",
     presetId: "public_rocket_turbopump_inducer_v1_1",
     geometryPatchVersion: "1.1.1",
-    name: "Public rocket turbopump inducer V1.1.3",
-    summary: "Representative public liquid-rocket turbopump inducer approximation: runtime V1.1.3 with inspection contract V1.1.3 over canonical V1.1.2 geometry.",
-    tags: ["public-data", "axial", "inducer", "pump", "v1.1.3"],
+    name: "Public rocket turbopump inducer V1.1.5",
+    summary: "Representative public liquid-rocket turbopump inducer approximation in the V1.1.5 engineering-drawing review runtime.",
+    tags: ["public-data", "axial", "inducer", "pump", "v1.1.5"],
     metadata: v111Metadata(),
     editableParameters: [
       "mounting_bore_radius_mm",
@@ -698,6 +698,10 @@ export function buildInstantiatePayload(
     payload.blade_to_blade_loop_family_overrides = bladeToBladeLoopFamilyOverrides;
   }
   return payload;
+}
+
+export function buildPresetInstantiatePayload(geometryStage = "edge_closures") {
+  return { parameters: {}, geometry_stage: geometryStage };
 }
 
 export function buildSynthesizePayload(preset) {
