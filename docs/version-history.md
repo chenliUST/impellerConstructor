@@ -363,6 +363,12 @@ docs/evidence/2026-07-12-impeller-v1-1-4-verification-evidence.md
   preventing public presets from transporting full repeated surface graphs.
 - Replaces variadic drawing-bounds reduction with an iterative accumulator so
   high-blade-count public presets cannot overflow the JavaScript call stack.
+- Adds the drawing-derived `ks007g23b_turbine_impeller_v1_1` review preset as an
+  explicit approximation with per-parameter confidence and source provenance;
+  it does not claim reconstruction of the referenced but unavailable 3D model.
+- Adds a separate `ks007g23b_step_reconstructed_v1_1` review preset after the
+  source STEP became available. Exact B-Rep measurements, improved confidence,
+  and V1.1 reduction losses remain explicit; the drawing preset is preserved.
 
 Plan and evidence:
 
@@ -371,6 +377,45 @@ docs/superpowers/plans/2026-07-12-impeller-v1-1-5-engineering-drawing-fidelity-i
 docs/evidence/2026-07-12-impeller-v1-1-5-semantic-change-log.md
 docs/evidence/2026-07-12-impeller-v1-1-5-insight-log.md
 docs/evidence/2026-07-12-impeller-v1-1-5-verification-evidence.md
+```
+
+### V1.1.6 - STEP Reconstruction Audit
+
+- Adds bounded raw STEP upload, persistent audit stages and explicit stable
+  failures without changing the V1.1.2 geometry constructor.
+- Treats the imported STEP B-Rep as source authority and records exact topology,
+  units, bounds, analytic/freeform surface inventory and source hashes.
+- Resolves the rotation frame from coaxial analytic surfaces and classifies
+  periodic blade-side, closure, support, bore and material face evidence with
+  source face ids and confidence.
+- Maps measured evidence into existing V1.1.2 parameters. Six-pole support
+  profiles are fitted from dense targets with endpoint and monotonicity
+  constraints; sampled source points are not relabeled as NURBS poles.
+- Runs hub support, blade surfaces and edge closures through the unchanged
+  V1.1.2 service path and preserves each generation id, input hash and validation
+  result.
+- Adds bounded bidirectional mesh-sample deviation, silhouettes, section
+  residuals and a per-vertex heatmap. These are review diagnostics, not certified
+  CAD metrology.
+- Adds a read-only four-pane frontend with synchronized Source STEP,
+  Reconstruction, Heatmap and parameter/deviation report views using one WebGL
+  renderer for the three geometry panes.
+- Hardens Windows audit-status persistence with unique temporary files, durable
+  flush and bounded replace retries after a reproduced transient sharing lock.
+- Resolves the periodic zero-angle gauge by a recorded one-pitch axial phase
+  search; translation, scale fitting and free ICP remain disabled.
+- Deduplicates identical active/completed STEP audits by source SHA and disables
+  repeated frontend submission while an audit is queued or running.
+- Marks restart-orphaned work explicitly and loads a reused PASS manifest
+  immediately instead of leaving the reconstruction panes empty.
+- Keeps customer STEP and generated heavy geometry outside source control.
+
+Spec, plan and evidence:
+
+```text
+docs/superpowers/specs/2026-07-13-impeller-v1-1-6-step-reconstruction-audit-spec.md
+docs/superpowers/plans/2026-07-13-impeller-v1-1-6-step-reconstruction-audit-implementation.md
+docs/evidence/2026-07-13-impeller-v1-1-6-step-reconstruction-audit/README.md
 ```
 
 ## How To Run A Specific Version

@@ -47,6 +47,8 @@ def build_engineering_drawing_contract(
     surface_graph: Mapping[str, Any],
     *,
     preset_id: str | None = None,
+    source_metadata: Mapping[str, Any] | None = None,
+    parameter_confidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     inspection = surface_graph.get("parameter_inspection", {})
     canonical = surface_graph.get("canonical_nurbs_parameterization", {})
@@ -60,7 +62,13 @@ def build_engineering_drawing_contract(
     top = _top_view(surface_graph, inspection, instances, representative, surfaces, radii)
     meridional = _meridional_view(surface_graph, inspection, surfaces, radii, tolerance)
     s_q = _s_q_view(inspection, representative, surfaces)
-    tables = _construction_tables(surface_graph, inspection, canonical, s_q)
+    tables = _construction_tables(
+        surface_graph,
+        inspection,
+        canonical,
+        s_q,
+        parameter_confidence=parameter_confidence or {},
+    )
     registry = _construction_registry(canonical)
     return {
         "contract_version": CONTRACT_VERSION,
@@ -68,6 +76,7 @@ def build_engineering_drawing_contract(
         "geometry_patch_version": surface_graph.get("geometry_patch_version"),
         "canonical_payload_version": canonical.get("canonical_payload_version"),
         "preset_id": preset_id,
+        "source_metadata": dict(source_metadata or {}),
         "units": "mm",
         "sampling_policy": {
             "kind": "adaptive_nurbs_drawing_sampling",
@@ -427,6 +436,8 @@ def _construction_tables(
     inspection: Mapping[str, Any],
     canonical: Mapping[str, Any],
     s_q: Mapping[str, Any],
+    *,
+    parameter_confidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     population = canonical.get("blade_population", {})
     support_profiles = canonical.get("support_profiles", {})
@@ -506,6 +517,16 @@ def _construction_tables(
                     **canonical.get("metrics", {}),
                     **surface_graph.get("v1_1_loop_family_metrics", {}),
                 }.items()
+            ]
+            + [
+                {
+                    "parameter": parameter_id,
+                    "confidence": record.get("confidence"),
+                    "basis": record.get("basis"),
+                    "evidence": record.get("evidence"),
+                }
+                for parameter_id, record in sorted((parameter_confidence or {}).items())
+                if isinstance(record, Mapping)
             ],
         },
     }

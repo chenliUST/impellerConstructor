@@ -24,6 +24,8 @@ def test_v111_active_backend_preset_catalog():
         "nasa_stage37_stator_ring_v1_1",
         "rr_ultrafan_cti_fan_v1_1",
         "public_rocket_turbopump_inducer_v1_1",
+        "ks007g23b_turbine_impeller_v1_1",
+        "ks007g23b_step_reconstructed_v1_1",
     }
 
 

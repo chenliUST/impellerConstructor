@@ -1,0 +1,61 @@
+{
+  "audit_contract_id": "impeller_v1_1_6_step_reconstruction_audit",
+  "audit_runtime_version": "1.1.6",
+  "canonical_geometry_version": "1.1.2",
+  "status": "PASS",
+  "elapsed_seconds": 130.406,
+  "source": {
+    "sha256": "1010f341320ce9d98f5ab6456611f73d47dfcc270969a042e8ed10647f1a59f5",
+    "size_bytes": 5583108,
+    "step_schema": "CONFIG_CONTROL_DESIGN",
+    "solid_count": 1,
+    "face_count": 240,
+    "edge_count": 666,
+    "vertex_count": 433,
+    "volume_mm3": 61526.200588,
+    "surface_area_mm2": 34153.811858
+  },
+  "frame": {
+    "outer_radius_mm": 51.6,
+    "main_bore_radius_mm": 7.9,
+    "axial_extent_mm": 36.500002,
+    "scale": 1.0,
+    "primary_icp_applied": false
+  },
+  "comparison_alignment": {
+    "method": "bounded_symmetric_periodic_phase_search",
+    "rotation_about_axis_deg": 10.432692,
+    "scale": 1.0,
+    "translation_mm": [0.0, 0.0, 0.0],
+    "primary_icp_applied": false,
+    "objective_rms_before_mm": 3.892426,
+    "objective_rms_after_mm": 2.974975
+  },
+  "semantics": {
+    "main_blade_count": 13,
+    "splitter_blade_count": 0,
+    "pitch_deg": 27.692307692,
+    "shroud_topology": "open"
+  },
+  "reconstruction": {
+    "geometry_version": "1.1",
+    "geometry_patch_version": "1.1.2",
+    "geometry_validation_status": "PASS",
+    "generation_id": "a7455d82d987b118df0ae89d",
+    "surface_count": 84
+  },
+  "comparison": {
+    "kind": "unsigned_mesh_sample_distance_mm",
+    "bidirectional_rms_mm": 2.110076,
+    "bidirectional_median_mm": 0.852196,
+    "bidirectional_p95_mm": 4.819965,
+    "bidirectional_maximum_mm": 8.33969,
+    "top_silhouette_hausdorff_mm": 5.254113,
+    "meridional_silhouette_hausdorff_mm": 10.168447
+  },
+  "artifacts_not_committed": {
+    "source_stl_bytes": 9620534,
+    "reconstruction_stl_bytes": 6390484,
+    "heatmap_json_bytes": 28943626
+  }
+}

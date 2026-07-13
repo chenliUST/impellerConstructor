@@ -19,7 +19,7 @@ function loadComponent(path, exportName) {
       'import React from "react";',
       'const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props || {}), children } }) };',
     )
-    .replace(/import \{[\s\S]*?\} from "\.\.\/engineeringDrawingModel\.js\?v=[^"]+";\n/, '')
+    .replace(/import \{[\s\S]*?\} from "\.\.\/engineeringDrawingModel\.js\?v=[^"]+";\r?\n/, '')
     .replace(/export function /g, "function ");
   const module = { exports: {} };
   const context = vm.createContext({

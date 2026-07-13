@@ -7,15 +7,17 @@ import {
   modelExportUrl,
   synthesizeImpeller,
 } from "./apiClient.js?v=1.1.9";
-import { apiDefault, exportFilename, exportFileOptions, presets, selectedPreset } from "./appModel.js?v=1.1.8";
+import { apiDefault, exportFilename, exportFileOptions, presets, selectedPreset } from "./appModel.js?v=1.1.11";
 import { defaultVisibleLayers } from "./workspaceModel.js?v=1.1.5";
 import { ModelViewer } from "./components/ModelViewer.js?v=1.1.8";
 import { ReviewEngineeringDrawing } from "./components/ReviewEngineeringDrawing.js?v=1.1.5.1";
+import { StepReconstructionWorkspace } from "./components/StepReconstructionWorkspace.js?v=1.1.6-r2";
 
 const h = React.createElement;
 const WORKSPACES = [
   { id: "cad_review", label: "CAD Review" },
   { id: "engineering_drawing", label: "Engineering Drawing" },
+  { id: "step_reconstruction", label: "STEP Reconstruction" },
 ];
 
 export function App() {
@@ -108,13 +110,13 @@ export function App() {
 
   return h(
     "main",
-    { className: "review-app-shell", "data-release": "1.1.5" },
+    { className: "review-app-shell", "data-release": "1.1.6" },
     h(
       "header",
       { className: "review-toolbar" },
       h("div", { className: "review-brand" }, h("span", { className: "brand-mark" }, "IR"), h("div", null,
         h("h1", null, "Impeller Rule Lab"),
-        h("p", null, "V1.1.5 preset review workspace"),
+        h("p", null, "V1.1.6 STEP audit / V1.1.5 preset review"),
       )),
       h("label", { className: "review-preset-select" },
         h("span", null, "Preset"),
@@ -131,9 +133,9 @@ export function App() {
           "data-testid": `workspace-${item.id}`,
         }, item.label)),
       ),
-      h("button", { className: "primary-action", onClick: generateModel, disabled: loading, "data-testid": "generate-model" },
+      workspace !== "step_reconstruction" ? h("button", { className: "primary-action", onClick: generateModel, disabled: loading, "data-testid": "generate-model" },
         loading ? "Generating..." : "Generate",
-      ),
+      ) : null,
       h("details", { className: "review-disclosure" },
         h("summary", null, "Preset data"),
         h("div", { className: "review-disclosure-content" },
@@ -158,9 +160,16 @@ export function App() {
         ),
       ),
     ),
-    h("section", { className: "review-titlebar" },
-      h("div", null, h("p", { className: "eyebrow" }, activePreset.tags.join(" / ")), h("h2", null, activePreset.name)),
-      h("p", null, activePreset.summary),
+    h("section", { className: "review-titlebar" }, workspace === "step_reconstruction"
+      ? h("div", null,
+          h("p", { className: "eyebrow" }, "SOURCE B-REP / V1.1.2 RECONSTRUCTION / DEVIATION"),
+          h("h2", null, "STEP Reconstruction Audit"),
+          h("p", null, "Load one STEP solid, recover current-rule parameters, reconstruct with unchanged V1.1.2 geometry, and compare the result."),
+        )
+      : [
+          h("div", { key: "title" }, h("p", { className: "eyebrow" }, activePreset.tags.join(" / ")), h("h2", null, activePreset.name)),
+          h("p", { key: "summary" }, activePreset.summary),
+        ],
     ),
     h("div", { className: "review-message-slot" },
       error ? h("div", { className: "error-banner review-error", role: "alert" }, error) : null,
@@ -168,7 +177,9 @@ export function App() {
     h(
       ReviewErrorBoundary,
       { resetKey: `${selectedPresetId}:${workspace}:${manifest?.run_id || "empty"}` },
-      workspace === "engineering_drawing"
+      workspace === "step_reconstruction"
+        ? h(StepReconstructionWorkspace, { apiBase })
+        : workspace === "engineering_drawing"
         ? h(ReviewEngineeringDrawing, {
             key: manifest?.run_id || selectedPresetId,
             contract: drawingContract,

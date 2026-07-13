@@ -42,7 +42,7 @@ describe("impeller frontend model", () => {
     }
   });
 
-  test("v1.1.5 frontend catalog contains exactly five representative presets", () => {
+  test("v1.1.5 frontend catalog includes the drawing-derived KS007G23B preset", () => {
     assert.deepEqual(
       presets.map((preset) => preset.id),
       [
@@ -50,7 +50,9 @@ describe("impeller frontend model", () => {
         "axisymmetric-nurbs-closed-throughflow",
         "public-nasa-stage37-stator-ring",
         "public-rr-ultrafan-cti-fan",
-        "public-liquid-rocket-turbopump-inducer",
+          "public-liquid-rocket-turbopump-inducer",
+          "ks007g23b-turbine-impeller",
+          "ks007g23b-step-reconstructed-impeller",
       ],
     );
     assert.deepEqual(
@@ -60,7 +62,9 @@ describe("impeller frontend model", () => {
         "radial_closed_reference_v1_1",
         "nasa_stage37_stator_ring_v1_1",
         "rr_ultrafan_cti_fan_v1_1",
-        "public_rocket_turbopump_inducer_v1_1",
+          "public_rocket_turbopump_inducer_v1_1",
+          "ks007g23b_turbine_impeller_v1_1",
+          "ks007g23b_step_reconstructed_v1_1",
       ],
     );
     assert.ok(presets.every((preset) => preset.geometryPatchVersion === "1.1.2"));

@@ -1,0 +1,61 @@
+V1.1.6 verification date: 2026-07-13
+Worktree: impeller-ks007g23b-preset
+Branch: feature/ks007g23b-preset
+Baseline commit: f46629f feat: harden presets and engineering drawings
+
+python -m pytest tests/test_impeller_v11_6_step_audit.py tests/test_impeller_v11_6_deviation.py tests/test_impeller_v11_6_step_api.py -q
+RESULT: 9 passed, 1 skipped in 4.56s
+
+python -m pytest tests/test_impeller_v11_6_step_audit.py tests/test_impeller_v11_6_deviation.py tests/test_impeller_v11_6_step_api.py tests/test_impeller_v11_resources.py tests/test_ks007g23b_preset.py tests/test_impeller_v11_5_engineering_drawing.py tests/test_impeller_v11_5_review_summary.py -q
+RESULT: 26 passed, 1 skipped in 158.93s
+
+cd frontend
+npm.cmd test
+RESULT: 220 passed, 0 failed
+
+cd frontend
+npm.cmd run build
+RESULT: frontend build check passed
+
+Local full audit, repository-external service root:
+StepReconstructionAuditService(<TEMP>/impeller-v116-acceptance, run_async=False)
+RESULT: PASS in 81.376s
+Audit id: step-audit-4bd8aa5f53ee4fd1
+Source SHA-256: 1010f341320ce9d98f5ab6456611f73d47dfcc270969a042e8ed10647f1a59f5
+Source facts: 1 solid, 240 faces, 666 edges, 433 vertices
+Frame facts: outer R51.6, bore R7.9, axial extent 36.500002, scale 1.0, no primary ICP
+Population: 13 main, 0 splitter, pitch 27.692307692 degrees
+Constructor: geometry 1.1 / patch 1.1.2 / PASS / 84 surfaces
+Deviation: RMS 2.720300 mm, P95 5.728954 mm, max 8.486862 mm
+
+Skipped test reason:
+tests/test_impeller_v11_6_step_audit.py optional KS local gate requires
+KS007G23B_STEP_PATH. The same local file was exercised by the explicit complete
+audit above; customer data is intentionally not a default test fixture.
+
+HTTP smoke, temporary repository-external service root:
+POST /api/step-reconstruction-audits?filename=KS007G23B.stp
+RESULT: 202 Accepted, audit id step-audit-eb188bdc08c94b08
+GET status RESULT: PASS after all ten stable audit stages completed
+GET manifest RESULT: 200; 240 faces; 13 main blades; canonical geometry 1.1.2;
+bidirectional RMS 2.720300 mm
+GET source.stl RESULT: 200; 9,620,534 bytes; immutable cache and ETag
+GET reconstruction.stl RESULT: 200; 6,390,484 bytes; immutable cache and ETag
+GET heatmap.json RESULT: 200; 28,856,998 bytes; immutable cache and ETag
+
+Windows persistence regression and periodic phase correction:
+python -m pytest tests/test_impeller_v11_6_step_audit.py tests/test_impeller_v11_6_deviation.py tests/test_impeller_v11_6_step_api.py -q
+RESULT: 12 passed, 1 skipped in 6.23s
+
+HTTP pressure audit with one status GET every 50 ms:
+RESULT: PASS after 463 status reads; audit id step-audit-167ac48d89bd4c59
+Comparison phase: +10.432692 degrees about the confirmed axis
+No translation, scale fitting or primary ICP was applied
+Corrected deviation: RMS 2.110076 mm; P95 4.819965 mm; max 8.339690 mm
+
+Duplicate submission regression:
+python -m pytest tests/test_impeller_v11_6_step_api.py tests/test_impeller_v11_6_step_audit.py tests/test_impeller_v11_6_deviation.py -q
+RESULT: 13 passed, 1 skipped in 5.87s
+Frontend RESULT: 220 passed; build check passed
+Repeated KS007G23B upload reused step-audit-4c37c61850f54a61 in 0.765 s
+Reused manifest RESULT: PASS; RMS 2.110076 mm; source/reconstruction/heatmap artifacts present

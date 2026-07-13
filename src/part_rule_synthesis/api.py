@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
 import os
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,11 @@ from part_rule_synthesis.impeller_v11_5_engineering_drawing import (
     build_engineering_drawing_contract,
     engineering_drawing_view,
     validate_engineering_drawing_contract,
+)
+from part_rule_synthesis.impeller_v11_6_step_audit import (
+    MAX_UPLOAD_BYTES,
+    StepAuditError,
+    StepReconstructionAuditService,
 )
 
 
@@ -48,8 +54,10 @@ def create_app(root: Path | None = None) -> FastAPI:
     if root is None:
         model_output_root = Path(os.environ.get("PART_RULE_SYNTHESIS_MODEL_OUTPUT_DIR", Path.cwd() / "Model Output"))
     service = RuleSynthesisService(service_root, model_output_root=model_output_root)
+    step_audits = StepReconstructionAuditService(service_root)
     engineering_drawing_cache: dict[str, dict[str, Any]] = {}
     app = FastAPI(title="Part Rule Synthesis", version="0.1.0")
+    app.state.step_reconstruction_audits = step_audits
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -143,6 +151,8 @@ def create_app(root: Path | None = None) -> FastAPI:
             contract = build_engineering_drawing_contract(
                 graph,
                 preset_id=run.manifest.get("preset_id"),
+                source_metadata=run.manifest.get("source_metadata", {}),
+                parameter_confidence=run.manifest.get("parameter_confidence", {}),
             )
             engineering_drawing_cache[run_id] = contract
         failures = validate_engineering_drawing_contract(graph, contract)
@@ -184,6 +194,77 @@ def create_app(root: Path | None = None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="export file missing")
         return FileResponse(path, filename=path.name)
+
+    @app.post("/api/step-reconstruction-audits")
+    async def create_step_reconstruction_audit(
+        request: Request,
+        filename: str = Query(default="source.step", max_length=512),
+    ):
+        handle = step_audits.begin_upload(filename)
+        digest = hashlib.sha256()
+        size_bytes = 0
+        try:
+            with handle.temporary_path.open("wb") as stream:
+                async for chunk in request.stream():
+                    size_bytes += len(chunk)
+                    if size_bytes > MAX_UPLOAD_BYTES:
+                        raise StepAuditError(
+                            "v116_step_size_limit_exceeded",
+                            f"STEP upload exceeds {MAX_UPLOAD_BYTES} bytes",
+                            {"received_bytes": size_bytes, "limit_bytes": MAX_UPLOAD_BYTES},
+                        )
+                    digest.update(chunk)
+                    stream.write(chunk)
+            status = step_audits.finish_upload(
+                handle,
+                size_bytes=size_bytes,
+                sha256=digest.hexdigest(),
+            )
+            return JSONResponse(status_code=202, content=status)
+        except StepAuditError as exc:
+            step_audits.fail_upload(handle, exc)
+            status_code = 413 if exc.reason == "v116_step_size_limit_exceeded" else (
+                503 if exc.reason == "v116_step_queue_full" else 400
+            )
+            raise HTTPException(
+                status_code=status_code,
+                detail={"reason": exc.reason, "message": str(exc), "details": exc.details},
+            ) from exc
+
+    @app.get("/api/step-reconstruction-audits/{audit_id}")
+    def step_reconstruction_audit_status(audit_id: str):
+        try:
+            return step_audits.status(audit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown STEP reconstruction audit") from exc
+
+    @app.get("/api/step-reconstruction-audits/{audit_id}/manifest")
+    def step_reconstruction_audit_manifest(audit_id: str):
+        try:
+            return step_audits.manifest(audit_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown STEP reconstruction audit") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=409, detail="STEP reconstruction audit is not complete") from exc
+
+    @app.get("/api/step-reconstruction-audits/{audit_id}/artifacts/{artifact_name}")
+    def step_reconstruction_audit_artifact(audit_id: str, artifact_name: str):
+        try:
+            path = step_audits.artifact_path(audit_id, artifact_name)
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="unknown STEP reconstruction artifact") from exc
+        media_types = {
+            "source.stl": "model/stl",
+            "reconstruction.stl": "model/stl",
+            "heatmap.json": "application/json",
+        }
+        etag = hashlib.sha256(path.read_bytes()).hexdigest()
+        return FileResponse(
+            path,
+            filename=path.name,
+            media_type=media_types[artifact_name],
+            headers={"ETag": f'"{etag}"', "Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     @app.post("/api/model-runs/{run_id}/feedback")
     def feedback(run_id: str, request: FeedbackRequest):

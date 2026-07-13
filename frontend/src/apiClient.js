@@ -81,6 +81,32 @@ export function modelExportUrl(apiBase, runId, format) {
   return exportUrl(apiBase, runId, format);
 }
 
+export async function createStepReconstructionAudit(apiBase, file) {
+  if (!file) throw new Error("Select a STEP file before starting reconstruction.");
+  return requestJson(
+    `${normalizeBase(apiBase)}/api/step-reconstruction-audits?filename=${encodeURIComponent(file.name || "source.step")}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/step" },
+      body: file,
+    },
+  );
+}
+
+export async function stepReconstructionAuditStatus(apiBase, auditId) {
+  return requestJson(
+    `${normalizeBase(apiBase)}/api/step-reconstruction-audits/${encodeURIComponent(auditId)}`,
+    { method: "GET" },
+  );
+}
+
+export async function stepReconstructionAuditManifest(apiBase, auditId) {
+  return requestJson(
+    `${normalizeBase(apiBase)}/api/step-reconstruction-audits/${encodeURIComponent(auditId)}/manifest`,
+    { method: "GET" },
+  );
+}
+
 async function requestJson(url, options) {
   const response = await fetch(url, options);
   const text = await response.text();

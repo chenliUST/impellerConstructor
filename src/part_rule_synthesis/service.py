@@ -303,6 +303,8 @@ class RuleSynthesisService:
             "geometry_validity": geometry_validity,
             "validation": _validation(dsl["part_family"]),
             "source_refs": dsl.get("source_refs", []),
+            "source_metadata": dsl.get("source_metadata", {}),
+            "parameter_confidence": dsl.get("parameter_confidence", {}),
             "export_strategy": export_strategy,
             "exports": exports,
             "export_manifests": export_manifests,

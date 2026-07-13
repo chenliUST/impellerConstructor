@@ -104,6 +104,8 @@ def compile_impeller_runtime_preset(
         "validity_contracts": bundle.validity_contracts,
         "loss_schema": bundle.loss_schema,
         "source_refs": preset.get("source_refs", []),
+        "source_metadata": preset.get("source_metadata", {}),
+        "parameter_confidence": preset.get("parameter_confidence", {}),
     }
     if dsl_version in {"0.7", "0.8", "0.9", "0.91", "1.0", "1.1"}:
         edge_families = constructor.get("edge_families", {})
