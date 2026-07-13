@@ -384,6 +384,9 @@ Implement `impeller_v11_6_v112_mapping.py` and route
 6. Fail the promoted path when the V1.1.2 representation exceeds a mandatory
    residual gate; do not invoke the old global seed.
 7. Keep pressure/suction names orientation-neutral without flow evidence.
+8. Apply the explicit spec gates for normalized camber RMS, pose RMS/maximum
+   angle, and bidirectional leading/trailing edge Hausdorff error. These values
+   are contract data in the result and tests, not hidden solver constants.
 
 First failing tests:
 
@@ -397,6 +400,7 @@ Required assertions:
 - the same source and tolerances yield identical payload hashes;
 - changing one measured thickness affects only documented coupled fields;
 - five-station resampling residual is reported;
+- camber, pose and edge-curve residuals are independently gated;
 - mapping cannot add a V1.2-only parameter;
 - geometry patch remains `1.1.2`.
 

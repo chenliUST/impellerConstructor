@@ -516,6 +516,14 @@ blade thickness.
   self-intersections and has no tangent flip.
 - Normal-thickness RMS is at most `max(0.15 mm, 0.03 t_mean)` and every reported
   thickness is positive.
+- Five-station camber mapping RMS is at most
+  `max(0.20 mm, 0.04 t_mean)` after station-quadrature normalization.
+- Section-pose angular RMS is at most `1 deg` and its maximum absolute error is
+  at most `3 deg`.
+- Each leading/trailing source edge measurement curve has a bidirectional
+  Hausdorff mapping error at most `max(0.20 mm, 0.05 t_mean)`. This is a
+  representational-loss gate; the source NURBS curve remains evidence and is
+  not added to the frozen V1.1.2 constructor.
 - Root lift and attachment width are nonzero, source-measured and remain within
   `10 percent` of their source medians after V1.1.2 mapping.
 - Main and splitter counts, pitch and phase reproduce the detected periodic
