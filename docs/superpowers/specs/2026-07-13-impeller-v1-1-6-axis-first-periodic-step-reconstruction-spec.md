@@ -400,6 +400,66 @@ meridional silhouette error, per-station loop Hausdorff error and normal
 thickness residual. A low global RMS cannot hide a failed thickness or false
 material-surface gate.
 
+#### Regional evidence contract
+
+The top-level regional-evidence schema is a strict allowlist containing exactly
+`units`, `coordinate_frame`, `tessellation_tolerance_mm`,
+`projection_tolerance_mm`, `source_regions`, `reconstruction_regions`,
+`region_mappings`, `root_gates`, `material_checks`, `thickness_checks`,
+`stations` and `silhouettes`. Any other top-level field is a schema error.
+`viewport_bounds`, `camera` and mesh, viewport or review proxy fields are
+explicitly rejected rather than ignored. Both tolerances must be finite and
+strictly greater than zero.
+
+Region mappings are one-to-one and their semantic role must match both mapped
+records. Every station must use the source/reconstruction pair from one approved
+mapping, and both station regions must have that mapping's semantic role. A
+blade station therefore cannot silently compare against a shroud region.
+
+Distance and normal-angle aggregation is directional. Source-to-reconstruction
+and reconstruction-to-source distributions are normalized independently over
+their unique contributing point/normal measurements. The bidirectional
+`minimum`, `median`, `p95` and `maximum` are the fixed arithmetic combination
+`0.5 * source_to_reconstruction + 0.5 * reconstruction_to_source`; the
+bidirectional RMS is
+`sqrt(0.5 * source_to_reconstruction_rms^2 + 0.5 * reconstruction_to_source_rms^2)`.
+The stored artifact records both weights as `0.5`. An exact duplicate
+point/normal measurement is retained in stored sample provenance but contributes
+once, so duplicating zero-error samples on either side cannot bias regional or
+global metrics.
+
+Material and gate failures have directional terminal semantics:
+
+- source absent plus reconstruction present is `false_material`;
+- source present plus reconstruction absent is `missing_material`;
+- source and reconstruction both absent is a matched absence;
+- nonpositive source or reconstruction thickness is `nonpositive_thickness`;
+- a false root gate is `failed_root_gate`.
+
+Malformed schema, non-finite measurements and invalid provenance fail closed
+without emitting an accepted artifact. Terminal findings still emit the
+deterministic metrics required to diagnose the rejected reconstruction.
+
+The global distance and normal-angle values are weighted RMS values over the
+approved mapped contributing regions. A region's effective weight is its unique
+source contributing-sample count multiplied by its stored positive `weight`;
+the stored pre-deduplication count remains explicit provenance. Viewport size,
+reconstruction sample count and camera state do not participate. Global
+`source_ids` and `reconstruction_ids` contain only approved mapped regions that
+contribute a regional metric; unmapped terminal records are excluded. The
+artifact SHA-256 covers the complete regional-deviation payload except the
+`sha256` field itself, including `sha256_basis`, using compact ASCII JSON with
+sorted keys and no NaN values.
+
+The focused contract is reproduced with:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m pytest tests/test_impeller_v11_6_deviation.py tests/test_impeller_v11_6_regional_deviation.py -q
+python -m ruff check src/part_rule_synthesis/impeller_v11_6_deviation.py tests/test_impeller_v11_6_regional_deviation.py
+git diff --check
+```
+
 ## Manifest Delta
 
 The existing final manifest gains an immutable

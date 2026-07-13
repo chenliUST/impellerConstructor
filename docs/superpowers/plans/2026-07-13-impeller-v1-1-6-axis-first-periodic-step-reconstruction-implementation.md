@@ -451,7 +451,9 @@ fix: reconstruct measured periodic blades without false shroud
 
 ## Task 10: Regional Deviation And Evidence Artifacts
 
-Extend `impeller_v11_6_deviation.py` and the audit finalizer.
+Extend the pure deviation contract in `impeller_v11_6_deviation.py`. Audit
+finalizer integration is deferred to a later task after the Task 8 worker
+changes settle.
 
 1. Build source/reconstruction semantic-region sample sets.
 2. Compute bidirectional distance and comparable normal error per region.
@@ -461,6 +463,35 @@ Extend `impeller_v11_6_deviation.py` and the audit finalizer.
    global RMS is low.
 6. Emit the compact JSON artifacts defined by the spec with hashes and units.
 7. Record tessellation/projection tolerance on every sampled metric.
+8. Enforce the exact top-level schema allowlist from the spec. Reject
+   `viewport_bounds`, `camera`, unknown proxy payloads and every other extra key;
+   require finite, strictly positive tessellation and projection tolerances.
+9. Require every station source/reconstruction pair to be one approved
+   `region_mapping` whose semantic role matches both region records.
+10. Normalize source-to-reconstruction and reconstruction-to-source distance and
+    normal-angle distributions independently over unique contributing
+    point/normal measurements. Combine directional summary statistics with fixed
+    weights of `0.5` and `0.5`; combine directional RMS values as
+    `sqrt(0.5 * source_rms^2 + 0.5 * reconstruction_rms^2)`.
+11. Preserve stored sample counts but deduplicate exact point/normal measurements
+    for metric contribution and global weighting. Global source and
+    reconstruction ids must come only from approved mapped contributing regions.
+
+Terminal semantics are directional: source-absent/reconstruction-present emits
+`false_material`; source-present/reconstruction-absent emits `missing_material`;
+both absent is a matched absence. Nonpositive source or reconstruction thickness
+emits `nonpositive_thickness`, and a false root gate emits `failed_root_gate`.
+Schema, finite-number and provenance violations raise `ValueError` and do not
+produce an accepted artifact.
+
+Global distance and normal-angle RMS use only approved mapped regions, with
+`effective_weight = unique source contributing-sample count * stored positive
+region weight`. Exact duplicate zero-error samples on either side do not change
+regional or global metric values. Reconstruction sampling density, viewport
+bounds and camera state are excluded. Unmapped records remain terminal evidence
+but their source/reconstruction ids do not enter global metric provenance. The
+SHA-256 basis is the complete compact ASCII, sorted-key JSON result except the
+`sha256` field itself; `sha256_basis` is included in the digest.
 
 First failing tests:
 
@@ -477,6 +508,15 @@ Required assertions:
 - thickness error cannot be hidden in an aggregate role;
 - artifacts are deterministic and manifest hashes match files;
 - previous generic manifest fails the new completeness check.
+
+Verification command:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m pytest tests/test_impeller_v11_6_deviation.py tests/test_impeller_v11_6_regional_deviation.py -q
+python -m ruff check src/part_rule_synthesis/impeller_v11_6_deviation.py tests/test_impeller_v11_6_regional_deviation.py
+git diff --check
+```
 
 Suggested commit:
 
