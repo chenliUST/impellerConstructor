@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402
+
 import sys
 from pathlib import Path
 
@@ -50,6 +52,13 @@ def test_step_upload_returns_202_and_persists_recoverable_status(tmp_path):
     status = client.get(f"/api/step-reconstruction-audits/{audit_id}")
     assert status.status_code == 200
     assert status.json()["source"]["sha256"]
+    assert status.json()["algorithm_revision"] == "axis_first_section_periodic_r3"
+    assert status.json()["canonical_geometry_version"] == "1.1.2"
+    assert status.json()["legacy_workflow_status"] == "PENDING"
+    assert status.json()["axis_first_algorithm_status"] == "INCOMPLETE"
+    assert status.json()["promotable"] is False
+    assert status.json()["algorithm_readiness"]["algorithm_ready"] is False
+    assert status.json()["algorithm_readiness"]["cache_reusable"] is False
     assert client.get(f"/api/step-reconstruction-audits/{audit_id}/manifest").status_code == 409
     assert client.get(f"/api/step-reconstruction-audits/{audit_id}/artifacts/../../source.step").status_code == 404
 
