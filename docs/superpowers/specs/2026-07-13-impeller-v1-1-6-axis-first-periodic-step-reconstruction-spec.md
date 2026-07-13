@@ -211,9 +211,13 @@ The hub profile is solved with robust constrained least squares:
 
 #### Open tip reference
 
-For an open impeller, the tip reference is inferred from free blade-tip boundary
-curves across the representative periodic instances. It is a non-material
-support with:
+For an open impeller, the source solid normally has no topological free edge at
+the blade tip: the tip-cap face shares its boundary with the blade sides and
+edge closures. Tip evidence therefore comes from the shared adjacency edge loop
+between each periodic blade side/edge component and its per-blade tip-cap
+candidate face. The axisymmetric tip reference is fitted through those repeated
+tip-cap loops. The cap is blade material, but the fitted reference is a
+non-material support with:
 
 ```text
 semantic_role = open_tip_reference
@@ -274,9 +278,12 @@ domains overlap; population-specific active endpoints remain permitted.
 
 ### Stage 7: Exact representative-blade section loops
 
-Each measurement surface is intersected with the selected source blade B-Rep by
-an OCCT section operation. Section edges are ordered through topology and healed
-only within the recorded source tolerance.
+The uploaded source is commonly one fused solid, so a standalone representative
+blade B-Rep does not exist. Each measurement surface is intersected with the
+complete source solid by an OCCT section operation. Section edges are filtered
+by the selected periodic population's source-face provenance and angular sector,
+then ordered through topology and healed only within the recorded source
+tolerance. Constructing an artificial temporary blade solid is not required.
 
 A valid blade-body section has one closed contour in the population's angular
 sector. Additional contours are retained as unsupported local-feature evidence.
@@ -310,9 +317,13 @@ evidence are available. Otherwise the geometry remains orientation-neutral
 `side_a/side_b`.
 
 Landmarks use source-face adjacency first, then streamwise extrema, curvature
-peaks and tangent continuity. Each segment is fitted as a NURBS curve with its
-own source residual. Edge closures remain source-shaped splines; they are not
-assumed to be semicircles.
+peaks and tangent continuity. Each source segment is fitted as a NURBS
+measurement curve with its own residual. Edge closures remain source-shaped
+splines and are not assumed to be semicircles. Because the frozen V1.1.2
+constructor consumes cap roundness/sagitta rather than arbitrary direct segment
+curves, these NURBS curves are fitting targets and evidence. Their residual after
+mapping is explicit representational loss; this workflow must not add a hidden
+`direct_segment_curves` constructor path.
 
 Local thickness is measured in the section tangent plane along the normal to a
 fitted camber curve. Side correspondence minimizes normal-intersection,

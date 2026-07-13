@@ -217,8 +217,10 @@ Implement `impeller_v11_6_support_recovery.py` and remove the generic
 
 ### Tip/shroud work
 
-1. Detect free periodic blade-tip boundaries for an open wheel.
-2. Fit an axisymmetric non-material tip reference from those boundaries.
+1. Detect per-blade tip-cap candidates and their shared adjacency edge loops
+   with periodic blade side/edge faces; do not require topological free edges on
+   a fused source solid.
+2. Fit an axisymmetric non-material tip reference from those repeated cap loops.
 3. Require paired material faces, circumferential closure, finite thickness and
    repeated tip attachment before classifying a closed shroud.
 4. Reject ambiguous topology instead of defaulting to closed.
@@ -291,10 +293,12 @@ Implement the support correspondence and sectioning part of
    stations.
 4. Start with five stations and refine to at most nine from measured camber,
    thickness, twist, curvature and correspondence residuals.
-5. Intersect only representative blade B-Reps with each surface using OCCT.
-6. Order and heal section edges within source tolerance.
-7. Select one closed contour in the expected population sector.
-8. Persist 3D and local `(S,Q)` curves, source ids, orientation and closure data.
+5. Intersect the complete fused source solid with each surface using OCCT.
+6. Filter section edges by representative-population source-face provenance and
+   the expected angular sector.
+7. Order and heal section edges within source tolerance.
+8. Select one closed contour in the expected population sector.
+9. Persist 3D and local `(S,Q)` curves, source ids, orientation and closure data.
 
 First failing tests:
 
@@ -331,8 +335,9 @@ Complete `impeller_v11_6_section_recovery.py`.
 3. Build a smooth camber correspondence and measure thickness along its local
    normal.
 4. Prohibit index-to-index and radial-distance thickness shortcuts.
-5. Recover leading/trailing source spline shape and sag; do not impose a
-   semicircle.
+5. Recover leading/trailing source spline shape and sag as measurement targets;
+   do not impose a semicircle and do not add a hidden direct-curve mode to the
+   frozen V1.1.2 constructor.
 6. Track landmarks and parameters consistently across all span stations.
 7. Recover hub root footprint, retained blade boundary, local span direction,
    root lift and attachment width.
@@ -618,7 +623,8 @@ Promotion requires:
 - exact dependency/kernel versions and tolerances are in evidence;
 - KS007G23B meets topology, thickness, no-false-shroud and improvement gates;
 - open, closed and main/splitter fixtures all pass;
-- no V1.1.2 preset output or contract changed;
+- existing preset geometry graph, mesh, topology and canonical payload hashes
+  remain unchanged; additive manifest metadata is recorded separately;
 - frontend build and nonblank visual inspection pass;
 - remaining changes are committed intentionally or inventoried explicitly.
 
