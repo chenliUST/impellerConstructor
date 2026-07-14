@@ -12,6 +12,7 @@ from part_rule_synthesis.impeller_v11_6_section_recovery import (
     LocalSectionFrame,
     SectionEdge,
     SectionRecoveryError,
+    _minimum_angular_cutter_boundary_clearance_deg,
     align_loop_orientation,
     decompose_section_loop,
     make_section_loop,
@@ -19,6 +20,20 @@ from part_rule_synthesis.impeller_v11_6_section_recovery import (
     section_full_source_solid,
     track_section_family_landmarks,
 )
+
+
+def test_bounded_angular_cutter_clearance_uses_expanded_sector_boundaries():
+    boundary_angle = math.radians(-1.0)
+    boundary = [[10.0 * math.cos(boundary_angle), 10.0 * math.sin(boundary_angle), 0.0]]
+    interior_angle = math.radians(5.0)
+    interior = [[10.0 * math.cos(interior_angle), 10.0 * math.sin(interior_angle), 0.0]]
+
+    assert _minimum_angular_cutter_boundary_clearance_deg(
+        boundary, (0.0, 10.0)
+    ) == pytest.approx(0.0, abs=1.0e-10)
+    assert _minimum_angular_cutter_boundary_clearance_deg(
+        interior, (0.0, 10.0)
+    ) == pytest.approx(6.0)
 
 
 def _rectangle_edges(transform=lambda point: point) -> list[SectionEdge]:

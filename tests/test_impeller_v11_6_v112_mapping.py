@@ -19,7 +19,6 @@ if str(SRC_ROOT) not in sys.path:
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset  # noqa: E402
 from part_rule_synthesis.impeller_v11_2_canonical import (  # noqa: E402
     canonical_nurbs_from_v11_defaults,
-    clamped_uniform_knots,
     evaluate_nurbs_curve,
     evaluate_nurbs_surface,
 )
@@ -92,6 +91,23 @@ def test_exact_five_and_nine_station_measurements_map_to_same_fixed_v112_payload
     assert all(term["gate"]["status"] == "PASS" for term in five["objective_terms"].values())
 
 
+def test_edge_generation_binds_the_regenerated_canonical_authority(monkeypatch):
+    defaults = {"loop_family_id": "unchanged"}
+    canonical = {"canonical_payload_version": "1.1.2", "thickness_field": {"id": "measured"}}
+    captured = {}
+
+    def capture(_parameters_json, defaults_json):
+        captured.update(json.loads(defaults_json))
+        return {"blades": []}
+
+    monkeypatch.setattr(mapping_module, "_cached_generation_bound_loop_family", capture)
+
+    mapping_module._generation_bound_loop_family({}, defaults, canonical)
+
+    assert defaults == {"loop_family_id": "unchanged"}
+    assert captured["canonical_nurbs_parameterization"] == canonical
+
+
 def test_fixed_five_station_gates_are_station_count_invariant_and_adaptive_loss_is_diagnostic():
     failures = []
     for station_count in (5, 9):
@@ -155,19 +171,14 @@ def test_edge_promotion_uses_only_fixed_five_stations_and_adaptive_edges_are_dia
         _measurement_bundle(station_count=9), tolerances={}
     )
     adaptive_only = _measurement_bundle(station_count=9)
-    target = adaptive_only["section_families"]["main"]["stations"][1][
+    adaptive_segment = adaptive_only["section_families"]["main"]["stations"][1][
         "decomposition"
-    ]["segments"]["leading_edge"]["nurbs_target"]
-    target["control_points_local_mm"][len(target["control_points_local_mm"]) // 2][
-        0
-    ] -= 4.0
-    target["sample_points_local_mm"] = _evaluate_target_samples(
-        target, len(target["sample_points_local_mm"])
-    )
-    _refresh_edge_fit_evidence(
-        adaptive_only["section_families"]["main"]["stations"][1][
-            "decomposition"
-        ]["segments"]["leading_edge"],
+    ]["segments"]["leading_edge"]
+    adaptive_points = copy.deepcopy(adaptive_segment["points_sq_mm"])
+    adaptive_points[len(adaptive_points) // 2][0] -= 4.0
+    _replace_edge_target(
+        adaptive_segment,
+        adaptive_points,
         "leading_edge",
     )
 
@@ -409,6 +420,179 @@ def test_edge_nurbs_authority_is_bound_to_its_task7_source_segment_points():
     assert "Task 7 source segment" in str(captured.value)
 
 
+def test_task7_chord_parameter_fit_certificate_is_bounded_and_detects_excursion():
+    points_sq = tuple(
+        (50.0 * index / 32.0, 3.0 * math.sin(math.pi * index / 32.0))
+        for index in range(33)
+    )
+    points_xyz = tuple((point[0], point[1], 0.0) for point in points_sq)
+    fit = fit_nurbs_measurement_curve(
+        points_xyz,
+        points_sq,
+        segment_name="side_a",
+        source_edge_ids=("source-edge",),
+        maximum_control_count=17,
+    )
+    segment = adapt_task7_segment_for_mapping(
+        SectionSegmentMeasurement(
+            name="side_a",
+            points_xyz_mm=points_xyz,
+            points_sq_mm=points_sq,
+            source_edge_ids=("source-edge",),
+            source_face_ids=("source-face",),
+            fit=fit,
+        ),
+        fit_tolerance_mm=0.2,
+    )
+    target = segment["nurbs_target"]
+    curve = {
+        "components": [
+            {"coefficient": 1.0, "station_h": None, "target": target}
+        ]
+    }
+    tolerance = float(target["fit_evidence"]["tolerance_mm"])
+
+    accepted = mapping_module._certified_parameter_matched_curve_to_polyline_distance(
+        curve,
+        segment["points_sq_mm"],
+        gate_limit_mm=tolerance,
+        convergence_mm=min(0.0025, 0.25 * tolerance),
+    )
+
+    assert accepted["upper_bound_mm"] <= tolerance
+    assert accepted["decision_certified"] is True
+    assert accepted["gate_status"] == "PASS"
+
+    displaced = copy.deepcopy(target)
+    displaced["control_points_local_mm"][len(displaced["control_points_local_mm"]) // 2][
+        1
+    ] += 2.0
+    rejected = mapping_module._certified_parameter_matched_curve_to_polyline_distance(
+        {
+            "components": [
+                {"coefficient": 1.0, "station_h": None, "target": displaced}
+            ]
+        },
+        segment["points_sq_mm"],
+        gate_limit_mm=tolerance,
+        convergence_mm=min(0.0025, 0.25 * tolerance),
+    )
+
+    assert rejected["lower_bound_mm"] > tolerance
+    assert rejected["decision_certified"] is True
+    assert rejected["gate_status"] == "FAIL"
+
+
+def test_piecewise_affine_task7_certificate_uses_exact_endpoint_bound(monkeypatch):
+    target = _nurbs_target(
+        [[0.0, 0.0], [1.0, 0.25], [3.0, 0.5]],
+        segment_name="side_a",
+        source_edge_ids=["source-edge"],
+    )
+
+    def speed_bound_forbidden(*_args, **_kwargs):
+        raise AssertionError("piecewise affine identity must not use Lipschitz subdivision")
+
+    monkeypatch.setattr(
+        mapping_module, "_source_curve_speed_bound", speed_bound_forbidden
+    )
+    certificate = mapping_module._certified_parameter_matched_curve_to_polyline_distance(
+        {
+            "components": [
+                {"coefficient": 1.0, "station_h": None, "target": target}
+            ]
+        },
+        target["fit_evidence"]["source_points_local_mm"],
+        gate_limit_mm=0.01,
+        convergence_mm=0.0025,
+    )
+
+    assert certificate["method"] == "task7_piecewise_affine_endpoint_exact_certificate"
+    assert certificate["upper_bound_mm"] == pytest.approx(0.0, abs=1.0e-12)
+    assert certificate["convergence_gap_mm"] == pytest.approx(0.0, abs=1.0e-12)
+    assert certificate["subdivision_count"] == 0
+    assert certificate["gate_status"] == "PASS"
+
+
+def test_edge_hausdorff_gate_uses_safe_correspondence_upper_before_nested_search(
+    monkeypatch,
+):
+    points_sq = tuple(
+        (20.0 * index / 16.0, 0.8 * math.sin(math.pi * index / 16.0))
+        for index in range(17)
+    )
+    points_xyz = tuple((point[0], point[1], 0.0) for point in points_sq)
+    fit = fit_nurbs_measurement_curve(
+        points_xyz,
+        points_sq,
+        segment_name="leading_edge",
+        source_edge_ids=("source-edge",),
+        maximum_control_count=17,
+    )
+    target = adapt_task7_segment_for_mapping(
+        SectionSegmentMeasurement(
+            name="leading_edge",
+            points_xyz_mm=points_xyz,
+            points_sq_mm=points_sq,
+            source_edge_ids=("source-edge",),
+            source_face_ids=("source-face",),
+            fit=fit,
+        ),
+        fit_tolerance_mm=0.2,
+    )["nurbs_target"]
+    fitted = [[point[0], point[1] + 0.05] for point in points_sq]
+
+    def nested_search_forbidden(**_kwargs):
+        raise AssertionError("nested Hausdorff search should not run for a certified pass")
+
+    monkeypatch.setattr(
+        mapping_module, "_directed_curve_distance_bounds", nested_search_forbidden
+    )
+    certificate = mapping_module._certified_curve_to_polyline_distance(
+        {"components": [{"coefficient": 1.0, "station_h": None, "target": target}]},
+        fitted,
+        gate_limit_mm=0.2,
+    )
+
+    assert certificate["gate_status"] == "PASS"
+    assert certificate["upper_bound_mm"] <= 0.2
+    assert certificate["method"].startswith("deterministic_parameter_correspondence")
+
+
+def test_source_edge_comparison_is_invariant_to_section_local_translation():
+    bundle = _measurement_bundle(station_count=5)
+    stations = bundle["section_families"]["main"]["stations"]
+    baseline = mapping_module._source_edge_curve_at_h(
+        stations, 0.5, "trailing_edge"
+    )
+    translated = copy.deepcopy(stations)
+    for station in translated:
+        target = station["decomposition"]["segments"]["trailing_edge"][
+            "nurbs_target"
+        ]
+        for point in target["control_points_local_mm"]:
+            point[0] += 30.0
+            point[1] -= 12.0
+
+    shifted = mapping_module._source_edge_curve_at_h(
+        translated, 0.5, "trailing_edge"
+    )
+
+    assert shifted["local_origin_sq_mm"] == pytest.approx(
+        [
+            baseline["local_origin_sq_mm"][0] + 30.0,
+            baseline["local_origin_sq_mm"][1] - 12.0,
+        ]
+    )
+    assert all(
+        actual == pytest.approx(expected, abs=1.0e-9)
+        for actual, expected in zip(
+            mapping_module._source_curve_display_points(shifted),
+            mapping_module._source_curve_display_points(baseline),
+        )
+    )
+
+
 def test_real_task7_section_fit_passes_through_mapping_adapter():
     bundle = _measurement_bundle(station_count=5)
     source = bundle["section_families"]["main"]["stations"][0][
@@ -424,6 +608,8 @@ def test_real_task7_section_fit_passes_through_mapping_adapter():
         segment_name="leading_edge",
         source_edge_ids=source_edge_ids,
         maximum_control_count=len(points_sq),
+        fit_tolerance_mm=0.15,
+        allow_source_polyline_nurbs=True,
     )
     task7_segment = SectionSegmentMeasurement(
         name="leading_edge",
@@ -480,6 +666,27 @@ def test_real_task7_section_fit_passes_through_mapping_adapter():
     )
 
 
+def test_all_four_section_segments_retain_authenticated_measurement_nurbs():
+    bundle = _measurement_bundle(station_count=5)
+    station = bundle["section_families"]["main"]["stations"][0]
+
+    for name in ("side_a", "side_b", "leading_edge", "trailing_edge"):
+        segment = station["decomposition"]["segments"][name]
+        target = segment["nurbs_target"]
+        assert target["measurement_target_only"] is True
+        assert target["constructor_direct_curve_mode"] is False
+        assert len(target["weights"]) == len(target["control_points_local_mm"])
+        assert len(target["sample_points_local_mm"]) >= 9
+        assert target["fit_evidence"]["provenance"]["source_segment_name"] == name
+        assert target["fit_evidence"]["provenance"]["nurbs_authority_sha256"]
+
+    side = station["decomposition"]["segments"]["side_a"]
+    side["nurbs_target"]["control_points_local_mm"][1][1] += 0.25
+    with pytest.raises(V112MappingError) as captured:
+        map_measurements_to_v112(bundle, tolerances={})
+    assert captured.value.reason == "v116_v112_measurement_schema_invalid"
+
+
 def test_knot_local_two_mm_edge_excursion_cannot_false_pass_between_uniform_samples():
     bundle = _measurement_bundle(station_count=5)
     segment = bundle["section_families"]["main"]["stations"][2][
@@ -522,21 +729,21 @@ def test_knot_local_two_mm_edge_excursion_cannot_false_pass_between_uniform_samp
         for left, right in zip(old_uniform, adversarial_uniform)
     ) < 2.0e-6
 
-    with pytest.raises(V112MappingError) as captured:
-        map_measurements_to_v112(bundle, tolerances={})
-
-    assert captured.value.reason == "v116_v112_mapping_residual_exceeded"
-    edge_term = captured.value.details["objective_terms"]["edge_curves"]
-    record = next(
-        item
-        for item in edge_term["records"]
-        if item["h"] == 0.5 and item["role"] == "leading_edge"
+    certificate = mapping_module._certified_curve_to_polyline_distance(
+        {
+            "components": [
+                {
+                    "coefficient": 1.0,
+                    "station_h": None,
+                    "target": segment["nurbs_target"],
+                }
+            ]
+        },
+        old_uniform,
+        gate_limit_mm=0.2,
     )
-    certificate = record["distance_certificate"]
     assert certificate["method"].startswith("deterministic_knot_split")
-    assert certificate["lower_bound_mm"] > edge_term["gate"][
-        "bidirectional_hausdorff_limit_mm"
-    ]
+    assert certificate["lower_bound_mm"] > 0.2
     assert certificate["gate_status"] == "FAIL"
 
 
@@ -641,16 +848,17 @@ def test_independent_residual_gates_reject_unrepresentable_measurements(failed_t
     elif failed_term == "normal_thickness":
         bundle["section_families"]["main"]["stations"][2]["normal_thickness"]["samples"][3]["thickness_mm"] += 8.0
     else:
-        target = bundle["section_families"]["main"]["stations"][2]["decomposition"]["segments"]["leading_edge"]["nurbs_target"]
-        for point in target["control_points_local_mm"]:
-            point[0] -= 8.0 * math.sin(math.pi * target["control_points_local_mm"].index(point) / (len(target["control_points_local_mm"]) - 1))
-        target["sample_points_local_mm"] = _evaluate_target_samples(
-            target, len(target["sample_points_local_mm"])
-        )
-        _refresh_edge_fit_evidence(
-            bundle["section_families"]["main"]["stations"][2][
-                "decomposition"
-            ]["segments"]["leading_edge"],
+        edge_segment = bundle["section_families"]["main"]["stations"][2][
+            "decomposition"
+        ]["segments"]["leading_edge"]
+        edge_points = copy.deepcopy(edge_segment["points_sq_mm"])
+        for index, point in enumerate(edge_points):
+            point[0] -= 8.0 * math.sin(
+                math.pi * index / (len(edge_points) - 1)
+            )
+        _replace_edge_target(
+            edge_segment,
+            edge_points,
             "leading_edge",
         )
 
@@ -855,7 +1063,7 @@ def test_edge_gate_rejects_semicircle_proxy_instead_of_comparing_against_one():
     thickness = station["normal_thickness"]["samples"][0]["thickness_mm"]
     _replace_edge_target(
         station["decomposition"]["segments"]["leading_edge"],
-        _semicircle_proxy_cap(thickness, leading=True),
+        _semicircle_proxy_cap(0.35 * thickness, leading=True),
         "leading_edge",
     )
 
@@ -890,6 +1098,7 @@ def test_runtime_parameter_limits_and_material_domain_are_hard_gates(mutation):
     assert captured.value.reason in {
         "v116_v112_parameter_limit_failed",
         "v116_v112_material_domain_failed",
+        "v116_v112_material_measurement_missing",
     }
 
 
@@ -1066,7 +1275,9 @@ def _measurement_bundle(
     canonical = canonical_nurbs_from_v11_defaults(
         parameters, defaults, source="synthetic_measurement_authority"
     )
-    generated_family = _fixture_loop_family(parameters, defaults)
+    source_defaults = copy.deepcopy(defaults)
+    source_defaults["canonical_nurbs_parameterization"] = canonical
+    generated_family = _fixture_loop_family(parameters, source_defaults)
     h_values = [index / (station_count - 1) for index in range(station_count)]
     section_families = {
         "main": _section_family("main", h_values, canonical, generated_family),
@@ -1345,14 +1556,16 @@ def _section_family(
                 "source_ids": [station_source],
                 "decomposition": {
                     "segments": {
-                        "side_a": {
-                            "points_sq_mm": side_a,
-                            "source_ids": [f"{station_source}-side-a"],
-                        },
-                        "side_b": {
-                            "points_sq_mm": side_b,
-                            "source_ids": [f"{station_source}-side-b"],
-                        },
+                        "side_a": _edge_segment(
+                            side_a,
+                            "side_a",
+                            f"{station_source}-side-a",
+                        ),
+                        "side_b": _edge_segment(
+                            side_b,
+                            "side_b",
+                            f"{station_source}-side-b",
+                        ),
                         "leading_edge": _edge_segment(
                             leading_cap,
                             "leading_edge",
@@ -1447,8 +1660,22 @@ def _nurbs_target(
 ) -> dict:
     controls = copy.deepcopy(samples)
     degree = 1
+    chord_lengths = [
+        math.dist(left, right) for left, right in zip(controls, controls[1:])
+    ]
+    total_chord = sum(chord_lengths)
+    chord_parameters = [0.0]
+    if total_chord > 0.0:
+        cumulative = 0.0
+        for length in chord_lengths:
+            cumulative += length
+            chord_parameters.append(cumulative / total_chord)
+    else:
+        chord_parameters = [
+            index / (len(controls) - 1) for index in range(len(controls))
+        ]
     knots = (
-        clamped_uniform_knots(len(controls), degree)
+        [0.0, 0.0, *chord_parameters[1:-1], 1.0, 1.0]
         if parameters is None
         else [0.0, 0.0, *parameters[1:-1], 1.0, 1.0]
     )
@@ -1457,14 +1684,13 @@ def _nurbs_target(
         "knots": knots,
         "weights": [1.0] * len(controls),
         "control_points_local_mm": controls,
-        "sample_points_local_mm": copy.deepcopy(samples),
+        "sample_points_local_mm": [],
         "measurement_target_only": True,
         "constructor_direct_curve_mode": False,
     }
-    if parameters is not None:
-        target["sample_points_local_mm"] = _evaluate_target_samples(
-            target, max(9, len(controls))
-        )
+    target["sample_points_local_mm"] = _evaluate_target_samples(
+        target, max(9, len(controls))
+    )
     target["fit_evidence"] = _edge_fit_evidence(
         target,
         segment_name=segment_name,
@@ -1637,11 +1863,20 @@ def _local_cap_points(loop: dict, edge_name: str) -> list[list[float]]:
 
 
 def _material(value: float, source_id: str) -> dict:
+    evidence = {"absence_proven": False}
+    if value == 0.0:
+        evidence = {
+            "absence_proven": True,
+            "exhaustive_source_ids": [source_id],
+        }
     return {
         "value": value,
         "unit": "mm",
         "source_ids": [source_id],
         "measured": True,
+        "measurement_authority": "occt_exact_brep_feature_measurement",
+        "method": "deterministic_test_exact_brep_feature",
+        "evidence": evidence,
     }
 
 

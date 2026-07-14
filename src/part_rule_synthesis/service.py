@@ -146,6 +146,25 @@ class RuleSynthesisService:
     ) -> ModelRun:
         dsl = self._engine(engine_id)
         is_v11_impeller = dsl["part_family"] == "impeller" and _dsl_version(dsl) == "1.1"
+        if dsl.get("canonical_payload_authority") == "v116_mapper_approved":
+            supplied_geometry_inputs = {
+                "parameters": parameters,
+                "profile_overrides": profile_overrides,
+                "curve_overrides": curve_overrides,
+                "section_loop_overrides": section_loop_overrides,
+                "blade_to_blade_loop_family_overrides": (
+                    blade_to_blade_loop_family_overrides
+                ),
+                "transition_overrides": transition_overrides,
+            }
+            supplied_names = sorted(
+                name for name, value in supplied_geometry_inputs.items() if value
+            )
+            if supplied_names:
+                raise ValueError(
+                    "V1.1.6 mapper-approved runtime forbids geometry inputs: "
+                    + ", ".join(supplied_names)
+                )
         bound = _bind_parameters(dsl, parameters)
         operation_graph = _operation_graph(dsl, bound)
         normalized_geometry_stage = _normalize_geometry_stage(geometry_stage)
@@ -1154,6 +1173,9 @@ def _v10_surface_graph_attachment_defaults(
             context,
             parameters=parameters or {},
             profile_overrides=profile_overrides or {},
+            blade_to_blade_loop_family_overrides=(
+                blade_to_blade_loop_family_overrides or {}
+            ),
         )
         return {
             "geometry_patch_version": str(context.get("geometry_patch_version", "1.1.0")),
@@ -1179,24 +1201,72 @@ def _v11_resolved_defaults_for_instantiation(
     *,
     parameters: dict[str, Any],
     profile_overrides: dict[str, Any],
+    blade_to_blade_loop_family_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_defaults = copy.deepcopy(
         context.get("resolved_blade_to_blade_loop_family_defaults", {})
     )
-    _apply_v11_profile_overrides_to_defaults(resolved_defaults, profile_overrides)
-    if context.get("geometry_patch_version") == "1.1.2":
-        _apply_v11_bound_scalar_defaults(resolved_defaults, parameters)
-        source = str(context.get("canonical_input_source", "translated_from_legacy_v1_1"))
-        resolved_defaults["canonical_nurbs_parameterization"] = canonical_nurbs_from_v11_defaults(
-            parameters,
-            resolved_defaults,
-            source=source,
+    mapper_approved = (
+        context.get("canonical_payload_authority") == "v116_mapper_approved"
+    )
+    if mapper_approved and (
+        profile_overrides or blade_to_blade_loop_family_overrides
+    ):
+        raise ValueError(
+            "V1.1.6 mapper-approved canonical payload forbids geometry overrides"
         )
+    if not mapper_approved:
+        _apply_v11_profile_overrides_to_defaults(resolved_defaults, profile_overrides)
+    if context.get("geometry_patch_version") == "1.1.2":
+        if mapper_approved:
+            canonical = context.get("canonical_nurbs_parameterization")
+            expected_hash = context.get("canonical_payload_hash_sha256")
+            if not isinstance(canonical, Mapping) or not isinstance(
+                expected_hash, str
+            ):
+                raise ValueError(
+                    "V1.1.6 mapper-approved canonical payload lacks its hash binding"
+                )
+            actual_hash = _canonical_payload_sha256(canonical)
+            if actual_hash != expected_hash:
+                raise ValueError(
+                    "V1.1.6 mapper-approved canonical payload hash mismatch"
+                )
+            if canonical.get("canonical_payload_version") != "1.1.2":
+                raise ValueError(
+                    "V1.1.6 mapper-approved canonical payload must target V1.1.2"
+                )
+            resolved_defaults["canonical_nurbs_parameterization"] = copy.deepcopy(
+                dict(canonical)
+            )
+        else:
+            _apply_v11_bound_scalar_defaults(resolved_defaults, parameters)
+            source = str(
+                context.get("canonical_input_source", "translated_from_legacy_v1_1")
+            )
+            resolved_defaults[
+                "canonical_nurbs_parameterization"
+            ] = canonical_nurbs_from_v11_defaults(
+                parameters,
+                resolved_defaults,
+                source=source,
+            )
     elif "canonical_nurbs_parameterization" in context:
         resolved_defaults["canonical_nurbs_parameterization"] = copy.deepcopy(
             context["canonical_nurbs_parameterization"]
         )
     return resolved_defaults
+
+
+def _canonical_payload_sha256(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _apply_v11_bound_scalar_defaults(

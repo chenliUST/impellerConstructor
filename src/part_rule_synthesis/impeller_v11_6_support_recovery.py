@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import math
 import hashlib
 import hmac
 import json
+import math
 import secrets
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -24,8 +24,10 @@ _DENSE_CORRESPONDENCE_SAMPLE_COUNT = 4097
 _DENSE_CONNECTOR_SAMPLE_COUNT = 513
 _DUPLICATE_PATH_SAMPLE_COUNT = 257
 _MINIMUM_THICKNESS_SAMPLES_PER_PAIR = 2
+_MAX_AUTHENTICATED_SUPPORT_CLIPPED_RADIAL_FRACTION = 0.25
 _EVIDENCE_SECRET = secrets.token_bytes(32)
 _PARTITION_DIGEST_BY_SOURCE_SOLID: dict[str, str] = {}
+_SOURCE_SOLID_IDENTITIES_BY_HASH: dict[int, list[tuple[Any, str]]] = {}
 _HUB_SUPPORT_ROLE = "hub_flowpath_support"
 _INNER_SHROUD_ROLE = "inner_shroud_flowpath_support"
 _OUTER_SHROUD_ROLE = "outer_shroud_material_support"
@@ -635,6 +637,7 @@ def fit_hub_profile(
     source_to_canonical_matrix: Sequence[Sequence[float]] | None = None,
     source_tolerance_mm: float = _DEFAULT_SOURCE_TOLERANCE_MM,
     source_sampling_authority: str = "caller_supplied_sample_paths",
+    minimum_radius_mm: float | None = None,
 ) -> dict[str, Any]:
     authenticated = _authenticated_face_profile_inputs(
         source_face_evidence,
@@ -646,8 +649,13 @@ def fit_hub_profile(
             raise ValueError(
                 "source_face_evidence cannot be combined with caller sample paths or face ids"
             )
-        sample_paths_rz_mm = authenticated["paths_rz_mm"]
-        source_face_ids = authenticated["path_source_ids"]
+        projected = _radially_order_authenticated_support_paths(
+            authenticated,
+            minimum_radius_mm=minimum_radius_mm,
+            failure_reason="v116_hub_profile_fit_failed",
+        )
+        sample_paths_rz_mm = projected["paths_rz_mm"]
+        source_face_ids = projected["path_source_ids"]
         coordinate_frame = authenticated["coordinate_frame"]
         source_to_canonical_matrix = authenticated["source_to_canonical_transform"]
         source_tolerance_mm = authenticated["source_tolerance_mm"]
@@ -655,8 +663,11 @@ def fit_hub_profile(
         # Promoted fits are bounded by the material-domain classifier that
         # produced the authenticated samples. Caller bounds and endpoints are
         # diagnostic-only and must not steer certified source measurement.
-        material_domain_rz_mm = authenticated["material_domain_rz_mm"]
+        material_domain_rz_mm = projected["material_domain_rz_mm"]
         endpoints_rz_mm = None
+        authenticated_provenance = projected["provenance"]
+    else:
+        authenticated_provenance = None
     return fit_robust_constrained_cubic_profile(
         sample_paths_rz_mm,
         source_entity_ids=source_face_ids,
@@ -670,7 +681,7 @@ def fit_hub_profile(
         source_tolerance_mm=source_tolerance_mm,
         source_sampling_authority=source_sampling_authority,
         promoted_pass_eligible=authenticated is not None,
-        authenticated_provenance=(authenticated or {}).get("provenance"),
+        authenticated_provenance=authenticated_provenance,
     )
 
 
@@ -1763,10 +1774,12 @@ def sample_occt_face_meridional_paths(
         state_paths = []
         discarded_outside = 0
         discarded_short = 0
-        fixed_values = (
-            np.linspace(v_first, v_last, trace_total)
-            if varying_axis == "u"
-            else np.linspace(u_first, u_last, trace_total)
+        fixed_first, fixed_last = (
+            (v_first, v_last) if varying_axis == "u" else (u_first, u_last)
+        )
+        fixed_step = (fixed_last - fixed_first) / trace_total
+        fixed_values = fixed_first + fixed_step * (
+            np.arange(trace_total, dtype=float) + 0.5
         )
         varying_values = (
             np.linspace(u_first, u_last, point_total)
@@ -2328,12 +2341,19 @@ def _fit_authenticated_support_profile(
     )
     if authenticated is None:
         return None
-    points = np.asarray([point for path in authenticated["paths_rz_mm"] for point in path], dtype=float)
+    projected = _radially_order_authenticated_support_paths(
+        authenticated,
+        failure_reason="v116_shroud_topology_ambiguous",
+    )
+    points = np.asarray(
+        [point for path in projected["paths_rz_mm"] for point in path],
+        dtype=float,
+    )
     tolerance = authenticated["source_tolerance_mm"]
-    material_domain = authenticated["material_domain_rz_mm"]
+    material_domain = projected["material_domain_rz_mm"]
     return fit_robust_constrained_cubic_profile(
-        authenticated["paths_rz_mm"],
-        source_entity_ids=authenticated["path_source_ids"],
+        projected["paths_rz_mm"],
+        source_entity_ids=projected["path_source_ids"],
         material_domain_rz_mm=material_domain,
         rms_limit_mm=max(0.2, 0.002 * float(np.max(points[:, 0]) * 2.0)),
         semantic_role=semantic_role,
@@ -2343,8 +2363,162 @@ def _fit_authenticated_support_profile(
         source_tolerance_mm=tolerance,
         source_sampling_authority="occt_trimmed_face_classifier",
         promoted_pass_eligible=True,
-        authenticated_provenance=authenticated["provenance"],
+        authenticated_provenance=projected["provenance"],
     )
+
+
+def _radially_order_authenticated_support_paths(
+    authenticated: Mapping[str, Any],
+    *,
+    failure_reason: str,
+    minimum_radius_mm: float | None = None,
+) -> dict[str, Any]:
+    tolerance = float(authenticated["source_tolerance_mm"])
+    minimum = None
+    if minimum_radius_mm is not None:
+        minimum = float(minimum_radius_mm)
+        if not math.isfinite(minimum) or minimum < 0.0:
+            raise ValueError("minimum_radius_mm must be finite and nonnegative")
+    ordered_paths = []
+    source_ids = []
+    reversed_path_indices = []
+    split_path_indices = []
+    excluded_below_minimum_path_count = 0
+    discarded_sample_count = 0
+    maximum_clipped_radial_fraction = 0.0
+    for index, (path, source_id) in enumerate(
+        zip(
+            authenticated["paths_rz_mm"],
+            authenticated["path_source_ids"],
+            strict=True,
+        )
+    ):
+        points = np.asarray(path, dtype=float)
+        if len(points) < 2:
+            continue
+        radial_steps = np.diff(points[:, 0])
+        signed_steps = [
+            (step_index, 1 if value > 0.0 else -1)
+            for step_index, value in enumerate(radial_steps)
+            if abs(float(value)) > tolerance
+        ]
+        sign_changes = [
+            signed_steps[position][0]
+            for position in range(1, len(signed_steps))
+            if signed_steps[position][1] != signed_steps[position - 1][1]
+        ]
+        if len(sign_changes) > 1:
+            raise SupportRecoveryError(
+                failure_reason,
+                "authenticated support trace is not monotone in source order",
+                {
+                    "path_index": index,
+                    "source_entity_id": str(source_id),
+                    "minimum_radial_step_mm": float(np.min(radial_steps)),
+                    "maximum_radial_step_mm": float(np.max(radial_steps)),
+                    "source_order_sign_change_count": len(sign_changes),
+                },
+            )
+        branches = [points]
+        if sign_changes:
+            pivot = sign_changes[0]
+            branches = [points[: pivot + 1], points[pivot:]]
+            split_path_indices.append(index)
+        for branch in branches:
+            if len(branch) < 2:
+                continue
+            branch_steps = np.diff(branch[:, 0])
+            if np.all(branch_steps <= tolerance) and np.any(
+                branch_steps < -tolerance
+            ):
+                branch = branch[::-1].copy()
+                reversed_path_indices.append(index)
+            if np.any(np.diff(branch[:, 0]) < -tolerance):
+                raise SupportRecoveryError(
+                    failure_reason,
+                    "authenticated support branch is not monotone after source-order split",
+                    {"path_index": index, "source_entity_id": str(source_id)},
+                )
+            observed_minimum = float(np.min(branch[:, 0]))
+            observed_maximum = float(np.max(branch[:, 0]))
+            if minimum is not None and observed_maximum < minimum - tolerance:
+                excluded_below_minimum_path_count += 1
+                discarded_sample_count += len(branch)
+                continue
+            if minimum is not None and observed_minimum < minimum - tolerance:
+                radial_span = observed_maximum - observed_minimum
+                clipped_fraction = (
+                    1.0
+                    if radial_span <= tolerance
+                    else (minimum - observed_minimum) / radial_span
+                )
+                maximum_clipped_radial_fraction = max(
+                    maximum_clipped_radial_fraction, clipped_fraction
+                )
+                if (
+                    clipped_fraction
+                    > _MAX_AUTHENTICATED_SUPPORT_CLIPPED_RADIAL_FRACTION
+                ):
+                    raise SupportRecoveryError(
+                        failure_reason,
+                        "requested support radius would truncate authenticated source evidence",
+                        {
+                            "path_index": index,
+                            "source_entity_id": str(source_id),
+                            "minimum_radius_mm": minimum,
+                            "observed_minimum_radius_mm": observed_minimum,
+                            "observed_maximum_radius_mm": observed_maximum,
+                            "clipped_radial_fraction": clipped_fraction,
+                            "maximum_allowed_clipped_radial_fraction": (
+                                _MAX_AUTHENTICATED_SUPPORT_CLIPPED_RADIAL_FRACTION
+                            ),
+                        },
+                    )
+                mask = branch[:, 0] >= minimum - tolerance
+                discarded_sample_count += int(np.count_nonzero(~mask))
+                branch = branch[mask]
+            if len(branch) < 2:
+                continue
+            ordered_paths.append(branch.tolist())
+            source_ids.append(str(source_id))
+    if not ordered_paths:
+        raise SupportRecoveryError(
+            failure_reason,
+            "authenticated support samples do not span the requested radial material domain",
+            {"minimum_radius_mm": minimum_radius_mm},
+        )
+    material_domain = [
+        [float(bound[0]), float(bound[1])]
+        for bound in authenticated["material_domain_rz_mm"]
+    ]
+    retained_minimum_radius = min(
+        float(point[0]) for path in ordered_paths for point in path
+    )
+    if minimum is not None:
+        material_domain[0][0] = max(
+            float(material_domain[0][0]), retained_minimum_radius
+        )
+    provenance = {
+        **deepcopy(authenticated["provenance"]),
+        "projection_method": "source_order_monotone_meridional_trace_validation",
+        "projection_preserves_source_adjacency": True,
+        "reversed_path_indices": reversed_path_indices,
+        "split_at_single_radial_turning_point_path_indices": split_path_indices,
+        "minimum_radius_mm": minimum,
+        "effective_retained_minimum_radius_mm": retained_minimum_radius,
+        "discarded_below_minimum_radius_sample_count": discarded_sample_count,
+        "excluded_below_minimum_path_count": excluded_below_minimum_path_count,
+        "maximum_clipped_radial_fraction": maximum_clipped_radial_fraction,
+        "maximum_allowed_clipped_radial_fraction": (
+            _MAX_AUTHENTICATED_SUPPORT_CLIPPED_RADIAL_FRACTION
+        ),
+    }
+    return {
+        "paths_rz_mm": ordered_paths,
+        "path_source_ids": source_ids,
+        "material_domain_rz_mm": material_domain,
+        "provenance": provenance,
+    }
 
 
 def _authenticated_edge_profile_inputs(
@@ -3281,7 +3455,17 @@ def _shape_identity(shape: Any, name: str) -> str:
         raw_hash = shape.hashCode() if hasattr(shape, "hashCode") else hash(wrapped)
     except Exception as exc:
         raise ValueError(f"{name} does not expose stable OCCT shape identity") from exc
-    return f"occt-shape-{int(raw_hash) & ((1 << 64) - 1):016x}"
+    numeric_hash = int(raw_hash) & ((1 << 64) - 1)
+    base = f"occt-shape-{numeric_hash:016x}"
+    if name != "source_solid":
+        return base
+    bucket = _SOURCE_SOLID_IDENTITIES_BY_HASH.setdefault(numeric_hash, [])
+    for existing, identity in bucket:
+        if wrapped.IsSame(existing):
+            return identity
+    identity = base if not bucket else f"{base}-{len(bucket):02d}"
+    bucket.append((wrapped, identity))
+    return identity
 
 
 def _assert_source_subshape(source_shape: Any, candidate: Any, kind: str) -> str:
@@ -3374,8 +3558,10 @@ def _source_shape_is_closed(source_shape: Any) -> bool:
 
 def _occt_face_circumferential_coverage(face: Any) -> float:
     try:
+        from OCP.BRepAdaptor import BRepAdaptor_Curve
         from OCP.BRepAdaptor import BRepAdaptor_Surface
         from OCP.BRepTools import BRepTools
+        from OCP.GeomAbs import GeomAbs_Circle
     except ImportError as exc:
         raise SupportRecoveryError(
             "v116_step_ocp_unavailable",
@@ -3393,6 +3579,16 @@ def _occt_face_circumferential_coverage(face: Any) -> float:
         period = float(adaptor.VPeriod())
         if period > _EPSILON:
             candidates.append((v_last - v_first) / period)
+    if not candidates:
+        for edge in _iter_source_subshapes(face, "EDGE"):
+            curve = BRepAdaptor_Curve(_wrapped(edge))
+            if curve.GetType() != GeomAbs_Circle:
+                continue
+            parameter_span = abs(
+                float(curve.LastParameter()) - float(curve.FirstParameter())
+            )
+            if math.isfinite(parameter_span):
+                candidates.append(parameter_span / (2.0 * math.pi))
     if not candidates:
         return 0.0
     return min(1.0, max(0.0, max(candidates)))

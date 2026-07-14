@@ -232,6 +232,8 @@ class ExactSectionResult:
     display_samples_exact: bool = False
     wire_assembly_method: str = "occt_shared_vertex_topology"
     landmark_tracking: Mapping[str, Any] | None = None
+    cutter_boundary_clearance_deg: float | None = None
+    cutter_boundary_clearance_verified: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         loops = (self.accepted_loop,) + self.additional_loops
@@ -243,6 +245,8 @@ class ExactSectionResult:
             "display_samples_exact": self.display_samples_exact,
             "wire_assembly_method": self.wire_assembly_method,
             "landmark_tracking": _json_value(self.landmark_tracking),
+            "cutter_boundary_clearance_deg": self.cutter_boundary_clearance_deg,
+            "cutter_boundary_clearance_verified": self.cutter_boundary_clearance_verified,
             "source_edge_records": [
                 edge.as_dict() for loop in loops for edge in loop.edges
             ],
@@ -696,9 +700,13 @@ def build_adaptive_span_profiles(
 
 
 def make_occt_revolved_measurement_surface(
-    profile: SpanProfile | Sequence[Sequence[float]], *, tolerance_mm: float = 1.0e-6
+    profile: SpanProfile | Sequence[Sequence[float]],
+    *,
+    tolerance_mm: float = 1.0e-6,
+    angular_sector_deg: tuple[float, float] | None = None,
 ) -> Any:
     try:
+        from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
         from OCP.Geom import Geom_SurfaceOfRevolution
         from OCP.GeomAPI import GeomAPI_PointsToBSpline
         from OCP.GeomAbs import GeomAbs_C2
@@ -717,7 +725,60 @@ def make_occt_revolved_measurement_surface(
         array.SetValue(index, gp_Pnt(float(radius), 0.0, float(axial)))
     builder = GeomAPI_PointsToBSpline(array, 3, 8, GeomAbs_C2, tolerance_mm)
     curve = builder.Curve()
-    return Geom_SurfaceOfRevolution(curve, gp_Ax1(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0)))
+    surface = Geom_SurfaceOfRevolution(
+        curve,
+        gp_Ax1(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0)),
+    )
+    if angular_sector_deg is None:
+        return surface
+    first_deg, last_deg, _margin = _expanded_angular_sector_bounds_deg(
+        angular_sector_deg
+    )
+    first_angle = math.radians(first_deg)
+    last_angle = math.radians(last_deg)
+    return BRepBuilderAPI_MakeFace(
+        surface,
+        first_angle,
+        last_angle,
+        float(curve.FirstParameter()),
+        float(curve.LastParameter()),
+        float(tolerance_mm),
+    ).Face()
+
+
+def _expanded_angular_sector_bounds_deg(
+    angular_sector_deg: Sequence[float],
+) -> tuple[float, float, float]:
+    start = _normalize_degrees(float(angular_sector_deg[0]))
+    extent = (
+        _normalize_degrees(float(angular_sector_deg[1])) - start
+    ) % 360.0
+    if extent <= 1.0e-9:
+        raise ValueError("angular_sector_deg must define a nonzero sector")
+    margin = max(1.0, 0.1 * extent)
+    return start - margin, start + extent + margin, margin
+
+
+def _minimum_angular_cutter_boundary_clearance_deg(
+    points_xyz_mm: Sequence[Sequence[float]],
+    angular_sector_deg: Sequence[float],
+) -> float:
+    points = np.asarray(points_xyz_mm, dtype=float)
+    _validate_points(points, 3, "points_xyz_mm", minimum=1)
+    first_deg, last_deg, _margin = _expanded_angular_sector_bounds_deg(
+        angular_sector_deg
+    )
+    angles = np.degrees(np.arctan2(points[:, 1], points[:, 0]))
+
+    def circular_distance(values: np.ndarray, boundary: float) -> np.ndarray:
+        return np.abs((values - boundary + 180.0) % 360.0 - 180.0)
+
+    return float(
+        min(
+            np.min(circular_distance(angles, first_deg)),
+            np.min(circular_distance(angles, last_deg)),
+        )
+    )
 
 
 def section_source_solid(
@@ -725,6 +786,7 @@ def section_source_solid(
     measurement_surface: Any,
     *,
     angular_sector_deg: tuple[float, float] | None = None,
+    angular_source_to_canonical_matrix: Sequence[Sequence[float]] | None = None,
     source_faces_by_id: Mapping[str, Any] | None = None,
     allowed_source_face_ids: Sequence[str] | None = None,
     source_face_roles: Mapping[str, str] | None = None,
@@ -735,6 +797,7 @@ def section_source_solid(
     source_tolerance_mm: float = 0.02,
     edge_sample_count: int = 17,
     reference_loop: SectionLoop | None = None,
+    source_shape_scope: str = "complete_source_shape",
 ) -> ExactSectionResult:
     try:
         from OCP.BRepAdaptor import BRepAdaptor_Curve
@@ -760,6 +823,8 @@ def section_source_solid(
                 "allow_list_present": bool(allowed_source_face_ids),
             },
         )
+    if source_shape_scope != "complete_source_shape":
+        raise ValueError("source_shape_scope must be complete_source_shape")
     source = _wrapped(source_shape)
     surface = _wrapped(measurement_surface)
     operation = BRepAlgoAPI_Section(source, surface, False)
@@ -768,7 +833,8 @@ def section_source_solid(
     operation.Build()
     if not operation.IsDone():
         raise SectionRecoveryError(
-            "v116_section_intersection_failed", "OCCT failed to section the complete source shape"
+            "v116_section_intersection_failed",
+            f"OCCT failed to section {source_shape_scope}",
         )
 
     face_records = [(str(face_id), _wrapped(face)) for face_id, face in (source_faces_by_id or {}).items()]
@@ -781,9 +847,19 @@ def section_source_solid(
             {"unknown_allowed_source_face_ids": unknown_allowed},
         )
     role_map = {str(key): _canonical_segment_role(value) for key, value in (source_face_roles or {}).items()}
+    angular_matrix = None
+    if angular_source_to_canonical_matrix is not None:
+        angular_matrix = np.asarray(
+            angular_source_to_canonical_matrix, dtype=float
+        )
+        if angular_matrix.shape != (4, 4) or not np.all(np.isfinite(angular_matrix)):
+            raise ValueError(
+                "angular_source_to_canonical_matrix must be a finite 4x4 transform"
+            )
     raw_edges: list[dict[str, Any]] = []
     rejected: list[Mapping[str, Any]] = []
     unresolved: list[Mapping[str, Any]] = []
+    minimum_cutter_clearance_deg = math.inf
     explorer = TopExp_Explorer(operation.Shape(), TopAbs_EDGE)
     while explorer.More():
         edge = TopoDS.Edge_s(explorer.Current())
@@ -807,7 +883,16 @@ def section_source_solid(
         face_ids = tuple(
             sorted(face_id for face_id, face in face_records if provenance_available and ancestor.IsSame(face))
         )
-        angle = _circular_mean_deg([math.degrees(math.atan2(point[1], point[0])) for point in points])
+        angular_points = points
+        if angular_matrix is not None:
+            homogeneous = np.column_stack([points, np.ones(len(points))])
+            angular_points = (angular_matrix @ homogeneous.T).T[:, :3]
+        angle = _circular_mean_deg(
+            [
+                math.degrees(math.atan2(point[1], point[0]))
+                for point in angular_points
+            ]
+        )
         fingerprint = _edge_fingerprint(points, face_ids)
         if not provenance_available or not face_ids:
             unresolved.append(
@@ -819,6 +904,31 @@ def section_source_solid(
             )
             explorer.Next()
             continue
+        if angular_sector_deg is not None and set(face_ids).issubset(allowed):
+            clearance = _minimum_angular_cutter_boundary_clearance_deg(
+                angular_points, angular_sector_deg
+            )
+            minimum_cutter_clearance_deg = min(
+                minimum_cutter_clearance_deg, clearance
+            )
+            minimum_radius = max(
+                float(np.min(np.linalg.norm(angular_points[:, :2], axis=1))),
+                tolerance,
+            )
+            angular_tolerance_deg = math.degrees(tolerance / minimum_radius)
+            if clearance <= max(1.0e-7, angular_tolerance_deg):
+                raise SectionRecoveryError(
+                    "v116_section_intersection_failed",
+                    "allowed source section contacts the bounded angular cutter",
+                    {
+                        "fingerprint": fingerprint,
+                        "source_face_ids": list(face_ids),
+                        "cutter_boundary_clearance_deg": clearance,
+                        "required_clearance_deg": max(
+                            1.0e-7, angular_tolerance_deg
+                        ),
+                    },
+                )
         if angular_sector_deg is not None and not _angle_in_sector(angle, angular_sector_deg, 1.0e-7):
             rejected.append(
                 {
@@ -926,7 +1036,17 @@ def section_source_solid(
         accepted_loop=accepted_loop,
         additional_loops=tuple(ranked[1:]),
         rejected_edges=tuple(rejected),
+        source_shape_scope=source_shape_scope,
         landmark_tracking=landmark_tracking,
+        cutter_boundary_clearance_deg=(
+            None
+            if not math.isfinite(minimum_cutter_clearance_deg)
+            else minimum_cutter_clearance_deg
+        ),
+        cutter_boundary_clearance_verified=(
+            angular_sector_deg is None
+            or math.isfinite(minimum_cutter_clearance_deg)
+        ),
     )
 
 
@@ -1632,8 +1752,33 @@ def decompose_section_loop(
         raw_segments = role_segments
         method = "source_face_adjacency"
     else:
-        raw_segments = _segments_from_landmarks_or_geometry(loop, landmark_indices)
-        method = "explicit_landmarks" if landmark_indices is not None else "streamwise_extrema_tangent_continuity"
+        partial_role_segments = _segments_from_authenticated_side_roles(loop)
+        if partial_role_segments is not None:
+            raw_segments = partial_role_segments
+            method = "partial_source_face_adjacency"
+        else:
+            authenticated_side_roles = sorted(
+                {
+                    role
+                    for edge in loop.edges
+                    for role in edge.source_roles
+                    if role in {"side_a", "side_b"}
+                }
+            )
+            if authenticated_side_roles:
+                raise SectionRecoveryError(
+                    "v116_section_loop_correspondence_failed",
+                    "authenticated side provenance does not form one complete side_a/side_b partition",
+                    {
+                        "authenticated_side_roles": authenticated_side_roles,
+                        "source_edge_roles": {
+                            edge.edge_id: list(edge.source_roles)
+                            for edge in loop.edges
+                        },
+                    },
+                )
+            raw_segments = _segments_from_landmarks_or_geometry(loop, landmark_indices)
+            method = "explicit_landmarks" if landmark_indices is not None else "streamwise_extrema_tangent_continuity"
 
     measurements: list[SectionSegmentMeasurement] = []
     for name in _SEGMENT_ROLES:
@@ -1644,6 +1789,15 @@ def decompose_section_loop(
             segment_name=name,
             source_edge_ids=record["source_edge_ids"],
             maximum_control_count=maximum_control_count,
+            fit_tolerance_mm=loop.source_tolerance_mm,
+            allow_source_polyline_nurbs=(
+                loop.source_wire_exact
+                and loop.source_kind
+                in {
+                    "occt_exact_full_source_section",
+                    "occt_exact_authenticated_face_compound_section",
+                }
+            ),
         )
         measurements.append(
             SectionSegmentMeasurement(
@@ -1678,6 +1832,8 @@ def fit_nurbs_measurement_curve(
     segment_name: str,
     source_edge_ids: Sequence[str] = (),
     maximum_control_count: int = 8,
+    fit_tolerance_mm: float | None = None,
+    allow_source_polyline_nurbs: bool = False,
 ) -> NurbsCurveFit:
     xyz = np.asarray(points_xyz_mm, dtype=float)
     sq = np.asarray(points_sq_mm, dtype=float)
@@ -1686,52 +1842,97 @@ def fit_nurbs_measurement_curve(
     if len(xyz) != len(sq):
         raise ValueError("3D and local segment samples must have matching lengths")
     maximum = max(2, int(maximum_control_count))
-    degree = min(3, len(sq) - 1)
-    control_count = min(maximum, len(sq))
-    control_count = max(degree + 1, control_count)
-    parameters = _chord_parameters(sq)
-    knots = _clamped_uniform_knots(control_count, degree)
-    basis = _basis_matrix(parameters, control_count, degree, knots)
-    controls_sq = _fit_endpoint_constrained_controls(basis, sq)
-    controls_xyz = _fit_endpoint_constrained_controls(basis, xyz)
-    dense_count = min(1025, max(257, 8 * len(sq)))
-    dense_parameters = np.linspace(0.0, 1.0, dense_count)
-    dense_basis = _basis_matrix(dense_parameters, control_count, degree, knots)
-    dense_sq = dense_basis @ controls_sq
-    dense_xyz = dense_basis @ controls_xyz
-    source_to_fit_sq = _points_to_polyline_distances(sq, dense_sq)
-    fit_to_source_sq = _points_to_polyline_distances(dense_sq, sq)
-    source_to_fit_xyz = _points_to_polyline_distances(xyz, dense_xyz)
-    fit_to_source_xyz = _points_to_polyline_distances(dense_xyz, xyz)
-    residuals = np.concatenate(
-        [source_to_fit_sq, fit_to_source_sq, source_to_fit_xyz, fit_to_source_xyz]
+    tolerance = (
+        None
+        if fit_tolerance_mm is None
+        else _positive(fit_tolerance_mm, "fit_tolerance_mm")
     )
-    dense_tangent = np.gradient(dense_sq, dense_parameters, axis=0)
-    start_tangent = _unit(dense_tangent[0], "start_tangent_sq")
-    end_tangent = _unit(dense_tangent[-1], "end_tangent_sq")
-    curvature = _sample_curvature(dense_sq, dense_parameters)
-    return NurbsCurveFit(
-        segment_name=str(segment_name),
-        degree=degree,
-        knots=tuple(_round(value) for value in knots),
-        control_points_xyz_mm=_tuple_points(controls_xyz, 3),
-        control_points_sq_mm=_tuple_points(controls_sq, 2),
-        source_edge_ids=tuple(sorted(str(value) for value in source_edge_ids)),
-        residual_rms_mm=_round(math.sqrt(float(np.mean(residuals**2)))),
-        residual_p95_mm=_round(float(np.percentile(residuals, 95))),
-        residual_max_mm=_round(float(np.max(residuals))),
-        residual_source_to_fit_max_sq_mm=_round(float(np.max(source_to_fit_sq))),
-        residual_fit_to_source_max_sq_mm=_round(float(np.max(fit_to_source_sq))),
-        residual_source_to_fit_max_xyz_mm=_round(float(np.max(source_to_fit_xyz))),
-        residual_fit_to_source_max_xyz_mm=_round(float(np.max(fit_to_source_xyz))),
-        edge_sag_sq_mm=_round(_polyline_sag(sq)),
-        edge_sag_xyz_mm=_round(_polyline_sag(xyz)),
-        source_sample_count=len(sq),
-        fit_sample_count=dense_count,
-        start_tangent_sq=(float(start_tangent[0]), float(start_tangent[1])),
-        end_tangent_sq=(float(end_tangent[0]), float(end_tangent[1])),
-        start_curvature_per_mm=_round(float(curvature[0])),
-        end_curvature_per_mm=_round(float(curvature[-1])),
+    parameters = _chord_parameters(sq)
+
+    def candidate(*, degree: int, interpolate_polyline: bool) -> NurbsCurveFit:
+        if interpolate_polyline:
+            control_count = len(sq)
+            knots = np.concatenate(
+                [np.asarray([0.0, 0.0]), parameters[1:-1], np.asarray([1.0, 1.0])]
+            )
+            controls_sq = sq.copy()
+            controls_xyz = xyz.copy()
+        else:
+            control_count = min(maximum, len(sq))
+            control_count = max(degree + 1, control_count)
+            knots = _clamped_uniform_knots(control_count, degree)
+            basis = _basis_matrix(parameters, control_count, degree, knots)
+            controls_sq = _fit_endpoint_constrained_controls(basis, sq)
+            controls_xyz = _fit_endpoint_constrained_controls(basis, xyz)
+        dense_count = min(1025, max(257, 8 * len(sq)))
+        dense_parameters = np.linspace(0.0, 1.0, dense_count)
+        dense_basis = _basis_matrix(
+            dense_parameters, control_count, degree, knots
+        )
+        dense_sq = dense_basis @ controls_sq
+        dense_xyz = dense_basis @ controls_xyz
+        source_to_fit_sq = _points_to_polyline_distances(sq, dense_sq)
+        fit_to_source_sq = _points_to_polyline_distances(dense_sq, sq)
+        source_to_fit_xyz = _points_to_polyline_distances(xyz, dense_xyz)
+        fit_to_source_xyz = _points_to_polyline_distances(dense_xyz, xyz)
+        residuals = np.concatenate(
+            [
+                source_to_fit_sq,
+                fit_to_source_sq,
+                source_to_fit_xyz,
+                fit_to_source_xyz,
+            ]
+        )
+        dense_tangent = np.gradient(dense_sq, dense_parameters, axis=0)
+        start_tangent = _unit(dense_tangent[0], "start_tangent_sq")
+        end_tangent = _unit(dense_tangent[-1], "end_tangent_sq")
+        curvature = _sample_curvature(dense_sq, dense_parameters)
+        return NurbsCurveFit(
+            segment_name=str(segment_name),
+            degree=degree,
+            knots=tuple(_round(value) for value in knots),
+            control_points_xyz_mm=_tuple_points(controls_xyz, 3),
+            control_points_sq_mm=_tuple_points(controls_sq, 2),
+            source_edge_ids=tuple(
+                sorted(str(value) for value in source_edge_ids)
+            ),
+            residual_rms_mm=_round(math.sqrt(float(np.mean(residuals**2)))),
+            residual_p95_mm=_round(float(np.percentile(residuals, 95))),
+            residual_max_mm=_round(float(np.max(residuals))),
+            residual_source_to_fit_max_sq_mm=_round(
+                float(np.max(source_to_fit_sq))
+            ),
+            residual_fit_to_source_max_sq_mm=_round(
+                float(np.max(fit_to_source_sq))
+            ),
+            residual_source_to_fit_max_xyz_mm=_round(
+                float(np.max(source_to_fit_xyz))
+            ),
+            residual_fit_to_source_max_xyz_mm=_round(
+                float(np.max(fit_to_source_xyz))
+            ),
+            edge_sag_sq_mm=_round(_polyline_sag(sq)),
+            edge_sag_xyz_mm=_round(_polyline_sag(xyz)),
+            source_sample_count=len(sq),
+            fit_sample_count=dense_count,
+            start_tangent_sq=(float(start_tangent[0]), float(start_tangent[1])),
+            end_tangent_sq=(float(end_tangent[0]), float(end_tangent[1])),
+            start_curvature_per_mm=_round(float(curvature[0])),
+            end_curvature_per_mm=_round(float(curvature[-1])),
+        )
+
+    primary = candidate(degree=min(3, len(sq) - 1), interpolate_polyline=False)
+    if (
+        tolerance is None
+        or primary.residual_max_mm <= tolerance
+        or len(sq) > maximum
+        or not allow_source_polyline_nurbs
+    ):
+        return primary
+    linear = candidate(degree=1, interpolate_polyline=True)
+    return min(
+        (primary, linear),
+        key=lambda fit: (fit.residual_max_mm, fit.residual_rms_mm, -fit.degree),
     )
 
 
@@ -1856,15 +2057,17 @@ def _verify_attachment_topology_evidence(
     span_direction_source_ids: Sequence[str],
     footprint_boundary_xyz_mm: np.ndarray,
     retained_boundary_xyz_mm: np.ndarray,
+    paired_footprint_points_xyz_mm: np.ndarray | None,
     termination_boundary_xyz_mm: Sequence[Sequence[float]] | None,
     tolerance_mm: float,
     asserted_adjacency: Mapping[str, Sequence[str]],
 ) -> dict[str, tuple[str, ...]]:
     try:
-        from OCP.BRepAdaptor import BRepAdaptor_Curve
+        from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+        from OCP.BRepExtrema import BRepExtrema_DistShapeShape
         from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
         from OCP.TopExp import TopExp_Explorer
-        from OCP.TopoDS import TopoDS
+        from OCP.gp import gp_Pnt
     except ImportError as exc:
         raise SectionRecoveryError(
             "v116_root_attachment_measurement_failed",
@@ -1946,21 +2149,30 @@ def _verify_attachment_topology_evidence(
     def assert_points_on_edges(
         points: Sequence[Sequence[float]], edge_ids: Sequence[str], boundary: str
     ) -> None:
-        samples: list[list[float]] = []
-        for edge_id in edge_ids:
-            adaptor = BRepAdaptor_Curve(TopoDS.Edge_s(edge_map[edge_id]))
-            for parameter in np.linspace(
-                float(adaptor.FirstParameter()), float(adaptor.LastParameter()), 65
-            ):
-                point = adaptor.Value(float(parameter))
-                samples.append([float(point.X()), float(point.Y()), float(point.Z())])
-        distances = _nearest_distances(np.asarray(points, dtype=float), np.asarray(samples))
+        distances = []
+        for coordinates in np.asarray(points, dtype=float):
+            vertex = BRepBuilderAPI_MakeVertex(
+                gp_Pnt(*(float(value) for value in coordinates))
+            ).Vertex()
+            candidates = []
+            for edge_id in edge_ids:
+                operation = BRepExtrema_DistShapeShape(vertex, edge_map[edge_id])
+                operation.Perform()
+                if operation.IsDone():
+                    candidates.append(float(operation.Value()))
+            if not candidates:
+                raise SectionRecoveryError(
+                    "v116_root_attachment_measurement_failed",
+                    f"{boundary} exact point-to-edge distance could not be evaluated",
+                )
+            distances.append(min(candidates))
         allowed_distance = max(10.0 * tolerance_mm, 1.0e-5)
-        if float(np.max(distances)) > allowed_distance:
+        maximum = float(np.max(distances))
+        if maximum > allowed_distance:
             raise SectionRecoveryError(
                 "v116_root_attachment_measurement_failed",
                 f"{boundary} samples are not on their claimed source edges",
-                {"maximum_residual_mm": float(np.max(distances))},
+                {"maximum_residual_mm": maximum},
             )
 
     assert_points_on_edges(
@@ -1969,6 +2181,12 @@ def _verify_attachment_topology_evidence(
     assert_points_on_edges(
         retained_boundary_xyz_mm, retained_source_edge_ids, "retained blade boundary"
     )
+    if paired_footprint_points_xyz_mm is not None:
+        assert_points_on_edges(
+            paired_footprint_points_xyz_mm,
+            footprint_source_edge_ids,
+            "paired footprint boundary",
+        )
     if termination_boundary_xyz_mm is None:
         raise SectionRecoveryError(
             "v116_root_attachment_measurement_failed",
@@ -2108,6 +2326,7 @@ def measure_attachment(
     *,
     local_span_direction_xyz: Sequence[float] | None = None,
     local_span_directions_xyz: Sequence[Sequence[float]] | None = None,
+    paired_footprint_points_xyz_mm: Sequence[Sequence[float]] | None = None,
     material_side: int = 1,
     attachment_kind: str = "root",
     width_direction_xyz: Sequence[float] | None = None,
@@ -2125,11 +2344,28 @@ def measure_attachment(
     allow_synthetic: bool = False,
     tolerance_mm: float = 1.0e-6,
     span_direction_angular_tolerance_deg: float = 5.0,
+    span_direction_method: str = "source_edge_tangent",
 ) -> AttachmentMeasurement:
     footprint = np.asarray(footprint_boundary_xyz_mm, dtype=float)
     retained = np.asarray(retained_blade_boundary_xyz_mm, dtype=float)
+    paired_footprint = (
+        None
+        if paired_footprint_points_xyz_mm is None
+        else np.asarray(paired_footprint_points_xyz_mm, dtype=float)
+    )
     _validate_points(footprint, 3, "footprint_boundary_xyz_mm", minimum=3)
     _validate_points(retained, 3, "retained_blade_boundary_xyz_mm", minimum=3)
+    if paired_footprint is not None:
+        _validate_points(
+            paired_footprint,
+            3,
+            "paired_footprint_points_xyz_mm",
+            minimum=3,
+        )
+        if paired_footprint.shape != retained.shape:
+            raise ValueError(
+                "paired_footprint_points_xyz_mm must match retained boundary samples"
+            )
     if material_side not in (-1, 1):
         raise ValueError("material_side must be -1 or 1")
     tolerance = _positive(tolerance_mm, "tolerance_mm")
@@ -2137,6 +2373,11 @@ def measure_attachment(
         span_direction_angular_tolerance_deg,
         "span_direction_angular_tolerance_deg",
     )
+    if span_direction_method not in {
+        "source_edge_tangent",
+        "authenticated_boundary_normal",
+    }:
+        raise ValueError("unsupported span_direction_method")
     if angular_tolerance > 90.0:
         raise ValueError("span_direction_angular_tolerance_deg must not exceed 90")
     face_ids = tuple(sorted({str(value) for value in source_face_ids if str(value)}))
@@ -2152,6 +2393,25 @@ def measure_attachment(
     termination_edge_ids = tuple(
         sorted({str(value) for value in termination_source_edge_ids if str(value)})
     )
+    footprint_set = set(footprint_edge_ids)
+    retained_set = set(retained_edge_ids)
+    termination_set = set(termination_edge_ids)
+    span_set = set(span_source_ids)
+    if footprint_set.intersection(retained_set):
+        raise SectionRecoveryError(
+            "v116_root_attachment_measurement_failed",
+            "footprint and retained attachment boundaries must be disjoint",
+        )
+    forbidden_termination_overlap = footprint_set | retained_set | span_set
+    termination_overlap = termination_set.intersection(
+        forbidden_termination_overlap
+    )
+    if termination_overlap:
+        raise SectionRecoveryError(
+            "v116_root_attachment_measurement_failed",
+            "termination connectors overlap forbidden attachment boundary evidence",
+            {"overlapping_source_edge_ids": sorted(termination_overlap)},
+        )
     adjacency = {
         str(key): tuple(sorted({str(value) for value in values if str(value)}))
         for key, values in (source_adjacency or {}).items()
@@ -2170,6 +2430,7 @@ def measure_attachment(
             span_direction_source_ids=span_source_ids,
             footprint_boundary_xyz_mm=footprint,
             retained_boundary_xyz_mm=retained,
+            paired_footprint_points_xyz_mm=paired_footprint,
             termination_boundary_xyz_mm=termination_boundary_xyz_mm,
             tolerance_mm=tolerance,
             asserted_adjacency=adjacency,
@@ -2184,6 +2445,10 @@ def measure_attachment(
         and bool(span_source_ids)
         and bool(termination_edge_ids)
         and termination_boundary_xyz_mm is not None
+        and (
+            span_direction_method != "authenticated_boundary_normal"
+            or paired_footprint is not None
+        )
         and all(
             edge_id in adjacency
             and len(adjacency[edge_id]) >= 2
@@ -2205,7 +2470,35 @@ def measure_attachment(
                 "topology_verified": topology_verified,
             },
         )
-    if local_span_directions_xyz is not None:
+    if (
+        topology_evidence
+        and span_direction_method == "authenticated_boundary_normal"
+        and paired_footprint is not None
+    ):
+        expected_spans = np.asarray(
+            [
+                _unit(
+                    point - source_point,
+                    "authenticated_boundary_normal",
+                )
+                for point, source_point in zip(retained, paired_footprint)
+            ]
+        )
+        if local_span_directions_xyz is not None:
+            asserted = np.asarray(local_span_directions_xyz, dtype=float)
+            if asserted.shape != retained.shape:
+                raise ValueError(
+                    "local_span_directions_xyz must match retained boundary samples"
+                )
+            asserted = np.asarray(
+                [_unit(value, "local_span_directions_xyz") for value in asserted]
+            )
+            if np.any(np.sum(asserted * expected_spans, axis=1) < 1.0 - 1.0e-8):
+                raise SectionRecoveryError(
+                    "v116_root_attachment_measurement_failed",
+                    "caller boundary directions disagree with exact source point pairs",
+                )
+    elif local_span_directions_xyz is not None:
         span_directions = np.asarray(local_span_directions_xyz, dtype=float)
         if span_directions.shape != retained.shape:
             raise ValueError("local_span_directions_xyz must match retained boundary samples")
@@ -2239,7 +2532,7 @@ def measure_attachment(
         )
     span_direction_evidence: tuple[Mapping[str, Any], ...] = ()
     angular_residual_max = 0.0
-    if topology_evidence:
+    if topology_evidence and span_direction_method == "source_edge_tangent":
         assert source_edges_by_id is not None
         spans, span_direction_evidence, angular_residual_max = _measure_occt_span_directions(
             retained_points_xyz_mm=retained,
@@ -2250,21 +2543,52 @@ def measure_attachment(
             validate_expected_directions=local_span_directions_xyz is not None,
             source_distance_tolerance_mm=max(10.0 * tolerance, 1.0e-5),
         )
+    elif topology_evidence:
+        spans = expected_spans
+        span_direction_evidence = tuple(
+            {
+                "source_entity_ids": list(
+                    dict.fromkeys((*footprint_edge_ids, *retained_edge_ids))
+                ),
+                "source_geometry": "paired_authenticated_boundary_points",
+                "footprint_sample_xyz_mm": [
+                    _round(value) for value in source_point
+                ],
+                "retained_sample_xyz_mm": [_round(value) for value in point],
+                "measured_direction_xyz": [_round(value) for value in direction],
+                "angular_residual_deg": 0.0,
+                "angular_tolerance_deg": _round(angular_tolerance),
+                "comparison": "exact_boundary_pair_direction",
+            }
+            for point, source_point, direction in zip(
+                retained,
+                paired_footprint
+                if paired_footprint is not None
+                else np.repeat(footprint[:1], len(retained), axis=0),
+                spans,
+            )
+        )
+        angular_residual_max = 0.0
     else:
         spans = expected_spans
     promotable_evidence = topology_evidence and bool(span_direction_evidence)
     mean_span = _unit(np.mean(spans, axis=0), "mean_local_span_direction_xyz")
     lift_samples = []
-    for point_xyz, span in zip(retained, spans):
-        plane_u, plane_v = _plane_basis(span, width_direction_xyz)
-        footprint_uv = np.column_stack([footprint @ plane_u, footprint @ plane_v])
-        point_uv = np.asarray([point_xyz @ plane_u, point_xyz @ plane_v])
-        footprint_uv_closed, footprint_xyz_closed = _ensure_closed_pair(
-            footprint_uv, footprint
-        )
-        source_point = _nearest_point_on_projected_polyline(
-            point_uv, footprint_uv_closed, footprint_xyz_closed
-        )
+    for index, (point_xyz, span) in enumerate(zip(retained, spans)):
+        if paired_footprint is not None:
+            source_point = paired_footprint[index]
+        else:
+            plane_u, plane_v = _plane_basis(span, width_direction_xyz)
+            footprint_uv = np.column_stack(
+                [footprint @ plane_u, footprint @ plane_v]
+            )
+            point_uv = np.asarray([point_xyz @ plane_u, point_xyz @ plane_v])
+            footprint_uv_closed, footprint_xyz_closed = _ensure_closed_pair(
+                footprint_uv, footprint
+            )
+            source_point = _nearest_point_on_projected_polyline(
+                point_uv, footprint_uv_closed, footprint_xyz_closed
+            )
         lift_samples.append(float(np.dot(point_xyz - source_point, span)))
     lifts = np.asarray(lift_samples, dtype=float)
     if not np.all(np.isfinite(lifts)) or float(np.median(lifts)) <= tolerance or np.any(lifts < -tolerance):
@@ -2657,6 +2981,84 @@ def _segments_from_source_roles(loop: SectionLoop) -> dict[str, dict[str, Any]] 
             "source_edge_ids": tuple(edge.edge_id for edge in edges),
             "source_face_ids": tuple(sorted({item for edge in edges for item in edge.source_face_ids})),
         }
+    return _orient_decomposed_segments(result)
+
+
+def _segments_from_authenticated_side_roles(
+    loop: SectionLoop,
+) -> dict[str, dict[str, Any]] | None:
+    """Keep exact side boundaries while classifying only the two closure arcs."""
+    labels: list[str | None] = []
+    for edge in loop.edges:
+        if len(edge.source_roles) > 1:
+            return None
+        label = edge.source_roles[0] if edge.source_roles else None
+        if label not in {None, "side_a", "side_b"}:
+            return None
+        labels.append(label)
+    if not labels or set(labels) != {None, "side_a", "side_b"}:
+        return None
+
+    start = next(
+        (
+            index
+            for index, label in enumerate(labels)
+            if label != labels[index - 1]
+        ),
+        None,
+    )
+    if start is None:
+        return None
+    ordered = list(loop.edges[start:]) + list(loop.edges[:start])
+    ordered_labels = labels[start:] + labels[:start]
+    runs: list[tuple[str | None, list[SectionEdge]]] = []
+    for label, edge in zip(ordered_labels, ordered):
+        if not runs or runs[-1][0] != label:
+            runs.append((label, [edge]))
+        else:
+            runs[-1][1].append(edge)
+    if len(runs) != 4:
+        return None
+    if [label for label, _edges in runs].count("side_a") != 1:
+        return None
+    if [label for label, _edges in runs].count("side_b") != 1:
+        return None
+    if [label for label, _edges in runs].count(None) != 2:
+        return None
+
+    frame: LocalSectionFrame | None = None
+
+    def record(edges: Sequence[SectionEdge]) -> dict[str, Any]:
+        nonlocal frame
+        points_xyz = _concatenate_edge_points(edges)
+        if all(edge.points_sq_mm for edge in edges):
+            points_sq = _concatenate_edge_local_points(edges)
+        else:
+            if frame is None:
+                frame = _frame_from_loop(loop)
+            points_sq = np.asarray(
+                [frame.project(point) for point in points_xyz], dtype=float
+            )
+        return {
+            "points_xyz_mm": points_xyz,
+            "points_sq_mm": points_sq,
+            "source_edge_ids": tuple(edge.edge_id for edge in edges),
+            "source_face_ids": tuple(
+                sorted({item for edge in edges for item in edge.source_face_ids})
+            ),
+        }
+
+    result = {
+        label: record(edges)
+        for label, edges in runs
+        if label in {"side_a", "side_b"}
+    }
+    closures = [record(edges) for label, edges in runs if label is None]
+    closures.sort(
+        key=lambda value: float(np.mean(np.asarray(value["points_sq_mm"])[:, 0]))
+    )
+    result["leading_edge"] = closures[0]
+    result["trailing_edge"] = closures[1]
     return _orient_decomposed_segments(result)
 
 

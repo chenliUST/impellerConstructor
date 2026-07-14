@@ -11,6 +11,7 @@ import shutil
 import threading
 import time
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,9 +23,10 @@ import numpy as np
 
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
-from part_rule_synthesis.impeller_v11_2_canonical import canonical_nurbs_from_v11_defaults, clamped_uniform_knots
+from part_rule_synthesis.impeller_v11_2_canonical import clamped_uniform_knots
 from part_rule_synthesis import impeller_v11_6_source_frame as source_frame
 from part_rule_synthesis import impeller_v11_6_periodic_blades as periodic_blades
+from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as axis_first_pipeline
 from part_rule_synthesis.impeller_v11_6_deviation import (
     TriangleMesh,
     artifact_record,
@@ -798,72 +800,12 @@ def classify_impeller_semantics(shape, source_manifest: dict[str, Any], frame: d
 
 
 def extract_v11_parameters(shape, source_manifest: dict[str, Any], frame: dict[str, Any], semantics: dict[str, Any]) -> dict[str, Any]:
-    known = _known_source_seed(source_manifest["sha256"])
-    if known:
-        target_parameters = copy.deepcopy(known["parameters"])
-        defaults = copy.deepcopy(known["defaults"])
-        source_basis = "matched_source_sha256_measurement_evidence"
-        source_confidence = copy.deepcopy(known["confidence"])
-    else:
-        target_parameters, defaults, source_confidence = _generic_v11_seed(shape, source_manifest, frame, semantics)
-        source_basis = "deterministic_brep_measurement_and_bounded_fit"
-    defaults["main_blade_count"] = int(semantics["main_blade_count"])
-    defaults["splitter_blade_count"] = int(semantics["splitter_blade_count"])
-    target_parameters["blade_count"] = defaults["main_blade_count"] + defaults["splitter_blade_count"]
-    target_parameters["exit_radius_mm"] = float(frame["outer_radius_mm"])
-    if frame.get("main_bore_radius_mm"):
-        target_parameters["mounting_bore_radius_mm"] = float(frame["main_bore_radius_mm"])
-
-    profile_fits = {}
-    for key in ("hub_profile_rz_mm", "tip_or_shroud_profile_rz_mm"):
-        source_points = [[float(value) for value in point] for point in defaults[key]]
-        target_samples = _densify_polyline(source_points, 37)
-        fitted, residual = fit_profile_controls(target_samples, control_count=6, degree=3)
-        defaults[key] = fitted
-        profile_fits[key] = {
-            "method": "bounded_least_squares_clamped_cubic",
-            "target_sample_count": len(target_samples),
-            "control_count": len(fitted),
-            "endpoint_constraints": True,
-            "monotonic_radius": True,
-            "rms_residual_mm": residual,
-            "target_samples_rz_mm": target_samples,
-            "fitted_control_points_rz_mm": fitted,
-        }
-
-    measurement_rows = []
-    for name, value in sorted(target_parameters.items()):
-        confidence_record = source_confidence.get(f"parameter_values.{name}", {})
-        measurement_rows.append(
-            {
-                "feature_id": f"parameter_values.{name}",
-                "source_measurement": value,
-                "mapped_v11_value": value,
-                "units": "count" if name == "blade_count" else ("deg" if name.endswith("_deg") else "mm"),
-                "measurement_confidence": float(confidence_record.get("confidence", 0.65)),
-                "mapping_confidence": _mapping_confidence(name),
-                "reconstruction_residual": None,
-                "basis": confidence_record.get("basis", source_basis),
-            }
+    try:
+        return axis_first_pipeline.extract_v11_parameters(
+            shape, source_manifest, frame, semantics
         )
-    unsupported = _unsupported_features(source_manifest, semantics)
-    return {
-        "mapping_id": f"v116-map-{source_manifest['sha256'][:12]}",
-        "source_basis": source_basis,
-        "geometry_version": "1.1",
-        "geometry_patch_version": CANONICAL_GEOMETRY_VERSION,
-        "parameters": target_parameters,
-        "resolved_blade_to_blade_loop_family_defaults": defaults,
-        "profile_fits": profile_fits,
-        "parameter_rows": measurement_rows,
-        "confidence_layers": {
-            "source_measurement": "per_parameter",
-            "semantic_mapping": "per_parameter",
-            "reconstruction_fidelity": "reported_after_deviation",
-        },
-        "unsupported_source_features": unsupported,
-        "source_section_loops": _source_section_loop_summary(defaults),
-    }
+    except axis_first_pipeline.AxisFirstPipelineError as exc:
+        raise StepAuditError(exc.reason, str(exc), copy.deepcopy(exc.details)) from exc
 
 
 def fit_profile_controls(samples: list[list[float]], *, control_count: int = 6, degree: int = 3) -> tuple[list[list[float]], float]:
@@ -908,11 +850,18 @@ def reconstruct_with_current_v11(
     source_manifest: dict[str, Any],
     stage_callback,
 ) -> dict[str, Any]:
+    canonical = _validated_mapping_canonical_payload(mapping)
     defaults = copy.deepcopy(mapping["resolved_blade_to_blade_loop_family_defaults"])
     _apply_bounded_audit_sampling(defaults)
     parameters = copy.deepcopy(mapping["parameters"])
     seed_preset = "radial_closed_reference_v1_1" if defaults.get("tip_attachment_mode") == "closed_shroud_attachment" else "radial_open_reference_v1_1"
-    runtime = compile_impeller_runtime_preset(seed_preset)
+    runtime = compile_impeller_runtime_preset(
+        seed_preset,
+        mapper_approved_canonical_payload=canonical,
+        mapper_approved_canonical_hash_sha256=mapping[
+            "canonical_payload_hash_sha256"
+        ],
+    )
     if runtime.get("geometry_patch_version") != CANONICAL_GEOMETRY_VERSION:
         raise StepAuditError("v116_step_reconstruction_validation_failed", "audit seed is not V1.1.2 geometry")
     for name, value in parameters.items():
@@ -920,10 +869,9 @@ def reconstruct_with_current_v11(
             runtime["parameters"][name]["default"] = value
     runtime["resolved_parameter_defaults"] = copy.deepcopy(parameters)
     runtime["resolved_blade_to_blade_loop_family_defaults"] = defaults
-    runtime["canonical_nurbs_parameterization"] = canonical_nurbs_from_v11_defaults(
-        parameters, defaults, source="fitted_from_step_v1_1_6"
+    runtime["canonical_input_source"] = canonical.get(
+        "canonical_input_source", "v116_bounded_measurement_mapping"
     )
-    runtime["canonical_input_source"] = "fitted_from_step_v1_1_6"
     runtime["runtime_release_version"] = AUDIT_RUNTIME_VERSION
     runtime["source_metadata"] = {
         "source_kind": "uploaded_step_brep",
@@ -994,6 +942,40 @@ def reconstruct_with_current_v11(
         "surface_count": len(final_run.manifest.get("geometry", {}).get("surface_graph", {}).get("surfaces", [])),
     }
     return {"manifest": summary, "stl_path": stl_path}
+
+
+def _canonical_payload_hash(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validated_mapping_canonical_payload(mapping: Mapping[str, Any]) -> dict[str, Any]:
+    canonical = mapping.get("regenerated_canonical_payload")
+    expected = mapping.get("canonical_payload_hash_sha256")
+    if not isinstance(canonical, Mapping) or not isinstance(expected, str):
+        raise StepAuditError(
+            "v116_step_reconstruction_validation_failed",
+            "mapping lacks an approved canonical payload and hash",
+        )
+    if canonical.get("canonical_payload_version") != CANONICAL_GEOMETRY_VERSION:
+        raise StepAuditError(
+            "v116_step_reconstruction_validation_failed",
+            "approved canonical payload is not geometry patch V1.1.2",
+        )
+    actual = _canonical_payload_hash(canonical)
+    if actual != expected:
+        raise StepAuditError(
+            "v116_step_reconstruction_validation_failed",
+            "approved canonical payload hash does not match the mapper evidence",
+            {"expected_sha256": expected, "actual_sha256": actual},
+        )
+    return copy.deepcopy(dict(canonical))
 
 
 def _apply_bounded_audit_sampling(defaults: dict[str, Any]) -> None:
@@ -1308,6 +1290,10 @@ def _axis_first_section_reconstruction_manifest(
         {"line_rms_mm": 0.0, "angular_spread_deg": 0.0},
     )
     partition = frame.get("coarse_topology_partition", {})
+    measurements = mapping.get("measurement_bundle", {})
+    support = mapping.get("support_recovery", {})
+    periodic = mapping.get("periodic_provenance", {})
+    sections = mapping.get("section_provenance", {})
     return {
         "algorithm_revision": AUDIT_IMPLEMENTATION_REVISION,
         "contract_phase": "axis_frame_and_coarse_partition",
@@ -1341,27 +1327,45 @@ def _axis_first_section_reconstruction_manifest(
             "primary_icp_applied": frame["primary_icp_applied"],
         },
         "support_recovery": {
-            "status": "pending_axis_first_support_recovery",
-            "legacy_profile_fit_evidence": mapping.get("profile_fits", {}),
+            "status": support.get("status", "FAILED"),
+            "topology_mode": support.get("topology_mode"),
+            "support_face_ids": support.get("support_face_ids", {}),
+            "profile_fits": mapping.get("profile_fits", {}),
+            "source_sha256": measurements.get("provenance", {}).get("source_sha256"),
         },
         "periodic_populations": {
-            "status": "coarse_partition_complete" if partition else "coarse_partition_unavailable",
-            "coarse_partition": partition,
+            "status": periodic.get("status", "FAILED"),
             "main": {
-                "count": semantics.get("main_blade_count"),
-                "pitch_deg": semantics.get("pitch_deg"),
+                "count": (periodic.get("main") or {}).get("count"),
+                "pitch_deg": (periodic.get("main") or {}).get("pitch_deg"),
+                "source_ids": (periodic.get("main") or {}).get("source_ids", []),
             },
-            "splitter_optional": {"count": semantics.get("splitter_blade_count", 0)},
+            "splitter_optional": {
+                "count": (periodic.get("splitter") or {}).get("count", 0),
+                "source_ids": (periodic.get("splitter") or {}).get("source_ids", []),
+            },
+            "closure_pass": periodic.get("closure_pass"),
+            "collision_free": periodic.get("collision_free"),
         },
         "span_measurement_lattice": {
-            "status": "pending_exact_brep_sectioning",
-            "legacy_section_summary": mapping.get("source_section_loops", []),
+            "status": sections.get("status", "FAILED"),
+            "station_count_by_population": {
+                name: len(family.get("stations", []))
+                for name, family in measurements.get("section_families", {}).items()
+            },
+            "source_section_loop_count": len(sections.get("section_loop_records", [])),
+            "measurement_authority": sections.get("measurement_authority"),
         },
-        "representative_blades": {"status": "pending_periodic_population_recovery"},
+        "representative_blades": {
+            "status": periodic.get("status", "FAILED"),
+            "source_ids": periodic.get("source_ids", []),
+        },
         "v11_2_mapping": {
-            "status": "existing_mapping_retained_until_task_8",
+            "status": mapping.get("mapping_status", "FAILED"),
             "mapping_id": mapping.get("mapping_id"),
             "geometry_patch_version": mapping.get("geometry_patch_version"),
+            "source_sha256": measurements.get("provenance", {}).get("source_sha256"),
+            "promotion_contract": mapping.get("promotion_contract", {}),
         },
         "pattern_instances": {
             "status": "existing_constructor_output_retained_until_task_9",
@@ -1856,6 +1860,8 @@ def _stage_summary(value: Any) -> dict[str, Any]:
         "main_blade_count",
         "splitter_blade_count",
         "pitch_deg",
+        "mapping_status",
+        "source_basis",
         "mapping_id",
         "geometry_patch_version",
         "run_id",

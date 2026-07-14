@@ -16,6 +16,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from part_rule_synthesis.impeller_v11_6_support_recovery import (  # noqa: E402
     SupportRecoveryError,
+    _radially_order_authenticated_support_paths,
     adapt_tip_cap_topology_evidence,
     authenticate_occt_semantic_partition,
     authenticate_open_tip_population_contract,
@@ -694,6 +695,85 @@ def test_only_authenticated_trimmed_face_evidence_can_promote_hub_fit():
     assert promoted["provenance"]["material_uv_domain_validation"] == "BRepClass_FaceClassifier"
     assert fabricated["acceptance"]["promoted_pass_eligible"] is False
     assert fabricated["provenance"]["authenticated_occt_trimmed_material_domain"] is False
+
+
+def test_authenticated_hub_support_domain_includes_tolerance_retained_endpoint():
+    cq = pytest.importorskip("cadquery")
+    cone = cq.Solid.makeCone(20.0, 10.0, 20.0)
+    face = next(candidate for candidate in cone.Faces() if candidate.geomType() == "CONE")
+    evidence = sample_occt_face_meridional_paths(
+        face,
+        source_face_id="hub-cone",
+        source_solid=cone,
+        semantic_partition_evidence=_semantic_partition(
+            cone,
+            [{
+                "source_id": "hub-cone",
+                "shape": face,
+                "role": "hub_flowpath_support",
+                "flowpath_adjacent": True,
+            }],
+        ),
+        source_tolerance_mm=0.02,
+        trace_count=5,
+        samples_per_trace=41,
+    )
+
+    promoted = fit_hub_profile(
+        source_face_evidence=[evidence],
+        outer_diameter_mm=40.0,
+        minimum_radius_mm=10.012,
+    )
+
+    assert promoted["control_points_rz_mm"][0][0] == pytest.approx(10.0)
+    assert promoted["provenance"]["minimum_radius_mm"] == pytest.approx(10.012)
+    assert promoted["provenance"]["effective_retained_minimum_radius_mm"] == pytest.approx(10.0)
+
+
+def test_authenticated_support_projection_preserves_source_order_or_fails_closed():
+    common = {
+        "source_tolerance_mm": 0.01,
+        "path_source_ids": ["hub-face"],
+        "material_domain_rz_mm": [[9.0, 14.0], [-1.0, 5.0]],
+        "provenance": {"authority": "authenticated-test-evidence"},
+    }
+    decreasing = {
+        **common,
+        "paths_rz_mm": [[[13.0, 0.0], [12.0, 1.0], [11.0, 2.0], [10.0, 3.0]]],
+    }
+    projected = _radially_order_authenticated_support_paths(
+        decreasing,
+        failure_reason="v116_hub_profile_fit_failed",
+    )
+    assert projected["paths_rz_mm"][0] == list(reversed(decreasing["paths_rz_mm"][0]))
+    assert projected["provenance"]["reversed_path_indices"] == [0]
+
+    non_monotone = {
+        **common,
+        "paths_rz_mm": [[[10.0, 0.0], [12.0, 1.0], [11.0, 2.0], [13.0, 3.0]]],
+    }
+    with pytest.raises(SupportRecoveryError, match="not monotone in source order"):
+        _radially_order_authenticated_support_paths(
+            non_monotone,
+            failure_reason="v116_hub_profile_fit_failed",
+        )
+
+
+def test_authenticated_support_projection_forbids_material_truncation():
+    authenticated = {
+        "source_tolerance_mm": 0.01,
+        "paths_rz_mm": [[[10.0, 3.0], [11.0, 2.0], [12.0, 1.0], [13.0, 0.0]]],
+        "path_source_ids": ["hub-face"],
+        "material_domain_rz_mm": [[9.0, 14.0], [-1.0, 5.0]],
+        "provenance": {"authority": "authenticated-test-evidence"},
+    }
+
+    with pytest.raises(SupportRecoveryError, match="would truncate"):
+        _radially_order_authenticated_support_paths(
+            authenticated,
+            failure_reason="v116_hub_profile_fit_failed",
+            minimum_radius_mm=12.0,
+        )
 
 
 def test_periodic_blade_side_cone_cannot_promote_as_hub_support():

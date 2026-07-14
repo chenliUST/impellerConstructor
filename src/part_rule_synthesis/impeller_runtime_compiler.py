@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import math
-from typing import Any
+from typing import Any, Mapping
 
 from part_rule_synthesis.impeller_dsl_resources import ImpellerDslBundle, load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_shape_control import normalize_shape_control_space
@@ -64,6 +67,9 @@ IMPELLER_PARAMETER_LIMITS: dict[str, dict[str, float]] = {
 def compile_impeller_runtime_preset(
     preset_id: str | None = None,
     facet_overrides: dict[str, str] | None = None,
+    *,
+    mapper_approved_canonical_payload: Mapping[str, Any] | None = None,
+    mapper_approved_canonical_hash_sha256: str | None = None,
 ) -> dict[str, Any]:
     requested_preset_id = preset_id or "radial_open_reference"
     bundle, resolved_preset_id = _bundle_for_preset(requested_preset_id)
@@ -169,9 +175,23 @@ def compile_impeller_runtime_preset(
             runtime["preset_default_violation_count"] = attachment_defaults["preset_default_violation_count"]
             runtime["preset_feasibility_constraints"] = _v10_2_feasibility_constraints(constructor)
             runtime["preset_adjusted_defaults"] = {}
+    approved_canonical_requested = (
+        mapper_approved_canonical_payload is not None
+        or mapper_approved_canonical_hash_sha256 is not None
+    )
+    if approved_canonical_requested and dsl_version != "1.1":
+        raise ValueError("mapper-approved canonical payload requires a V1.1 preset")
     if dsl_version == "1.1":
         runtime["dsl_version"] = "1.1"
-        runtime.update(_v11_runtime_defaults(preset, parameters, export_contract))
+        runtime.update(
+            _v11_runtime_defaults(
+                preset,
+                parameters,
+                export_contract,
+                mapper_approved_canonical_payload=mapper_approved_canonical_payload,
+                mapper_approved_canonical_hash_sha256=mapper_approved_canonical_hash_sha256,
+            )
+        )
     return runtime
 
 
@@ -267,15 +287,31 @@ def _v11_runtime_defaults(
     preset: dict[str, Any],
     parameters: dict[str, Any],
     export_contract: dict[str, Any],
+    *,
+    mapper_approved_canonical_payload: Mapping[str, Any] | None = None,
+    mapper_approved_canonical_hash_sha256: str | None = None,
 ) -> dict[str, Any]:
     defaults = preset.get("blade_to_blade_loop_family_defaults")
     if not isinstance(defaults, dict):
         raise ValueError("missing V1.1 blade-to-blade loop-family defaults")
-    canonical = canonical_nurbs_from_v11_defaults(parameters, defaults)
-    return {
+    geometry_patch_version = preset.get("geometry_patch_version", "1.1.2")
+    approved_canonical_requested = (
+        mapper_approved_canonical_payload is not None
+        or mapper_approved_canonical_hash_sha256 is not None
+    )
+    if approved_canonical_requested:
+        canonical, canonical_hash = _validated_mapper_approved_canonical(
+            mapper_approved_canonical_payload,
+            mapper_approved_canonical_hash_sha256,
+            geometry_patch_version=geometry_patch_version,
+        )
+    else:
+        canonical = canonical_nurbs_from_v11_defaults(parameters, defaults)
+        canonical_hash = None
+    resolved = {
         "resolved_parameter_defaults": dict(parameters),
         "geometry_version": "1.1",
-        "geometry_patch_version": preset.get("geometry_patch_version", "1.1.2"),
+        "geometry_patch_version": geometry_patch_version,
         "runtime_release_version": RUNTIME_RELEASE_VERSION,
         "parameter_inspection_contract_version": INSPECTION_CONTRACT_VERSION,
         "parameter_inspection_capabilities": [
@@ -300,6 +336,35 @@ def _v11_runtime_defaults(
         "resolved_blade_to_blade_loop_family_defaults": dict(defaults),
         "editable_parameters": list(preset.get("editable_parameters", [])),
     }
+    if approved_canonical_requested:
+        resolved["canonical_payload_authority"] = "v116_mapper_approved"
+        resolved["canonical_payload_hash_sha256"] = canonical_hash
+    return resolved
+
+
+def _validated_mapper_approved_canonical(
+    payload: Mapping[str, Any] | None,
+    expected_hash: str | None,
+    *,
+    geometry_patch_version: str,
+) -> tuple[dict[str, Any], str]:
+    if payload is None or expected_hash is None:
+        raise ValueError("mapper-approved canonical payload and hash must be supplied together")
+    if geometry_patch_version != "1.1.2":
+        raise ValueError("mapper-approved canonical payload is restricted to geometry patch V1.1.2")
+    if payload.get("canonical_payload_version") != "1.1.2":
+        raise ValueError("mapper-approved canonical payload must be version 1.1.2")
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    actual_hash = hashlib.sha256(encoded).hexdigest()
+    if actual_hash != expected_hash:
+        raise ValueError("mapper-approved canonical payload hash mismatch")
+    return copy.deepcopy(dict(payload)), actual_hash
 
 
 def _v10_3_preset_feasibility(

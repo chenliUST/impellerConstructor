@@ -28,8 +28,8 @@ from part_rule_synthesis.impeller_v11_6_section_recovery import (
 )
 
 
-MEASUREMENT_SCHEMA_VERSION = "v1.1.6_axis_first_measurement_bundle_r1"
-MAPPING_VERSION = "v1.1.6_bounded_to_v1.1.2_r1"
+MEASUREMENT_SCHEMA_VERSION = "v1.1.6_axis_first_measurement_bundle_r2"
+MAPPING_VERSION = "v1.1.6_bounded_to_v1.1.2_r2"
 GEOMETRY_PATCH_VERSION = "1.1.2"
 CANONICAL_STATIONS_H = (0.0, 0.25, 0.5, 0.75, 1.0)
 CANONICAL_INPUT_SOURCE = "v116_bounded_measurement_mapping"
@@ -138,8 +138,17 @@ _TASK7_EDGE_UNITS = {
 _TASK7_EDGE_PROVENANCE_AUTHORITY = (
     "impeller_v11_6_section_recovery.fit_nurbs_measurement_curve"
 )
-_CURVE_DISTANCE_METHOD = (
+_EXACT_CURVE_DISTANCE_METHOD = (
     "deterministic_knot_split_lipschitz_branch_and_bound_upper_certificate"
+)
+_CURVE_DISTANCE_METHOD = (
+    "deterministic_parameter_correspondence_upper_then_knot_split_hausdorff_certificate"
+)
+_TASK7_FIT_DISTANCE_METHOD = (
+    "task7_chord_parameter_matched_lipschitz_upper_certificate"
+)
+_TASK7_PIECEWISE_AFFINE_DISTANCE_METHOD = (
+    "task7_piecewise_affine_endpoint_exact_certificate"
 )
 _CURVE_DISTANCE_CONVERGENCE_MM = 0.0025
 _CURVE_DISTANCE_MAX_SUBDIVISIONS = 32768
@@ -298,12 +307,14 @@ def adapt_task7_segment_for_mapping(
     *,
     fit_tolerance_mm: float,
 ) -> dict[str, Any]:
-    """Project a strict Task 7 edge measurement into the mapping segment contract."""
+    """Project a strict Task 7 curve measurement into the mapping segment contract."""
 
     if not isinstance(segment, SectionSegmentMeasurement):
         _schema_error("segment must be a Task 7 SectionSegmentMeasurement")
-    if segment.name not in {"leading_edge", "trailing_edge"}:
-        _schema_error("Task 7 mapping adapters accept only leading_edge or trailing_edge")
+    if segment.name not in _SEGMENT_NAMES:
+        _schema_error(
+            "Task 7 mapping adapters accept side_a, side_b, leading_edge, or trailing_edge"
+        )
     fit = segment.fit
     if fit.segment_name != segment.name:
         _schema_error("Task 7 segment and NURBS fit names must match")
@@ -1505,7 +1516,7 @@ class _MappingContext:
                 records=evidence_records,
             )
 
-        edge_records = self._edge_residual_records(parameters, defaults)
+        edge_records = self._edge_residual_records(parameters, defaults, canonical)
         edge_maximum = max(
             (record["bidirectional_hausdorff_mm"] for record in edge_records),
             default=0.0,
@@ -1852,8 +1863,9 @@ class _MappingContext:
         self,
         parameters: Mapping[str, Any],
         defaults: Mapping[str, Any],
+        canonical: Mapping[str, Any],
     ) -> list[dict[str, Any]]:
-        generated = _generation_bound_loop_family(parameters, defaults)
+        generated = _generation_bound_loop_family(parameters, defaults, canonical)
         representative: dict[str, dict[str, Any]] = {}
         for blade in generated["blades"]:
             representative.setdefault(blade["blade_class"], blade)
@@ -1889,6 +1901,9 @@ class _MappingContext:
                             "edge": edge_name,
                             "target_points_local_mm": _source_curve_display_points(
                                 target_curve
+                            ),
+                            "comparison_local_origin_sq_mm": deepcopy(
+                                target_curve["local_origin_sq_mm"]
                             ),
                             "fitted_points_local_mm": fitted,
                             "bidirectional_hausdorff_mm": _round(
@@ -2453,14 +2468,44 @@ def _validate_topology(topology: Any) -> None:
 
 def _validate_material_measurement(record: Any, path: str) -> None:
     _require_mapping(record, path)
-    _require_keys(record, {"value", "unit", "source_ids", "measured"}, {"value", "unit", "source_ids", "measured"}, path)
-    _nonnegative(record["value"], f"{path}.value")
-    if record["unit"] != "mm" or record["measured"] is not True:
+    required = {
+        "value",
+        "unit",
+        "source_ids",
+        "measured",
+        "measurement_authority",
+        "method",
+        "evidence",
+    }
+    _require_keys(record, required, required, path)
+    value = _nonnegative(record["value"], f"{path}.value")
+    if (
+        record["unit"] != "mm"
+        or record["measured"] is not True
+        or record["measurement_authority"]
+        != "occt_exact_brep_feature_measurement"
+        or not str(record["method"]).strip()
+    ):
         raise V112MappingError(
             "v116_v112_material_measurement_missing",
-            f"{path} must be an explicit measured millimetric material feature",
+            f"{path} must be an authenticated exact B-Rep millimetric material feature",
         )
-    _source_ids(record["source_ids"], f"{path}.source_ids")
+    source_ids = _source_ids(record["source_ids"], f"{path}.source_ids")
+    evidence = _require_mapping(record["evidence"], f"{path}.evidence")
+    if value <= _EPSILON:
+        if evidence.get("absence_proven") is not True:
+            raise V112MappingError(
+                "v116_v112_material_measurement_missing",
+                f"{path} may be zero only when exhaustive source topology proves absence",
+            )
+        exhaustive = _source_ids(
+            evidence.get("exhaustive_source_ids"),
+            f"{path}.evidence.exhaustive_source_ids",
+        )
+        if not set(source_ids).issubset(exhaustive):
+            _schema_error(
+                f"{path}.evidence.exhaustive_source_ids must cover source_ids"
+            )
 
 
 def _validate_support_fits(supports: Any) -> None:
@@ -2619,9 +2664,13 @@ def _validate_segment(
     segment: Any, name: str, path: str, *, source_tolerance_mm: float
 ) -> None:
     _require_mapping(segment, path)
-    allowed = {"points_sq_mm", "source_ids"}
-    if name in {"leading_edge", "trailing_edge"}:
-        allowed.update({"nurbs_target", "source_edge_ids", "source_face_ids"})
+    allowed = {
+        "points_sq_mm",
+        "source_ids",
+        "nurbs_target",
+        "source_edge_ids",
+        "source_face_ids",
+    }
     _require_keys(segment, allowed, allowed, path)
     points = segment["points_sq_mm"]
     if not _is_sequence(points) or len(points) < 2:
@@ -2820,9 +2869,14 @@ def _validate_nurbs_target(
     nurbs_digest = hashlib.sha256(
         _authoritative_nurbs_json(target).encode("utf-8")
     ).hexdigest()
+    provenance_segment = str(provenance["source_segment_name"])
+    segment_role_matches = provenance_segment == segment_name or {
+        provenance_segment,
+        segment_name,
+    } == {"side_a", "side_b"}
     if (
         provenance["authority"] != _TASK7_EDGE_PROVENANCE_AUTHORITY
-        or provenance["source_segment_name"] != segment_name
+        or not segment_role_matches
         or _source_ids(
             provenance["source_edge_ids"],
             f"{path}.fit_evidence.provenance.source_edge_ids",
@@ -2839,7 +2893,7 @@ def _validate_nurbs_target(
         ],
         "source_ids": evidence_source_ids,
     }
-    fit_certificate = _certified_curve_to_polyline_distance(
+    fit_certificate = _certified_parameter_matched_curve_to_polyline_distance(
         fit_curve,
         source_points,
         gate_limit_mm=fit_tolerance_mm,
@@ -3317,11 +3371,20 @@ def _evaluate_field(surface: Mapping[str, Any], s: float, h: float) -> list[floa
 
 
 def _generation_bound_loop_family(
-    parameters: Mapping[str, Any], defaults: Mapping[str, Any]
+    parameters: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+    canonical: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    bound_defaults = deepcopy(dict(defaults))
+    if canonical is not None:
+        bound_defaults["canonical_nurbs_parameterization"] = deepcopy(
+            dict(canonical)
+        )
     return _cached_generation_bound_loop_family(
         json.dumps(_round_tree(parameters), sort_keys=True, separators=(",", ":")),
-        json.dumps(_round_tree(defaults), sort_keys=True, separators=(",", ":")),
+        json.dumps(
+            _round_tree(bound_defaults), sort_keys=True, separators=(",", ":")
+        ),
     )
 
 
@@ -3425,8 +3488,19 @@ def _source_edge_curve_at_h(
             for source_id in component["source_face_ids"]
         }
     )
+    local_origin = np.zeros(2, dtype=float)
+    for component in active_components:
+        endpoints = _evaluate_cached_source_nurbs(
+            component["target"], (0.0, 1.0)
+        )
+        component_origin = 0.5 * (
+            np.asarray(endpoints[0], dtype=float)
+            + np.asarray(endpoints[1], dtype=float)
+        )
+        local_origin += float(component["coefficient"]) * component_origin
     return {
         "components": active_components,
+        "local_origin_sq_mm": [float(value) for value in local_origin],
         "source_edge_ids": source_edge_ids,
         "source_face_ids": source_face_ids,
         "source_ids": sorted(set(source_edge_ids) | set(source_face_ids)),
@@ -3458,7 +3532,7 @@ def _evaluate_source_curve(curve: Mapping[str, Any], parameter: float) -> np.nda
             component["target"], (float(parameter),)
         )[0]
         value += float(component["coefficient"]) * np.asarray(point, dtype=float)
-    return value
+    return value - np.asarray(curve.get("local_origin_sq_mm", (0.0, 0.0)))
 
 
 def _source_curve_speed_bound(
@@ -3561,6 +3635,7 @@ def _source_curve_as_polyline(
         controls += float(component["coefficient"]) * np.asarray(
             target["control_points_local_mm"], dtype=float
         )
+    controls -= np.asarray(curve.get("local_origin_sq_mm", (0.0, 0.0)))
     return controls.tolist()
 
 
@@ -3653,6 +3728,39 @@ def _certified_curve_to_polyline_distance(
         target_to_fitted = dict(directed)
         fitted_to_target = dict(directed)
     else:
+        correspondence = _certified_parameter_matched_curve_to_polyline_distance(
+            curve,
+            fitted,
+            gate_limit_mm=gate_limit_mm,
+            convergence_mm=convergence_mm,
+        )
+        if correspondence["upper_bound_mm"] <= gate_limit_mm:
+            directed = {
+                "lower_bound_mm": 0.0,
+                "upper_bound_mm": correspondence["upper_bound_mm"],
+                "convergence_gap_mm": correspondence["upper_bound_mm"],
+                "subdivision_count": correspondence["subdivision_count"],
+                "evaluation_count": correspondence["evaluation_count"],
+                "converged": correspondence["converged"],
+                "decision_certified": True,
+            }
+            return _round_tree(
+                {
+                    "method": "deterministic_parameter_correspondence_lipschitz_hausdorff_upper_certificate",
+                    "metric": "continuous_bidirectional_curve_distance_upper_mm",
+                    "parameterization": "normalized_curve_to_polyline_chord_correspondence",
+                    "gate_limit_mm": gate_limit_mm,
+                    "convergence_tolerance_mm": convergence_mm,
+                    "lower_bound_mm": 0.0,
+                    "upper_bound_mm": correspondence["upper_bound_mm"],
+                    "convergence_gap_mm": correspondence["upper_bound_mm"],
+                    "converged": correspondence["converged"],
+                    "decision_certified": True,
+                    "gate_status": "PASS",
+                    "target_to_fitted": dict(directed),
+                    "fitted_to_target": dict(directed),
+                }
+            )
         target_to_fitted = _directed_curve_distance_bounds(
             intervals=_source_curve_intervals(curve),
             evaluate=lambda parameter: _evaluate_source_curve(curve, parameter),
@@ -3687,7 +3795,7 @@ def _certified_curve_to_polyline_distance(
     )
     return _round_tree(
         {
-            "method": _CURVE_DISTANCE_METHOD,
+            "method": _EXACT_CURVE_DISTANCE_METHOD,
             "metric": "continuous_bidirectional_curve_distance_upper_mm",
             "gate_limit_mm": gate_limit_mm,
             "convergence_tolerance_mm": convergence_mm,
@@ -3702,6 +3810,172 @@ def _certified_curve_to_polyline_distance(
             "fitted_to_target": fitted_to_target,
         }
     )
+
+
+def _certified_parameter_matched_curve_to_polyline_distance(
+    curve: Mapping[str, Any],
+    polyline: Sequence[Sequence[float]],
+    *,
+    gate_limit_mm: float,
+    convergence_mm: float,
+) -> dict[str, Any]:
+    """Certify a Task 7 chord-parameter fit without a nested Hausdorff search.
+
+    Task 7 fits the NURBS against the source section polyline using normalized
+    chord-length parameters. At every shared parameter, the pointwise distance
+    therefore supplies a bidirectional Hausdorff correspondence. A Lipschitz
+    bound on that pointwise error certifies the continuous upper bound.
+    """
+
+    fitted = np.asarray(polyline, dtype=float)
+    if fitted.ndim != 2 or fitted.shape[0] < 2 or fitted.shape[1] != 2:
+        _schema_error(
+            "Task 7 fit polyline must contain at least two local S-Q points"
+        )
+    segment_lengths = np.linalg.norm(np.diff(fitted, axis=0), axis=1)
+    total_length = float(np.sum(segment_lengths))
+    if total_length <= _EPSILON:
+        _schema_error("Task 7 fit polyline must have positive chord length")
+    parameters = np.concatenate(
+        (np.asarray([0.0]), np.cumsum(segment_lengths) / total_length)
+    )
+    breakpoints = {
+        float(value)
+        for value in parameters
+        if 0.0 <= float(value) <= 1.0
+    }
+    for start, end in _source_curve_intervals(curve):
+        breakpoints.update((float(start), float(end)))
+    ordered = sorted(breakpoints)
+    intervals = [
+        (left, right)
+        for left, right in zip(ordered, ordered[1:])
+        if right - left > _EPSILON
+    ]
+
+    def evaluate_polyline(parameter: float) -> np.ndarray:
+        if parameter >= 1.0 - _EPSILON:
+            return fitted[-1]
+        index = min(
+            max(int(np.searchsorted(parameters, parameter, side="right") - 1), 0),
+            len(fitted) - 2,
+        )
+        denominator = parameters[index + 1] - parameters[index]
+        if denominator <= _EPSILON:
+            return fitted[index]
+        fraction = (parameter - parameters[index]) / denominator
+        return (1.0 - fraction) * fitted[index] + fraction * fitted[index + 1]
+
+    if _source_curve_is_piecewise_affine(curve):
+        maximum = max(
+            float(
+                np.linalg.norm(
+                    _evaluate_source_curve(curve, parameter)
+                    - evaluate_polyline(parameter)
+                )
+            )
+            for parameter in ordered
+        )
+        return _round_tree(
+            {
+                "method": _TASK7_PIECEWISE_AFFINE_DISTANCE_METHOD,
+                "metric": "continuous_bidirectional_curve_distance_upper_mm",
+                "parameterization": "normalized_source_polyline_chord_length",
+                "gate_limit_mm": gate_limit_mm,
+                "convergence_tolerance_mm": convergence_mm,
+                "lower_bound_mm": maximum,
+                "upper_bound_mm": maximum,
+                "convergence_gap_mm": 0.0,
+                "subdivision_count": 0,
+                "evaluation_count": len(ordered),
+                "converged": True,
+                "decision_certified": True,
+                "gate_status": "PASS" if maximum <= gate_limit_mm else "FAIL",
+            }
+        )
+
+    def state(start: float, end: float) -> dict[str, float]:
+        midpoint = 0.5 * (start + end)
+        pointwise = float(
+            np.linalg.norm(
+                _evaluate_source_curve(curve, midpoint)
+                - evaluate_polyline(midpoint)
+            )
+        )
+        speed = _source_curve_speed_bound(curve, start, end) + total_length
+        return {
+            "start": start,
+            "end": end,
+            "lower": pointwise,
+            "upper": pointwise + speed * 0.5 * (end - start),
+        }
+
+    states = [state(start, end) for start, end in intervals]
+    subdivisions = 0
+    converged = False
+    while states:
+        lower = max(item["lower"] for item in states)
+        upper = max(item["upper"] for item in states)
+        if upper - lower <= convergence_mm:
+            converged = True
+            break
+        if upper <= gate_limit_mm or lower > gate_limit_mm:
+            break
+        if subdivisions >= _CURVE_DISTANCE_MAX_SUBDIVISIONS:
+            break
+        index = max(range(len(states)), key=lambda item: states[item]["upper"])
+        selected = states.pop(index)
+        midpoint = 0.5 * (selected["start"] + selected["end"])
+        if midpoint <= selected["start"] or midpoint >= selected["end"]:
+            states.append(selected)
+            break
+        states.extend(
+            (
+                state(selected["start"], midpoint),
+                state(midpoint, selected["end"]),
+            )
+        )
+        subdivisions += 1
+
+    lower = max((item["lower"] for item in states), default=0.0)
+    upper = max((item["upper"] for item in states), default=0.0)
+    decision_certified = upper <= gate_limit_mm or lower > gate_limit_mm
+    return _round_tree(
+        {
+            "method": _TASK7_FIT_DISTANCE_METHOD,
+            "metric": "continuous_bidirectional_curve_distance_upper_mm",
+            "parameterization": "normalized_source_polyline_chord_length",
+            "gate_limit_mm": gate_limit_mm,
+            "convergence_tolerance_mm": convergence_mm,
+            "lower_bound_mm": lower,
+            "upper_bound_mm": upper,
+            "convergence_gap_mm": max(0.0, upper - lower),
+            "subdivision_count": subdivisions,
+            "evaluation_count": len(intervals) + 2 * subdivisions,
+            "converged": converged,
+            "decision_certified": decision_certified,
+            "gate_status": "PASS" if upper <= gate_limit_mm else "FAIL",
+        }
+    )
+
+
+def _source_curve_is_piecewise_affine(curve: Mapping[str, Any]) -> bool:
+    components = curve.get("components")
+    if not _is_sequence(components) or not components:
+        return False
+    for component in components:
+        if not isinstance(component, Mapping):
+            return False
+        target = component.get("target")
+        if not isinstance(target, Mapping) or int(target.get("degree", -1)) != 1:
+            return False
+        weights = target.get("weights")
+        if not _is_sequence(weights) or len(weights) < 2:
+            return False
+        numeric = [float(value) for value in weights]
+        if max(numeric) - min(numeric) > 1.0e-12:
+            return False
+    return True
 
 
 def _directed_curve_distance_bounds(

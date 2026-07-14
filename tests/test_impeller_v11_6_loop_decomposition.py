@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
+import pytest
 
 from part_rule_synthesis.impeller_v11_6_section_recovery import (
     LocalSectionFrame,
     SectionEdge,
+    SectionRecoveryError,
     decompose_section_loop,
     fit_nurbs_measurement_curve,
     make_section_loop,
@@ -89,6 +92,43 @@ def test_source_shaped_edge_splines_are_retained_as_targets_without_semicircle_a
     assert len(trailing.fit.control_points_sq_mm) == len(trailing.points_sq_mm)
 
 
+def test_authenticated_side_edges_are_not_cut_when_edge_caps_are_unlabelled():
+    loop = _source_role_loop()
+    edges = tuple(
+        replace(edge, source_roles=())
+        if edge.source_roles in {("leading_edge",), ("trailing_edge",)}
+        else edge
+        for edge in loop.edges
+    )
+    loop = replace(loop, edges=edges)
+
+    decomposition = decompose_section_loop(loop, maximum_control_count=17)
+
+    assert decomposition.landmark_method == "partial_source_face_adjacency"
+    assert decomposition.segment("side_a").source_edge_ids == ("source_side_a",)
+    assert decomposition.segment("side_b").source_edge_ids == ("source_side_b",)
+    assert len(decomposition.segment("side_a").points_sq_mm) == 65
+    assert len(decomposition.segment("side_b").points_sq_mm) == 65
+    assert decomposition.segment("leading_edge").source_edge_ids == ("source_le",)
+    assert decomposition.segment("trailing_edge").source_edge_ids == ("source_te",)
+
+
+def test_incomplete_authenticated_side_partition_fails_closed_without_geometry_cutting():
+    loop = _source_role_loop()
+    edges = list(loop.edges)
+    side_a_index = next(
+        index for index, edge in enumerate(edges) if edge.source_roles == ("side_a",)
+    )
+    edges[side_a_index] = replace(edges[side_a_index], source_roles=())
+    loop = replace(loop, edges=tuple(edges))
+
+    with pytest.raises(SectionRecoveryError) as caught:
+        decompose_section_loop(loop)
+
+    assert caught.value.reason == "v116_section_loop_correspondence_failed"
+    assert "authenticated side" in str(caught.value).lower()
+
+
 def test_geometry_landmark_fallback_still_produces_four_consistently_oriented_segments():
     parameter = np.linspace(0.0, 2.0 * np.pi, 129, endpoint=False)
     loop = make_section_loop(
@@ -128,6 +168,32 @@ def test_sparse_source_curve_fit_reports_bidirectional_sq_and_xyz_residuals_and_
     assert fit.edge_sag_sq_mm > 1.0
     assert fit.edge_sag_xyz_mm > fit.edge_sag_sq_mm
     assert fit.fit_sample_count == 257
+
+
+def test_source_tolerance_can_select_an_honestly_measured_linear_nurbs_target():
+    sq = np.asarray([(0.0, 0.0), (1.0, 1.2), (2.0, -1.0), (3.0, 0.0)])
+    xyz = np.column_stack([sq, np.asarray([0.0, 0.8, -0.6, 0.0])])
+
+    fit = fit_nurbs_measurement_curve(
+        xyz,
+        sq,
+        segment_name="source_polyline_edge",
+        source_edge_ids=("edge_source",),
+        maximum_control_count=4,
+        fit_tolerance_mm=0.02,
+        allow_source_polyline_nurbs=True,
+    )
+
+    assert fit.degree == 1
+    assert fit.source_sample_count == 4
+    assert fit.fit_sample_count == 257
+    assert fit.residual_max_mm <= 0.02
+    assert fit.residual_max_mm == max(
+        fit.residual_source_to_fit_max_sq_mm,
+        fit.residual_fit_to_source_max_sq_mm,
+        fit.residual_source_to_fit_max_xyz_mm,
+        fit.residual_fit_to_source_max_xyz_mm,
+    )
 
 
 def test_high_resolution_fit_has_a_bounded_display_sample_budget():
