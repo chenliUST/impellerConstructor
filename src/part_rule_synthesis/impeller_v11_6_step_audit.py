@@ -23,10 +23,12 @@ import numpy as np
 
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 from part_rule_synthesis.impeller_v11_2_canonical import clamped_uniform_knots
 from part_rule_synthesis import impeller_v11_6_source_frame as source_frame
 from part_rule_synthesis import impeller_v11_6_periodic_blades as periodic_blades
 from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as axis_first_pipeline
+from part_rule_synthesis import impeller_v11_6_pattern_reconstruction as pattern_reconstruction
 from part_rule_synthesis.impeller_v11_6_deviation import (
     TriangleMesh,
     artifact_record,
@@ -43,7 +45,7 @@ from part_rule_synthesis.service import RuleSynthesisService
 AUDIT_CONTRACT_ID = "impeller_v1_1_6_step_reconstruction_audit"
 AUDIT_RUNTIME_VERSION = "1.1.6"
 CANONICAL_GEOMETRY_VERSION = "1.1.2"
-AUDIT_IMPLEMENTATION_REVISION = "axis_first_section_periodic_r3"
+AUDIT_IMPLEMENTATION_REVISION = "axis_first_pattern_material_r4"
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_FACE_COUNT = 20_000
 MAX_QUEUE_LENGTH = 4
@@ -342,6 +344,11 @@ class StepReconstructionAuditService:
             stage_records,
             lambda: extract_v11_parameters(source_shape, source_manifest, frame, semantics),
         )
+        task8_recovery_authority = (
+            axis_first_pipeline.preserve_task8_reconstruction_authority(
+                mapping, source_manifest["sha256"]
+            )
+        )
 
         source_native_stl = audit_dir / ".source-native.stl"
         source_stl = audit_dir / "source.stl"
@@ -354,6 +361,7 @@ class StepReconstructionAuditService:
             audit_dir,
             mapping,
             source_manifest=source_manifest,
+            task8_recovery_authority=task8_recovery_authority,
             stage_callback=lambda stage, duration, payload: self._complete_reconstruction_stage(
                 audit_id, stage_records, stage, duration, payload
             ),
@@ -848,6 +856,7 @@ def reconstruct_with_current_v11(
     mapping: dict[str, Any],
     *,
     source_manifest: dict[str, Any],
+    task8_recovery_authority: Mapping[str, Any],
     stage_callback,
 ) -> dict[str, Any]:
     canonical = _validated_mapping_canonical_payload(mapping)
@@ -867,6 +876,7 @@ def reconstruct_with_current_v11(
     for name, value in parameters.items():
         if name in runtime["parameters"]:
             runtime["parameters"][name]["default"] = value
+    _disable_zero_radius_legacy_transition_policies(runtime, parameters)
     runtime["resolved_parameter_defaults"] = copy.deepcopy(parameters)
     runtime["resolved_blade_to_blade_loop_family_defaults"] = defaults
     runtime["canonical_input_source"] = canonical.get(
@@ -927,6 +937,21 @@ def reconstruct_with_current_v11(
             {"status": final_run.manifest.get("geometry_validation_status")},
         )
     surface_graph = final_run.manifest.get("geometry", {}).get("surface_graph", {})
+    try:
+        surface_graph, pattern_manifest = (
+            pattern_reconstruction.validate_mapped_pattern_reconstruction(
+                surface_graph,
+                mapping,
+                source_manifest,
+                task8_recovery_authority=task8_recovery_authority,
+            )
+        )
+    except pattern_reconstruction.PatternReconstructionError as exc:
+        raise StepAuditError(
+            "v116_step_reconstruction_validation_failed",
+            f"V1.1.6 periodic/material reconstruction failed: {exc}",
+            {"upstream_reason": exc.reason, **copy.deepcopy(exc.details)},
+        ) from exc
     stl_path = audit_dir / "reconstruction-runtime.stl"
     _write_surface_graph_stl(surface_graph, stl_path)
     summary = {
@@ -939,9 +964,36 @@ def reconstruct_with_current_v11(
         "generation_id": final_run.manifest.get("generation_id"),
         "constructor_stages": stage_manifests,
         "parameters": final_run.manifest.get("parameters", {}),
-        "surface_count": len(final_run.manifest.get("geometry", {}).get("surface_graph", {}).get("surfaces", [])),
+        "surface_count": len(surface_graph.get("surfaces", [])),
+        "pattern_material_contract": axis_first_pipeline._jsonable(pattern_manifest),
     }
     return {"manifest": summary, "stl_path": stl_path}
+
+
+def _disable_zero_radius_legacy_transition_policies(
+    runtime: dict[str, Any], parameters: Mapping[str, Any]
+) -> None:
+    """Keep legacy policy validation from overriding canonical V1.1.2 geometry."""
+
+    for family in runtime.get("edge_families", {}).values():
+        radius_parameter = family.get("default_radius_parameter")
+        radius = parameters.get(radius_parameter)
+        if (
+            isinstance(radius, (int, float))
+            and not isinstance(radius, bool)
+            and float(radius) <= 0.0
+        ):
+            family["default_treatment"] = "none"
+            family["default_continuity"] = "G0"
+    resolved_parameters = {
+        name: specification.get("default")
+        for name, specification in runtime.get("parameters", {}).items()
+    }
+    resolved_parameters.update(parameters)
+    runtime["transition_policy_defaults"] = resolve_transition_policies(
+        runtime.get("edge_families", {}),
+        resolved_parameters,
+    )
 
 
 def _canonical_payload_hash(value: Any) -> str:
@@ -1002,7 +1054,10 @@ def _apply_bounded_audit_sampling(defaults: dict[str, Any]) -> None:
 def _write_surface_graph_stl(surface_graph: dict[str, Any], path: Path) -> None:
     from part_rule_synthesis.impeller_surface_graph_export import triangulate_surface_graph
 
-    triangulation = triangulate_surface_graph(surface_graph, view_id="cad_review_360")
+    triangulation = triangulate_surface_graph(
+        _material_export_surface_graph(surface_graph),
+        view_id="cad_review_360",
+    )
     triangles = triangulation.get("triangles", [])
     if not triangles:
         raise StepAuditError("v116_step_reconstruction_validation_failed", "surface graph produced no review triangles")
@@ -1020,6 +1075,17 @@ def _write_surface_graph_stl(surface_graph: dict[str, Any], path: Path) -> None:
         normals=np.asarray(normals, dtype=float),
     )
     write_binary_stl(path, mesh, label="V1.1.2 surface graph review reconstruction")
+
+
+def _material_export_surface_graph(surface_graph: Mapping[str, Any]) -> dict[str, Any]:
+    graph = copy.deepcopy(dict(surface_graph))
+    graph["surfaces"] = [
+        surface
+        for surface in graph.get("surfaces", [])
+        if surface.get("export_default") != "excluded"
+        and surface.get("material") is not False
+    ]
+    return graph
 
 
 def _face_records(shape) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:

@@ -18,6 +18,10 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+from part_rule_synthesis.impeller_v11_6_axis_first_pipeline import (
+    preserve_task8_reconstruction_authority,
+    task8_reconstruction_evidence_hash,
+)
 from part_rule_synthesis.impeller_v11_3_parameter_inspection import (
     build_parameter_inspection_contract,
     parameter_inspection_generation_id,
@@ -26,8 +30,15 @@ from part_rule_synthesis.impeller_v11_6_pattern_reconstruction import (
     PatternReconstructionError,
     _measure_graph_collision_diagnostics,
     validate_and_decorate_pattern_reconstruction,
+    validate_mapped_pattern_reconstruction,
 )
-from part_rule_synthesis.impeller_v11_6_step_audit import load_step_source
+from part_rule_synthesis.impeller_v11_6_step_audit import (
+    _material_export_surface_graph,
+    load_step_source,
+)
+from part_rule_synthesis.impeller_surface_graph_export import (
+    triangulate_surface_graph,
+)
 from part_rule_synthesis.impeller_v11_surface_family import build_v11_surface_graph
 from step_fixtures import write_periodic_impeller_step
 
@@ -769,6 +780,9 @@ def _trusted_material_partition(support: dict, source_manifest: dict) -> dict:
                             "source_face_ids_by_instance"
                         ]
                     ),
+                    "finite_thickness": copy.deepcopy(
+                        shroud["finite_thickness"]
+                    ),
                 },
             }
         )
@@ -935,6 +949,146 @@ def test_open_n_plus_zero_decorates_every_blade_surface_and_freezes_manifest():
         manifest["status"] = "FAIL"
     with pytest.raises(TypeError):
         manifest["pattern"]["populations"][0]["count"] = 99
+
+
+def test_open_tip_reference_may_be_fitted_from_periodic_material_tip_cap():
+    graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
+    periodic = _periodic_evidence(graph)
+    support = _open_support(periodic)
+    tip_cap_face_id = periodic["main"]["instances"][0]["source_face_ids"][-1]
+    support["open_tip_reference"]["source_face_ids"] = [tip_cap_face_id]
+    support["open_tip_reference"]["provenance"]["source_entity_ids"] = [
+        tip_cap_face_id
+    ]
+    source_manifest = _trusted_source_manifest(periodic, support)
+    authority = _trusted_authority(periodic, support, source_manifest)
+    _seal_periodic_evidence(periodic, source_manifest)
+    _seal_support_evidence(support, source_manifest)
+
+    decorated, manifest = _validate_case(graph, periodic, support, authority)
+
+    assert list(
+        manifest["material"]["open_tip_reference"]["source_face_ids"]
+    ) == [tip_cap_face_id]
+    reference = next(
+        surface
+        for surface in decorated["surfaces"]
+        if surface["role"] == "open_tip_reference"
+    )
+    assert reference["material"] is False
+    assert reference["export_default"] == "excluded"
+
+
+def _task8_mapping(periodic: dict, material_partition: dict, source_manifest: dict):
+    mapping = {
+        "periodic_provenance": {
+            "measurement_tolerance_mm": periodic["measurement_tolerance_mm"],
+            "source_linear_tolerance_mm": periodic.get(
+                "source_linear_tolerance_mm",
+                periodic["measurement_tolerance_mm"],
+            ),
+            "pattern_population_evidence": periodic,
+        },
+        "support_recovery": {
+            "pattern_material_partition": material_partition,
+        },
+    }
+    mapping["task8_reconstruction_evidence_hash_sha256"] = (
+        task8_reconstruction_evidence_hash(
+            mapping["support_recovery"],
+            mapping["periodic_provenance"],
+            source_manifest["sha256"],
+        )
+    )
+    return mapping
+
+
+def _task8_authority(mapping: dict, source_manifest: dict):
+    return preserve_task8_reconstruction_authority(
+        mapping, source_manifest["sha256"]
+    )
+
+
+def test_mapped_adapter_seals_task8_population_and_material_evidence():
+    graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
+    periodic = _periodic_evidence(graph)
+    support = _open_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    mapping = _task8_mapping(
+        periodic,
+        _trusted_material_partition(support, source_manifest),
+        source_manifest,
+    )
+
+    decorated, manifest = validate_mapped_pattern_reconstruction(
+        graph,
+        mapping,
+        source_manifest,
+        task8_recovery_authority=_task8_authority(mapping, source_manifest),
+    )
+
+    assert manifest["status"] == "PASS"
+    assert manifest["pattern"]["main_blade_count"] == 3
+    assert manifest["pattern"]["splitter_blade_count"] == 0
+    assert manifest["material"]["material_shroud"] is None
+    assert decorated["v1_1_6_pattern_material"]["status"] == "PASS"
+
+
+def test_mapped_adapter_rejects_task8_source_collision_before_graph_collision():
+    graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
+    periodic = _periodic_evidence(graph)
+    periodic["collision_diagnostics"].update(
+        {
+            "collision_free": False,
+            "collision_count": 1,
+            "collisions": [{"first": "source-main-0", "second": "source-main-1"}],
+        }
+    )
+    support = _open_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    mapping = _task8_mapping(
+        periodic,
+        _trusted_material_partition(support, source_manifest),
+        source_manifest,
+    )
+
+    with pytest.raises(PatternReconstructionError) as raised:
+        validate_mapped_pattern_reconstruction(
+            graph,
+            mapping,
+            source_manifest,
+            task8_recovery_authority=_task8_authority(
+                mapping, source_manifest
+            ),
+        )
+
+    assert raised.value.reason == "v116_pattern_collision"
+
+
+def test_open_mapped_adapter_excludes_tip_reference_from_real_triangulation():
+    graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
+    periodic = _periodic_evidence(graph)
+    support = _open_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    mapping = _task8_mapping(
+        periodic,
+        _trusted_material_partition(support, source_manifest),
+        source_manifest,
+    )
+    decorated, _ = validate_mapped_pattern_reconstruction(
+        graph,
+        mapping,
+        source_manifest,
+        task8_recovery_authority=_task8_authority(mapping, source_manifest),
+    )
+
+    triangulation = triangulate_surface_graph(
+        _material_export_surface_graph(decorated),
+        view_id="cad_review_360",
+    )
+
+    assert "tip_reference_surface" not in triangulation["included_surface_ids"]
+    assert triangulation["triangles"]
 
 
 def test_production_load_step_source_manifest_derives_solid_identity(tmp_path):

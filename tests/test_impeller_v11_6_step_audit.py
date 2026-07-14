@@ -244,6 +244,14 @@ def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
     )
     monkeypatch.setattr(step_audit_module, "RuleSynthesisService", FakeService)
     monkeypatch.setattr(
+        step_audit_module.pattern_reconstruction,
+        "validate_mapped_pattern_reconstruction",
+        lambda graph, _mapping, _source, **_kwargs: (
+            graph,
+            {"status": "PASS", "contract": "task9-test-double"},
+        ),
+    )
+    monkeypatch.setattr(
         step_audit_module, "_write_surface_graph_stl", lambda *_args: None
     )
 
@@ -251,6 +259,7 @@ def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
         tmp_path,
         mapping,
         source_manifest={"sha256": "source-sha"},
+        task8_recovery_authority={"authority": "task9-test-double"},
         stage_callback=lambda *_args: None,
     )
 
@@ -262,6 +271,58 @@ def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
         for runtime in instantiated_runtimes
     )
     assert result["manifest"]["geometry_patch_version"] == "1.1.2"
+    assert result["manifest"]["pattern_material_contract"]["status"] == "PASS"
+
+
+def test_zero_measured_radius_disables_only_legacy_transition_policy():
+    runtime = compile_impeller_runtime_preset("radial_open_reference_v1_1")
+    root_family = runtime["edge_families"]["blade_root_to_hub"]
+    leading_family = runtime["edge_families"]["blade_leading_edge"]
+
+    step_audit_module._disable_zero_radius_legacy_transition_policies(
+        runtime,
+        {
+            root_family["default_radius_parameter"]: 0.0,
+            leading_family["default_radius_parameter"]: 2.0,
+        },
+    )
+
+    assert root_family["default_treatment"] == "none"
+    assert root_family["default_continuity"] == "G0"
+    assert leading_family["default_treatment"] != "none"
+    root_policy = runtime["transition_policy_defaults"][
+        "blade_root_to_hub.default"
+    ]
+    assert root_policy["treatment"] == "none"
+    assert root_policy["continuity"] == "G0"
+    assert root_policy["radius_mm"] == 0.0
+
+
+def test_material_export_graph_excludes_open_tip_reference():
+    graph = {
+        "surfaces": [
+            {"id": "hub", "role": "hub_support", "material": True},
+            {
+                "id": "tip-reference",
+                "role": "open_tip_reference",
+                "material": False,
+                "export_default": "excluded",
+            },
+            {
+                "id": "blade",
+                "role": "blade_pressure",
+                "material": True,
+                "export_default": "included",
+            },
+        ]
+    }
+
+    exported = step_audit_module._material_export_surface_graph(graph)
+
+    assert [surface["id"] for surface in exported["surfaces"]] == [
+        "hub",
+        "blade",
+    ]
 
 
 def test_ordinary_v112_runtime_compiler_retains_legacy_regeneration(monkeypatch):

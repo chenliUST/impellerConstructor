@@ -122,6 +122,93 @@ def test_closed_shroud_support_mapping_is_module_authenticated(tmp_path):
     assert support["mapping_fits"]["tip_or_shroud"]["fit_status"] == "PASS"
 
 
+@pytest.mark.parametrize("closed_shroud", [False, True])
+def test_task9_mapping_retains_full_periodic_and_material_partitions(
+    tmp_path, closed_shroud
+):
+    shape, source, frame, semantics = _source_inputs(
+        tmp_path, blade_count=8, closed_shroud=closed_shroud
+    )
+    inventory = pipeline._source_inventory(shape, source, frame, semantics)
+    support = pipeline._recover_support_evidence(
+        inventory, frame, semantics
+    )
+    periodic = pipeline._recover_periodic_evidence(
+        inventory, frame, semantics, support=support
+    )
+
+    recovered = periodic["pattern_population_evidence"]
+    assert recovered["main_blade_count"] == 8
+    assert len(recovered["main"]["instances"]) == 8
+    assert all(
+        instance["transform_from_representative"]
+        for instance in recovered["main"]["instances"]
+    )
+    assert periodic["measurement_tolerance_mm"] >= max(
+        instance["residual_to_representative_mm"]
+        for instance in recovered["main"]["instances"]
+    )
+    assert periodic["source_linear_tolerance_mm"] <= periodic[
+        "measurement_tolerance_mm"
+    ]
+    material = support["pattern_material_partition"]
+    assert material["mode"] == ("closed" if closed_shroud else "open")
+    assert sorted(material["hub_attachment_face_ids_by_instance"]) == sorted(
+        instance["instance_id"] for instance in recovered["main"]["instances"]
+    )
+    if closed_shroud:
+        assert material["open_tip_reference_face_ids"] is None
+        assert material["material_shroud"]["finite_thickness"][
+            "finite_positive"
+        ] is True
+    else:
+        assert material["material_shroud"] is None
+        assert len(material["open_tip_reference_face_ids"]) == 8
+
+
+def test_attachment_recovery_retains_every_source_patch_touching_support():
+    inventory = {
+        "source_manifest": {
+            "adjacency": {
+                "root-a": ["hub"],
+                "root-b": ["hub"],
+                "blade-side": ["root-a"],
+            }
+        },
+        "records_by_id": {
+            "root-a": {"area_mm2": 4.0},
+            "root-b": {"area_mm2": 2.0},
+            "blade-side": {"area_mm2": 20.0},
+        },
+    }
+    instances = [
+        {
+            "instance_id": "main-0",
+            "source_face_ids": ["root-a", "root-b", "blade-side"],
+        }
+    ]
+
+    recovered = pipeline._attachment_faces_by_instance(
+        inventory, instances, ["hub"]
+    )
+
+    assert recovered == {"main-0": ["root-a", "root-b"]}
+
+
+def test_periodic_representative_fit_has_independent_review_grade_ceiling():
+    frame = {
+        "outer_radius_mm": 50.0,
+        "axis_consensus": {
+            "selected_cluster": {"tolerance": {"line_distance_mm": 0.02}}
+        },
+    }
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as raised:
+        pipeline._bounded_representative_fit_tolerance(frame, 5.0)
+
+    assert raised.value.reason == "v116_periodic_population_ambiguous"
+
+
 def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(monkeypatch):
     calls = []
     instance = {

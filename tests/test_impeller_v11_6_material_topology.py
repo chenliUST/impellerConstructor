@@ -17,6 +17,10 @@ for path in (SRC_ROOT, TEST_ROOT):
 
 from part_rule_synthesis.impeller_v11_6_pattern_reconstruction import (
     PatternReconstructionError,
+    validate_mapped_pattern_reconstruction,
+)
+from part_rule_synthesis.impeller_v11_6_axis_first_pipeline import (
+    task8_reconstruction_evidence_hash,
 )
 from test_impeller_v11_6_pattern_reconstruction import (
     _attachment,
@@ -26,6 +30,8 @@ from test_impeller_v11_6_pattern_reconstruction import (
     _periodic_source_ids,
     _provenance,
     _runtime_graph,
+    _task8_mapping,
+    _task8_authority,
     _seal_periodic_evidence,
     _seal_support_evidence,
     _seal_support_record,
@@ -120,6 +126,105 @@ def test_closed_graph_requires_and_records_finite_shroud_plus_both_attachments()
     assert shroud_surfaces and shroud_attachments
     assert all(surface["material"] is True for surface in shroud_surfaces + shroud_attachments)
     assert all("periodic_pattern_binding" in surface for surface in shroud_attachments)
+
+
+def test_mapped_adapter_preserves_closed_finite_shroud_and_both_attachments():
+    graph = copy.deepcopy(_runtime_graph("radial_closed_reference_v1_1"))
+    periodic = _periodic_evidence(graph)
+    support = _closed_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    authority = _trusted_authority(periodic, support, source_manifest)
+    material_partition = copy.deepcopy(authority["material_support_manifest"])
+    material_partition["material_shroud"]["finite_thickness"] = copy.deepcopy(
+        support["material_shroud"]["finite_thickness"]
+    )
+    mapping = _task8_mapping(periodic, material_partition, source_manifest)
+
+    decorated, manifest = validate_mapped_pattern_reconstruction(
+        graph,
+        mapping,
+        source_manifest,
+        task8_recovery_authority=_task8_authority(mapping, source_manifest),
+    )
+
+    material = manifest["material"]
+    assert material["mode"] == "closed"
+    assert material["material_shroud"]["finite_thickness"]["minimum_mm"] == 2.0
+    assert len(material["hub_support"]["blade_attachment"]["instance_ids"]) == 12
+    assert len(
+        material["material_shroud"]["blade_attachment"]["instance_ids"]
+    ) == 12
+    assert decorated["v1_1_6_pattern_material"]["status"] == "PASS"
+
+
+def test_mapped_adapter_rejects_material_partition_changed_after_task8_seal():
+    graph = copy.deepcopy(_runtime_graph("radial_closed_reference_v1_1"))
+    periodic = _periodic_evidence(graph)
+    support = _closed_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    authority = _trusted_authority(periodic, support, source_manifest)
+    material_partition = copy.deepcopy(authority["material_support_manifest"])
+    material_partition["material_shroud"]["finite_thickness"] = copy.deepcopy(
+        support["material_shroud"]["finite_thickness"]
+    )
+    mapping = _task8_mapping(periodic, material_partition, source_manifest)
+    authority = _task8_authority(mapping, source_manifest)
+    mapping["support_recovery"]["pattern_material_partition"]["material_shroud"][
+        "finite_thickness"
+    ]["minimum_mm"] = 999.0
+    mapping["task8_reconstruction_evidence_hash_sha256"] = (
+        task8_reconstruction_evidence_hash(
+            mapping["support_recovery"],
+            mapping["periodic_provenance"],
+            source_manifest["sha256"],
+        )
+    )
+
+    with pytest.raises(PatternReconstructionError) as raised:
+        validate_mapped_pattern_reconstruction(
+            graph,
+            mapping,
+            source_manifest,
+            task8_recovery_authority=authority,
+        )
+
+    assert raised.value.reason == "v116_task8_evidence_untrusted"
+
+
+def test_mapped_adapter_rejects_malformed_resealed_attachment_with_stable_error():
+    graph = copy.deepcopy(_runtime_graph("radial_closed_reference_v1_1"))
+    periodic = _periodic_evidence(graph)
+    support = _closed_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    authority_manifest = _trusted_authority(periodic, support, source_manifest)
+    material_partition = copy.deepcopy(
+        authority_manifest["material_support_manifest"]
+    )
+    material_partition["material_shroud"]["finite_thickness"] = copy.deepcopy(
+        support["material_shroud"]["finite_thickness"]
+    )
+    mapping = _task8_mapping(periodic, material_partition, source_manifest)
+    task8_authority = _task8_authority(mapping, source_manifest)
+    mapping["support_recovery"]["pattern_material_partition"][
+        "hub_attachment_face_ids_by_instance"
+    ] = []
+    mapping["task8_reconstruction_evidence_hash_sha256"] = (
+        task8_reconstruction_evidence_hash(
+            mapping["support_recovery"],
+            mapping["periodic_provenance"],
+            source_manifest["sha256"],
+        )
+    )
+
+    with pytest.raises(PatternReconstructionError) as raised:
+        validate_mapped_pattern_reconstruction(
+            graph,
+            mapping,
+            source_manifest,
+            task8_recovery_authority=task8_authority,
+        )
+
+    assert raised.value.reason == "v116_task8_evidence_untrusted"
 
 
 def test_open_graph_rejects_false_material_shroud_role_or_area():

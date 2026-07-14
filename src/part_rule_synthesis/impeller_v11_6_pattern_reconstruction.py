@@ -9,6 +9,9 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
+from part_rule_synthesis.impeller_v11_6_axis_first_pipeline import (
+    task8_reconstruction_evidence_hash,
+)
 from part_rule_synthesis.impeller_v11_validation import validate_v11_surface_graph
 
 
@@ -43,6 +46,611 @@ class PatternReconstructionError(ValueError):
         super().__init__(message)
         self.reason = reason
         self.details = dict(details or {})
+
+
+def validate_mapped_pattern_reconstruction(
+    surface_graph: Mapping[str, Any],
+    mapping: Mapping[str, Any],
+    source_manifest: Mapping[str, Any],
+    *,
+    task8_recovery_authority: Mapping[str, Any],
+) -> tuple[dict[str, Any], Mapping[str, Any]]:
+    """Bind Task 8 source evidence to an instantiated V1.1.2 surface graph."""
+
+    graph = _completed_v112_graph(surface_graph)
+    trusted_source = _trusted_source_topology(source_manifest)
+    task8_authority = _validate_task8_evidence_authority(
+        mapping,
+        task8_recovery_authority,
+        trusted_source,
+    )
+    periodic = _mapped_periodic_evidence(graph, mapping, trusted_source)
+    material_partition = _mapped_material_partition(mapping, trusted_source)
+    trusted_periodic = _periodic_partition_manifest(
+        _mapping(
+            task8_authority["periodic_provenance"].get(
+                "pattern_population_evidence"
+            ),
+            "Task 8 authority periodic populations",
+        ),
+        trusted_source,
+    )
+    trusted_material_partition = copy.deepcopy(
+        dict(
+            _mapping(
+                task8_authority["support_recovery"].get(
+                    "pattern_material_partition"
+                ),
+                "Task 8 authority material partition",
+            )
+        )
+    )
+    trusted_material = {
+        **trusted_material_partition,
+        "authority": _TRUSTED_MATERIAL_AUTHORITY,
+        "source_sha256": trusted_source["source_sha256"],
+        "source_solid_shape_identity": trusted_source[
+            "source_solid_shape_identity"
+        ],
+    }
+    support = _mapped_support_evidence(material_partition, trusted_source)
+    return validate_and_decorate_pattern_reconstruction(
+        graph,
+        periodic,
+        support,
+        trusted_source_topology_manifest=source_manifest,
+        trusted_periodic_partition_manifest=trusted_periodic,
+        trusted_material_support_manifest=trusted_material,
+    )
+
+
+def _mapped_periodic_evidence(
+    graph: Mapping[str, Any],
+    mapping: Mapping[str, Any],
+    trusted_source: Mapping[str, Any],
+) -> dict[str, Any]:
+    mapped = _mapping(mapping.get("periodic_provenance"), "mapping.periodic_provenance")
+    periodic = copy.deepcopy(
+        _mapping(
+            mapped.get("pattern_population_evidence"),
+            "mapping.periodic_provenance.pattern_population_evidence",
+        )
+    )
+    periodic["measurement_tolerance_mm"] = _positive_finite(
+        mapped.get("measurement_tolerance_mm"),
+        "mapping.periodic_provenance.measurement_tolerance_mm",
+    )
+    periodic["generated_rigid_transform_tolerance_mm"] = _positive_finite(
+        mapped.get(
+            "generated_rigid_transform_tolerance_mm",
+            mapped.get("source_linear_tolerance_mm"),
+        ),
+        "mapping.periodic_provenance.generated_rigid_transform_tolerance_mm",
+    )
+    source_collision = copy.deepcopy(
+        dict(
+            _mapping(
+                periodic.get("collision_diagnostics"),
+                "mapping source collision diagnostics",
+            )
+        )
+    )
+    if (
+        source_collision.get("collision_free") is not True
+        or _nonnegative_int(
+            source_collision.get("collision_count"),
+            "mapping source collision count",
+        )
+        != 0
+    ):
+        raise PatternReconstructionError(
+            "v116_pattern_collision",
+            "Task 8 source periodic populations contain a measured collision",
+            details={"source_collision_diagnostics": source_collision},
+        )
+    periodic["source_collision_diagnostics"] = source_collision
+    generated = _generated_blade_surfaces(graph)
+    populations = periodic.get("populations")
+    if periodic.get("method") != _PERIODIC_METHOD or not _is_sequence(populations):
+        raise PatternReconstructionError(
+            "v116_pattern_evidence_invalid",
+            "Task 8 mapping lacks complete measured periodic populations",
+        )
+
+    by_class: dict[str, dict[str, Any]] = {}
+    collision_populations = []
+    digest_populations = []
+    for raw_population in populations:
+        population = dict(_mapping(raw_population, "mapped periodic population"))
+        blade_class = population.get("classification")
+        if blade_class not in _BLADE_CLASSES or blade_class in by_class:
+            raise PatternReconstructionError(
+                "v116_pattern_evidence_invalid",
+                "mapped periodic populations contain duplicate or unknown classes",
+            )
+        instances = population.get("instances")
+        if not _is_sequence(instances):
+            raise PatternReconstructionError(
+                "v116_pattern_evidence_invalid",
+                f"mapped {blade_class} population has no instances",
+            )
+        sealed_instances = []
+        collision_instances = []
+        for raw_instance in instances:
+            instance = copy.deepcopy(dict(_mapping(raw_instance, "mapped instance")))
+            index = _nonnegative_int(
+                instance.get("lattice_index"), f"mapped {blade_class} lattice index"
+            )
+            try:
+                envelope = _surface_family_envelope(generated[blade_class][index])
+            except KeyError as exc:
+                raise PatternReconstructionError(
+                    "v116_pattern_count_mismatch",
+                    f"mapped {blade_class} instance has no generated V1.1.2 family",
+                ) from exc
+            _seal_component_evidence(instance, trusted_source)
+            instance["source_collision_envelope"] = {
+                "angular_span_deg": instance.get("angular_span_deg"),
+                "angular_envelope_deg": copy.deepcopy(
+                    instance.get("angular_envelope_deg")
+                ),
+                "radial_support_range_mm": copy.deepcopy(
+                    instance.get("radial_support_range_mm")
+                ),
+                "axial_support_range_mm": copy.deepcopy(
+                    instance.get("axial_support_range_mm")
+                ),
+            }
+            instance["collision_envelope_authority"] = (
+                "instantiated_v112_surface_graph_uv_grid"
+            )
+            instance["angular_span_deg"] = envelope["span_deg"]
+            instance["angular_envelope_deg"] = {
+                "method": envelope["method"],
+                "span_deg": envelope["span_deg"],
+            }
+            instance["radial_support_range_mm"] = list(envelope["radial_range_mm"])
+            instance["axial_support_range_mm"] = list(envelope["axial_range_mm"])
+            sealed_instances.append(instance)
+            collision_instances.append(
+                {
+                    "population_id": blade_class,
+                    "source_component_id": instance["source_component_id"],
+                    "collision_samples": envelope["collision_samples"],
+                }
+            )
+        sealed_instances.sort(key=lambda item: item["lattice_index"])
+        population["instances"] = sealed_instances
+        representative = dict(
+            _mapping(population.get("representative"), "mapped representative")
+        )
+        representative_instance = next(
+            (
+                instance
+                for instance in sealed_instances
+                if instance["source_component_id"]
+                == representative.get("source_component_id")
+            ),
+            None,
+        )
+        if representative_instance is None:
+            raise PatternReconstructionError(
+                "v116_pattern_instance_contract_invalid",
+                f"mapped {blade_class} representative is absent from its population",
+            )
+        representative["source_component_evidence"] = copy.deepcopy(
+            representative_instance["source_component_evidence"]
+        )
+        population["representative"] = representative
+        by_class[blade_class] = population
+        collision_populations.append(
+            {"population_id": blade_class, "instances": collision_instances}
+        )
+        digest_populations.append(_periodic_digest_population(population))
+
+    periodic["populations"] = [
+        by_class[name] for name in _BLADE_CLASSES if name in by_class
+    ]
+    periodic["main"] = by_class.get("main")
+    periodic["splitter"] = by_class.get("splitter")
+    collision_tolerance = _positive_finite(
+        _mapping(
+            periodic.get("collision_diagnostics"), "mapped collision diagnostics"
+        ).get("tolerance_deg"),
+        "mapped collision tolerance",
+    )
+    periodic["collision_diagnostics"] = _measure_graph_collision_diagnostics(
+        collision_populations,
+        collision_tolerance_deg=collision_tolerance,
+    )
+    source_ids = sorted(
+        face_id
+        for population in periodic["populations"]
+        for instance in population["instances"]
+        for face_id in instance["source_face_ids"]
+    )
+    periodic["provenance"] = {
+        "authentication_status": "PASS",
+        "authority": _PERIODIC_PROVENANCE_AUTHORITY,
+        "source_sha256": trusted_source["source_sha256"],
+        "source_solid_shape_identity": trusted_source[
+            "source_solid_shape_identity"
+        ],
+        "source_entity_ids": source_ids,
+        "digest_basis": _PERIODIC_DIGEST_BASIS,
+        "population_digest_sha256": _payload_digest(
+            {
+                "digest_basis": _PERIODIC_DIGEST_BASIS,
+                "trusted_source_manifest_digest_sha256": trusted_source[
+                    "manifest_digest_sha256"
+                ],
+                "method": _PERIODIC_METHOD,
+                "populations": digest_populations,
+            }
+        ),
+    }
+    return periodic
+
+
+def _validate_task8_evidence_authority(
+    mapping: Mapping[str, Any],
+    authority_value: Mapping[str, Any],
+    trusted_source: Mapping[str, Any],
+) -> dict[str, Any]:
+    authority = copy.deepcopy(
+        dict(_mapping(authority_value, "Task 8 recovery authority"))
+    )
+    if (
+        authority.get("authority") != "axis_first_task8_recovery_result"
+        or authority.get("source_sha256") != trusted_source["source_sha256"]
+    ):
+        raise PatternReconstructionError(
+            "v116_task8_evidence_untrusted",
+            "Task 8 recovery authority is absent or bound to another source",
+        )
+    authority_support = _mapping(
+        authority.get("support_recovery"), "Task 8 authority support recovery"
+    )
+    authority_periodic = _mapping(
+        authority.get("periodic_provenance"),
+        "Task 8 authority periodic provenance",
+    )
+    expected = task8_reconstruction_evidence_hash(
+        authority_support,
+        authority_periodic,
+        trusted_source["source_sha256"],
+    )
+    mapping_support = _mapping(
+        mapping.get("support_recovery"), "mapping.support_recovery"
+    )
+    mapping_periodic = _mapping(
+        mapping.get("periodic_provenance"), "mapping.periodic_provenance"
+    )
+    if (
+        authority.get("evidence_hash_sha256") != expected
+        or mapping.get("task8_reconstruction_evidence_hash_sha256") != expected
+        or mapping_support != authority_support
+        or mapping_periodic != authority_periodic
+    ):
+        raise PatternReconstructionError(
+            "v116_task8_evidence_untrusted",
+            "candidate mapping differs from the independently retained Task 8 recovery",
+            details={
+                "authority_sha256": authority.get("evidence_hash_sha256"),
+                "mapping_sha256": mapping.get(
+                    "task8_reconstruction_evidence_hash_sha256"
+                ),
+                "expected_sha256": expected,
+            },
+        )
+    return authority
+
+
+def _seal_component_evidence(
+    instance: dict[str, Any], trusted_source: Mapping[str, Any]
+) -> None:
+    source_component_id = _identifier(
+        instance.get("source_component_id"), "mapped source_component_id"
+    )
+    source_face_ids = _identifiers(
+        instance.get("source_face_ids"), "mapped source_face_ids"
+    )
+    evidence = copy.deepcopy(
+        dict(
+            _mapping(
+                instance.get("source_component_evidence"),
+                "mapped source_component_evidence",
+            )
+        )
+    )
+    evidence["source_component_id"] = source_component_id
+    evidence["source_entity_ids"] = list(source_face_ids)
+    basis = _trusted_component_digest_basis(
+        trusted_source,
+        source_component_id=source_component_id,
+        source_face_ids=source_face_ids,
+    )
+    evidence["provenance"] = {
+        "authority": _PERIODIC_PROVENANCE_AUTHORITY,
+        "source_solid_shape_identity": trusted_source[
+            "source_solid_shape_identity"
+        ],
+        "source_sha256": trusted_source["source_sha256"],
+        "source_entity_ids": list(source_face_ids),
+        "signature_hashes": sorted(
+            basis["face_signature_sha256_by_id"].values()
+        ),
+        "digest_basis": _COMPONENT_DIGEST_BASIS,
+        "component_digest_sha256": _payload_digest(basis),
+    }
+    instance["source_component_evidence"] = evidence
+
+
+def _periodic_digest_population(population: Mapping[str, Any]) -> dict[str, Any]:
+    representative = _mapping(population.get("representative"), "representative")
+    return {
+        "population_id": population["population_id"],
+        "count": int(population["count"]),
+        "pitch_deg": float(population["pitch_deg"]),
+        "phase_deg": _normalized_angle(float(population["phase_deg"])),
+        "representative": {
+            "source_component_id": representative["source_component_id"],
+            "source_face_ids": sorted(representative["source_face_ids"]),
+            "lattice_index": int(representative["lattice_index"]),
+        },
+        "instances": [
+            {
+                "instance_id": instance["instance_id"],
+                "source_component_id": instance["source_component_id"],
+                "source_face_ids": sorted(instance["source_face_ids"]),
+                "lattice_index": int(instance["lattice_index"]),
+                "phase_deg": _normalized_angle(float(instance["measured_angle_deg"])),
+                "transform_from_representative": [
+                    [float(value) for value in row]
+                    for row in instance["transform_from_representative"]
+                ],
+                "component_digest_sha256": instance[
+                    "source_component_evidence"
+                ]["provenance"]["component_digest_sha256"],
+            }
+            for instance in sorted(
+                population["instances"], key=lambda item: item["lattice_index"]
+            )
+        ],
+    }
+
+
+def _periodic_partition_manifest(
+    periodic: Mapping[str, Any], trusted_source: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {
+        "authority": _TRUSTED_PERIODIC_AUTHORITY,
+        "source_sha256": trusted_source["source_sha256"],
+        "source_solid_shape_identity": trusted_source[
+            "source_solid_shape_identity"
+        ],
+        "method": _PERIODIC_METHOD,
+        "main_blade_count": periodic["main_blade_count"],
+        "splitter_blade_count": periodic["splitter_blade_count"],
+        "populations": [
+            {
+                "population_id": population["population_id"],
+                "count": population["count"],
+                "representative_source_component_id": population[
+                    "representative"
+                ]["source_component_id"],
+                "instances": [
+                    {
+                        "instance_id": instance["instance_id"],
+                        "source_component_id": instance["source_component_id"],
+                        "source_face_ids": list(instance["source_face_ids"]),
+                        "lattice_index": instance["lattice_index"],
+                    }
+                    for instance in population["instances"]
+                ],
+            }
+            for population in periodic["populations"]
+        ],
+    }
+
+
+def _mapped_material_partition(
+    mapping: Mapping[str, Any], trusted_source: Mapping[str, Any]
+) -> dict[str, Any]:
+    recovery = _mapping(mapping.get("support_recovery"), "mapping.support_recovery")
+    partition = copy.deepcopy(
+        dict(
+            _mapping(
+                recovery.get("pattern_material_partition"),
+                "mapping.support_recovery.pattern_material_partition",
+            )
+        )
+    )
+    mode = partition.get("mode")
+    if mode not in {"open", "closed"}:
+        raise PatternReconstructionError(
+            "v116_material_provenance_missing",
+            "mapped material partition requires open or closed mode",
+        )
+    source_ids = set(trusted_source["faces_by_id"])
+    hub_ids = _identifiers(
+        partition.get("hub_support_face_ids"),
+        "mapping hub_support_face_ids",
+    )
+    hub_attachments = _mapping(
+        partition.get("hub_attachment_face_ids_by_instance"),
+        "mapping hub attachments",
+    )
+    normalized_hub_attachments = {
+        str(instance_id): _identifiers(face_ids, "mapping hub attachment faces")
+        for instance_id, face_ids in hub_attachments.items()
+    }
+    partition["hub_support_face_ids"] = hub_ids
+    partition["hub_attachment_face_ids_by_instance"] = (
+        normalized_hub_attachments
+    )
+    declared_ids = set(hub_ids)
+    declared_ids.update(
+        face_id
+        for face_ids in normalized_hub_attachments.values()
+        for face_id in face_ids
+    )
+    if mode == "open":
+        open_tip_ids = _identifiers(
+            partition.get("open_tip_reference_face_ids"),
+            "mapping open tip reference faces",
+        )
+        partition["open_tip_reference_face_ids"] = open_tip_ids
+        declared_ids.update(open_tip_ids)
+    else:
+        shroud = _mapping(partition.get("material_shroud"), "mapped material shroud")
+        shroud = copy.deepcopy(dict(shroud))
+        for key in (
+            "source_face_ids",
+            "inner_flowpath_face_ids",
+            "outer_material_face_ids",
+        ):
+            shroud[key] = _identifiers(
+                shroud.get(key), f"mapping material shroud {key}"
+            )
+        shroud_attachments = _mapping(
+            shroud.get("blade_attachment_face_ids_by_instance"),
+            "mapping shroud attachments",
+        )
+        shroud["blade_attachment_face_ids_by_instance"] = {
+            str(instance_id): _identifiers(
+                face_ids, "mapping shroud attachment faces"
+            )
+            for instance_id, face_ids in shroud_attachments.items()
+        }
+        shroud["finite_thickness"] = _finite_thickness(
+            shroud.get("finite_thickness"), shroud
+        )
+        partition["material_shroud"] = shroud
+        declared_ids.update(shroud["source_face_ids"])
+        declared_ids.update(
+            face_id
+            for face_ids in shroud[
+                "blade_attachment_face_ids_by_instance"
+            ].values()
+            for face_id in face_ids
+        )
+    if not declared_ids or not declared_ids.issubset(source_ids):
+        raise PatternReconstructionError(
+            "v116_material_provenance_missing",
+            "mapped material partition is not contained in the trusted STEP source",
+        )
+    return partition
+
+
+def _mapped_support_evidence(
+    partition: Mapping[str, Any], trusted_source: Mapping[str, Any]
+) -> dict[str, Any]:
+    hub_attachment = _mapped_attachment(
+        partition["hub_attachment_face_ids_by_instance"], trusted_source
+    )
+    hub = {
+        "status": "PASS",
+        "semantic_role": "hub_support",
+        "material": True,
+        "source_face_ids": list(partition["hub_support_face_ids"]),
+        "blade_attachment": hub_attachment,
+    }
+    _seal_support_record(hub, hub["source_face_ids"], trusted_source)
+    evidence: dict[str, Any] = {
+        "status": "PASS",
+        "authority": "authenticated_topology_support_v1_1_6",
+        "mode": partition["mode"],
+        "hub_support": hub,
+    }
+    if partition["mode"] == "open":
+        reference = {
+            "status": "PASS",
+            "semantic_role": "open_tip_reference",
+            "material": False,
+            "render_default": "hidden",
+            "export_default": "excluded",
+            "source_face_ids": list(partition["open_tip_reference_face_ids"]),
+        }
+        _seal_support_record(reference, reference["source_face_ids"], trusted_source)
+        evidence.update({"material_shroud": None, "open_tip_reference": reference})
+    else:
+        partition_shroud = _mapping(
+            partition.get("material_shroud"), "mapped material shroud"
+        )
+        shroud_attachment = _mapped_attachment(
+            partition_shroud["blade_attachment_face_ids_by_instance"],
+            trusted_source,
+        )
+        shroud = {
+            "status": "PASS",
+            "semantic_role": "closed_shroud",
+            "material": True,
+            "source_face_ids": list(partition_shroud["source_face_ids"]),
+            "inner_flowpath_face_ids": list(
+                partition_shroud["inner_flowpath_face_ids"]
+            ),
+            "outer_material_face_ids": list(
+                partition_shroud["outer_material_face_ids"]
+            ),
+            "finite_thickness": copy.deepcopy(
+                partition_shroud["finite_thickness"]
+            ),
+            "blade_attachment": shroud_attachment,
+        }
+        _seal_support_record(shroud, shroud["source_face_ids"], trusted_source)
+        evidence.update({"open_tip_reference": None, "material_shroud": shroud})
+    _seal_support_record(evidence, sorted(trusted_source["faces_by_id"]), trusted_source)
+    return evidence
+
+
+def _mapped_attachment(
+    by_instance: Mapping[str, Sequence[str]], trusted_source: Mapping[str, Any]
+) -> dict[str, Any]:
+    by_instance = _mapping(by_instance, "mapped attachment by instance")
+    normalized = {
+        str(instance_id): _identifiers(face_ids, "mapped attachment faces")
+        for instance_id, face_ids in sorted(by_instance.items())
+    }
+    attachment = {
+        "instance_ids": sorted(normalized),
+        "source_face_ids_by_instance": normalized,
+        "attachment_authority": "authenticated_shared_topology",
+    }
+    _seal_support_record(
+        attachment,
+        sorted(face_id for face_ids in normalized.values() for face_id in face_ids),
+        trusted_source,
+    )
+    return attachment
+
+
+def _seal_support_record(
+    record: dict[str, Any],
+    source_face_ids: Sequence[str],
+    trusted_source: Mapping[str, Any],
+) -> None:
+    provenance = {
+        "authentication_status": "PASS",
+        "authority": "authenticated_source_topology",
+        "source_solid_id": trusted_source["source_solid_shape_identity"],
+        "source_sha256": trusted_source["source_sha256"],
+        "source_entity_ids": sorted(source_face_ids),
+        "digest_basis": _SUPPORT_DIGEST_BASIS,
+    }
+    record["provenance"] = provenance
+    provenance["evidence_digest_sha256"] = _payload_digest(
+        {
+            "digest_basis": _SUPPORT_DIGEST_BASIS,
+            "trusted_source_manifest_digest_sha256": trusted_source[
+                "manifest_digest_sha256"
+            ],
+            "source_sha256": provenance["source_sha256"],
+            "source_solid_shape_identity": provenance["source_solid_id"],
+            "source_entity_ids": provenance["source_entity_ids"],
+            "evidence_payload": _without_provenance(record),
+        }
+    )
 
 
 def validate_and_decorate_pattern_reconstruction(
@@ -82,6 +690,10 @@ def validate_and_decorate_pattern_reconstruction(
         periodic.get("measurement_tolerance_mm"),
         "periodic_population_evidence.measurement_tolerance_mm",
     )
+    generated_tolerance_mm = _positive_finite(
+        periodic.get("generated_rigid_transform_tolerance_mm", tolerance_mm),
+        "periodic_population_evidence.generated_rigid_transform_tolerance_mm",
+    )
     angular_tolerance_deg = _angular_tolerance(periodic)
     blade_surfaces = _generated_blade_surfaces(graph)
     expected_counts = _expected_population_counts(graph)
@@ -91,6 +703,7 @@ def validate_and_decorate_pattern_reconstruction(
         blade_surfaces=blade_surfaces,
         expected_counts=expected_counts,
         tolerance_mm=tolerance_mm,
+        generated_tolerance_mm=generated_tolerance_mm,
         angular_tolerance_deg=angular_tolerance_deg,
         periodic_provenance=periodic_provenance,
         trusted_source=trusted_source,
@@ -125,6 +738,7 @@ def validate_and_decorate_pattern_reconstruction(
         "pattern": {
             "method": periodic["method"],
             "measurement_tolerance_mm": tolerance_mm,
+            "generated_rigid_transform_tolerance_mm": generated_tolerance_mm,
             "angular_tolerance_deg": angular_tolerance_deg,
             "main_blade_count": expected_counts["main"],
             "splitter_blade_count": expected_counts["splitter"],
@@ -716,6 +1330,7 @@ def _trusted_material_partition(
     }
     role_face_ids = set(hub_face_ids)
     non_hub_material_face_ids: set[str] = set()
+    construction_evidence_face_ids: set[str] = set()
     if mode == "open":
         open_tip_ids = sorted(
             _trusted_nonempty_identifiers(
@@ -735,8 +1350,7 @@ def _trusted_material_partition(
                 "material_shroud": None,
             }
         )
-        role_face_ids.update(open_tip_ids)
-        non_hub_material_face_ids.update(open_tip_ids)
+        construction_evidence_face_ids.update(open_tip_ids)
     else:
         if partition.get("open_tip_reference_face_ids") is not None:
             raise PatternReconstructionError(
@@ -779,6 +1393,9 @@ def _trusted_material_partition(
             instance_ids,
             "trusted shroud attachments",
         )
+        trusted_thickness = _finite_thickness(
+            shroud.get("finite_thickness"), shroud
+        )
         normalized.update(
             {
                 "open_tip_reference_face_ids": None,
@@ -787,6 +1404,7 @@ def _trusted_material_partition(
                     "inner_flowpath_face_ids": inner_ids,
                     "outer_material_face_ids": outer_ids,
                     "blade_attachment_face_ids_by_instance": shroud_attachments,
+                    "finite_thickness": trusted_thickness,
                 },
             }
         )
@@ -811,16 +1429,20 @@ def _trusted_material_partition(
                 "trusted hub and shroud attachment ownership must be disjoint",
             )
         attachment_face_ids.update(shroud_attachment_face_ids)
-    all_role_ids = role_face_ids | attachment_face_ids
+    all_role_ids = (
+        role_face_ids | attachment_face_ids | construction_evidence_face_ids
+    )
     if (
         role_face_ids & periodic_face_ids
         or set(hub_face_ids) & non_hub_material_face_ids
         or role_face_ids & attachment_face_ids
+        or construction_evidence_face_ids & role_face_ids
+        or construction_evidence_face_ids & attachment_face_ids
         or not all_role_ids.issubset(trusted_source["faces_by_id"])
     ):
         raise PatternReconstructionError(
             "v116_trusted_material_partition_invalid",
-            "trusted support/material roles overlap blade faces or lack source membership",
+            "trusted support/material ownership is ambiguous or lacks source membership",
         )
     normalized["source_entity_ids"] = sorted(all_role_ids)
     normalized["partition_digest_sha256"] = _payload_digest(normalized)
@@ -999,6 +1621,7 @@ def _validate_populations(
     blade_surfaces: dict[str, dict[int, dict[tuple[str, str], Mapping[str, Any]]]],
     expected_counts: dict[str, int],
     tolerance_mm: float,
+    generated_tolerance_mm: float,
     angular_tolerance_deg: float,
     periodic_provenance: Mapping[str, Any],
     trusted_source: Mapping[str, Any],
@@ -1080,6 +1703,7 @@ def _validate_populations(
             generated=blade_surfaces[blade_class],
             expected_count=expected_counts[blade_class],
             tolerance_mm=tolerance_mm,
+            generated_tolerance_mm=generated_tolerance_mm,
             angular_tolerance_deg=angular_tolerance_deg,
             periodic_provenance=periodic_provenance,
             trusted_source=trusted_source,
@@ -1202,6 +1826,7 @@ def _validate_population(
     generated: dict[int, dict[tuple[str, str], Mapping[str, Any]]],
     expected_count: int,
     tolerance_mm: float,
+    generated_tolerance_mm: float,
     angular_tolerance_deg: float,
     periodic_provenance: Mapping[str, Any],
     trusted_source: Mapping[str, Any],
@@ -1387,7 +2012,7 @@ def _validate_population(
         _validate_supplied_envelope(
             instance,
             generated_envelope,
-            tolerance_mm=tolerance_mm,
+            tolerance_mm=generated_tolerance_mm,
             angular_tolerance_deg=angular_tolerance_deg,
             instance_name=f"{blade_class}[{index}]",
         )
@@ -1410,14 +2035,14 @@ def _validate_population(
                 representative_surface, target_surface, transform
             )
             maximum_residual = max(maximum_residual, family_residual)
-            if family_residual > tolerance_mm:
+            if family_residual > generated_tolerance_mm:
                 raise PatternReconstructionError(
                     "v116_pattern_surface_mismatch",
                     f"{blade_class}[{index}] surface family is not a measured rigid cyclic transform",
                     details={
                         "surface_id": target_surface["id"],
                         "residual_mm": family_residual,
-                        "tolerance_mm": tolerance_mm,
+                        "tolerance_mm": generated_tolerance_mm,
                     },
                 )
             bindings[target_surface["id"]] = {
@@ -1430,6 +2055,7 @@ def _validate_population(
                 "phase_deg": measured_angle,
                 "transform_from_representative": copy.deepcopy(transform),
                 "measured_tolerance_mm": tolerance_mm,
+                "generated_rigid_transform_tolerance_mm": generated_tolerance_mm,
                 "generated_surface_residual_mm": family_residual,
             }
         instance_records.append(
@@ -2092,6 +2718,11 @@ def _validate_material_topology(
             "closed shroud faces do not match canonical support recovery",
         )
     thickness = _finite_thickness(shroud.get("finite_thickness"), shroud)
+    if thickness != trusted_shroud["finite_thickness"]:
+        raise PatternReconstructionError(
+            "v116_material_provenance_missing",
+            "closed shroud thickness differs from canonical Task 8 recovery",
+        )
     shroud_attachment = _attachment_contract(
         shroud.get("blade_attachment"),
         "material_shroud.blade_attachment",

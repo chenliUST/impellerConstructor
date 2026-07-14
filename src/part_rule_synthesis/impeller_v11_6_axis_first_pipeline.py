@@ -20,7 +20,7 @@ from part_rule_synthesis.impeller_v11_6_v112_mapping import (
 )
 
 
-ALGORITHM_VERSION = "axis_first_measurement_bundle_task8_r2"
+ALGORITHM_VERSION = "axis_first_measurement_bundle_task9_r3"
 _STABLE_REASONS = {
     "v116_hub_support_classification_failed",
     "v116_hub_profile_fit_failed",
@@ -37,6 +37,9 @@ _STABLE_REASONS = {
     "v116_v112_mapping_residual_exceeded",
     "v116_false_material_surface_forbidden",
 }
+_TASK8_RECONSTRUCTION_EVIDENCE_BASIS = (
+    "v116_axis_first_periodic_material_evidence_v1"
+)
 
 
 class AxisFirstPipelineError(RuntimeError):
@@ -78,6 +81,57 @@ def stable_measurement_hash(value: Any) -> str:
             allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()
+
+
+def task8_reconstruction_evidence_hash(
+    support_recovery_payload: Mapping[str, Any],
+    periodic_provenance_payload: Mapping[str, Any],
+    source_sha256: str,
+) -> str:
+    """Bind Task 9 inputs to the exact Task 8 recovery result."""
+
+    return stable_measurement_hash(
+        {
+            "basis": _TASK8_RECONSTRUCTION_EVIDENCE_BASIS,
+            "source_sha256": str(source_sha256),
+            "support_recovery": copy.deepcopy(dict(support_recovery_payload)),
+            "periodic_provenance": copy.deepcopy(
+                dict(periodic_provenance_payload)
+            ),
+        }
+    )
+
+
+def preserve_task8_reconstruction_authority(
+    mapping: Mapping[str, Any], source_sha256: str
+) -> dict[str, Any]:
+    """Capture Task 8 recovery separately before Task 9 consumes its mapping."""
+
+    support_payload = copy.deepcopy(
+        dict(mapping.get("support_recovery", {}))
+    )
+    periodic_payload = copy.deepcopy(
+        dict(mapping.get("periodic_provenance", {}))
+    )
+    evidence_hash = task8_reconstruction_evidence_hash(
+        support_payload,
+        periodic_payload,
+        source_sha256,
+    )
+    if mapping.get("task8_reconstruction_evidence_hash_sha256") != evidence_hash:
+        raise AxisFirstPipelineError(
+            "v116_v112_mapping_residual_exceeded",
+            "Task 8 mapping evidence seal is inconsistent before handoff",
+            stage="v112_mapping",
+            evidence={"source_sha256": source_sha256},
+        )
+    return {
+        "authority": "axis_first_task8_recovery_result",
+        "source_sha256": str(source_sha256),
+        "support_recovery": support_payload,
+        "periodic_provenance": periodic_payload,
+        "evidence_hash_sha256": evidence_hash,
+    }
 
 
 def build_measurement_bundle(
@@ -169,6 +223,9 @@ def extract_v11_parameters(
         result.section_evidence,
         result.measurements,
     )
+    support_payload = _jsonable(result.support_evidence)
+    periodic_payload = _jsonable(result.periodic_evidence)
+    source_sha256 = str(result.measurements["provenance"]["source_sha256"])
     mapped.update(
         {
             "mapping_id": "v116-axis-first-" + mapped["constructor_input_hash_sha256"][:12]
@@ -177,8 +234,15 @@ def extract_v11_parameters(
             "source_basis": "authenticated_occt_axis_first_measurements",
             "geometry_version": "1.1",
             "measurement_bundle": copy.deepcopy(result.measurements),
-            "support_recovery": _jsonable(result.support_evidence),
-            "periodic_provenance": _jsonable(result.periodic_evidence),
+            "support_recovery": support_payload,
+            "periodic_provenance": periodic_payload,
+            "task8_reconstruction_evidence_hash_sha256": (
+                task8_reconstruction_evidence_hash(
+                    support_payload,
+                    periodic_payload,
+                    source_sha256,
+                )
+            ),
             "section_provenance": _jsonable(result.section_evidence),
             "pipeline_stages": list(result.stage_evidence),
             "profile_fits": copy.deepcopy(result.measurements["support_fits"]),
@@ -386,7 +450,92 @@ def _recover_support_evidence(inventory, frame, semantics) -> dict[str, Any]:
             "tip_or_shroud": _serialize_support_record(tip_support),
         },
         "support_face_ids": copy.deepcopy(topology),
+        "pattern_material_partition": _pattern_material_partition(
+            inventory,
+            semantics,
+            topology,
+            tip_support,
+        ),
     }
+
+
+def _pattern_material_partition(inventory, semantics, topology, tip_support):
+    populations = semantics["periodic_population_recovery"]["populations"]
+    instances = [
+        instance for population in populations for instance in population["instances"]
+    ]
+    hub_ids = sorted(
+        topology.get("hub_support_face_ids", [topology["hub_face_id"]])
+    )
+    partition = {
+        "mode": topology["mode"],
+        "hub_support_face_ids": hub_ids,
+        "hub_attachment_face_ids_by_instance": _attachment_faces_by_instance(
+            inventory, instances, hub_ids
+        ),
+    }
+    if topology["mode"] == "open":
+        partition.update(
+            {
+                "open_tip_reference_face_ids": sorted(
+                    tip_support["source_tip_caps"]["source_face_ids"]
+                ),
+                "material_shroud": None,
+            }
+        )
+        return partition
+
+    inner_ids = sorted(tip_support["inner_flowpath"]["source_face_ids"])
+    outer_ids = sorted(tip_support["outer_material"]["source_face_ids"])
+    thickness = tip_support["thickness"]
+    partition.update(
+        {
+            "open_tip_reference_face_ids": None,
+            "material_shroud": {
+                "source_face_ids": sorted({*inner_ids, *outer_ids}),
+                "inner_flowpath_face_ids": inner_ids,
+                "outer_material_face_ids": outer_ids,
+                "blade_attachment_face_ids_by_instance": (
+                    _attachment_faces_by_instance(inventory, instances, inner_ids)
+                ),
+                "finite_thickness": {
+                    "samples_mm": [float(value) for value in thickness["samples_mm"]],
+                    "minimum_mm": float(thickness["minimum_mm"]),
+                    "source_face_pairs": copy.deepcopy(
+                        thickness["sample_face_pairs"]
+                    ),
+                    "finite_positive": bool(thickness["finite_positive"]),
+                    "sampling_authority": "authenticated_paired_material_faces",
+                    "source_sampling_authority": thickness["sampling_authority"],
+                },
+            },
+        }
+    )
+    return partition
+
+
+def _attachment_faces_by_instance(inventory, instances, support_face_ids):
+    support_ids = set(support_face_ids)
+    adjacency = inventory["source_manifest"]["adjacency"]
+    result = {}
+    for instance in instances:
+        candidates = [
+            face_id
+            for face_id in instance["source_face_ids"]
+            if support_ids.intersection(adjacency.get(face_id, ()))
+        ]
+        if not candidates:
+            raise AxisFirstPipelineError(
+                "v116_root_attachment_measurement_failed",
+                "periodic instance has no exact attachment face on its support",
+                stage="support_recovery",
+                evidence={
+                    "instance_id": instance["instance_id"],
+                    "support_face_ids": sorted(support_ids),
+                },
+            )
+        result[str(instance["instance_id"])] = sorted(candidates)
+    return result
 
 
 def _classify_support_topology(inventory, frame, semantics) -> dict[str, Any]:
@@ -914,6 +1063,17 @@ def _recover_periodic_evidence(
             "Task 5 periodic population evidence is missing",
             stage="periodic_representatives",
         )
+    source_tolerance_mm = _source_tolerance(frame)
+    maximum_representative_residual_mm = max(
+        float(instance["residual_to_representative_mm"])
+        for population in recovery["populations"]
+        for instance in population["instances"]
+    )
+    representative_fit_tolerance_mm, representative_fit_ceiling_mm = (
+        _bounded_representative_fit_tolerance(
+            frame, maximum_representative_residual_mm
+        )
+    )
     result = {
         "status": "PASS",
         "closure_pass": bool(recovery["closure_diagnostics"]["all_populations_closed"]),
@@ -927,6 +1087,14 @@ def _recover_periodic_evidence(
                 for face_id in instance["source_face_ids"]
             }
         ),
+        "source_linear_tolerance_mm": source_tolerance_mm,
+        "measurement_tolerance_mm": representative_fit_tolerance_mm,
+        "generated_rigid_transform_tolerance_mm": source_tolerance_mm,
+        "representative_fit_ceiling_mm": representative_fit_ceiling_mm,
+        "measurement_tolerance_basis": (
+            "maximum_authenticated_periodic_representative_fit_residual"
+        ),
+        "pattern_population_evidence": copy.deepcopy(recovery),
     }
     for name in ("main", "splitter"):
         population = recovery.get(name)
@@ -1002,6 +1170,29 @@ def _recover_periodic_evidence(
             ),
         }
     return result
+
+
+def _bounded_representative_fit_tolerance(frame, observed_residual_mm):
+    source_tolerance_mm = _source_tolerance(frame)
+    outer_diameter_mm = 2.0 * abs(float(frame["outer_radius_mm"]))
+    ceiling_mm = max(
+        50.0 * source_tolerance_mm,
+        0.001 * outer_diameter_mm,
+    )
+    observed = float(observed_residual_mm)
+    if not math.isfinite(observed) or observed < 0.0 or observed > ceiling_mm:
+        raise AxisFirstPipelineError(
+            "v116_periodic_population_ambiguous",
+            "periodic representative fit exceeds the independent review-grade ceiling",
+            stage="periodic_representatives",
+            evidence={
+                "observed_residual_mm": observed,
+                "ceiling_mm": ceiling_mm,
+                "source_linear_tolerance_mm": source_tolerance_mm,
+                "outer_diameter_mm": outer_diameter_mm,
+            },
+        )
+    return max(source_tolerance_mm, observed), ceiling_mm
 
 
 def _recover_section_evidence(inventory, frame, support, periodic) -> dict[str, Any]:

@@ -309,7 +309,7 @@ def _write_pass_cache(
 
 
 def test_axis_first_contract_pins_revision_failures_and_v112_authority():
-    assert AUDIT_IMPLEMENTATION_REVISION == "axis_first_section_periodic_r3"
+    assert AUDIT_IMPLEMENTATION_REVISION == "axis_first_pattern_material_r4"
     assert AXIS_FIRST_FAILURE_REASONS <= FAILURE_REASONS
     assert CANONICAL_GEOMETRY_VERSION == "1.1.2"
 
