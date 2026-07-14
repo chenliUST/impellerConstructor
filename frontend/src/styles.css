@@ -1741,6 +1741,87 @@ circle.engineering-feature {
   font-size: 13px;
 }
 
+.step-inspection-controls {
+  display: grid;
+  margin-bottom: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.step-inspection-controls > label {
+  display: grid;
+  gap: 3px;
+  color: #52635e;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.step-inspection-controls select {
+  min-width: 0;
+  height: 26px;
+  border: 1px solid #9baba5;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #1d2723;
+  font: 11px Arial, sans-serif;
+}
+
+.step-region-filter-status {
+  margin: 0;
+  padding: 5px 6px;
+  grid-column: 1 / -1;
+  border-left: 3px solid #8a9691;
+  background: #f2f5f3;
+  color: #3f4d48;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.step-region-filter-status.filterable {
+  border-left-color: #176b58;
+  background: #edf7f3;
+  color: #124f43;
+}
+
+.step-region-filter-status.evidence-only {
+  border-left-color: #a65a18;
+  background: #fff4e8;
+  color: #74400f;
+}
+
+.step-overlay-toggles {
+  display: flex;
+  margin: 0;
+  padding: 5px 6px;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  border: 1px solid #cbd8d3;
+}
+
+.step-overlay-toggles legend {
+  padding: 0 3px;
+  color: #52635e;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.step-overlay-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #1d2723;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.step-overlay-toggles input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #176b58;
+}
+
 .heatmap-legend {
   display: grid;
   margin-bottom: 8px;
@@ -1774,6 +1855,89 @@ circle.engineering-feature {
 .step-report-summary dd {
   margin: 0;
   font-weight: 750;
+}
+
+.step-selected-provenance {
+  display: grid;
+  margin: 8px 0;
+  padding: 6px 0;
+  grid-template-columns: minmax(112px, auto) minmax(0, 1fr);
+  gap: 3px 8px;
+  border-top: 1px solid #cbd8d3;
+  font-size: 10px;
+}
+
+.step-selected-provenance dt {
+  color: #52635e;
+}
+
+.step-selected-provenance dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #1d2723;
+  font-weight: 750;
+}
+
+.step-selection-unavailable {
+  margin: 8px 0;
+  padding: 6px 8px;
+  border-left: 3px solid #a65a18;
+  background: #fff4e8;
+  color: #74400f;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.step-attachment-report {
+  margin: 8px 0;
+  padding: 7px 0;
+  border-top: 1px solid #cbd8d3;
+  border-bottom: 1px solid #cbd8d3;
+}
+
+.step-attachment-report h4 {
+  margin-bottom: 5px;
+}
+
+.step-attachment-report dl {
+  display: grid;
+  margin: 0;
+  grid-template-columns: minmax(112px, auto) minmax(0, 1fr);
+  gap: 3px 8px;
+  font-size: 10px;
+}
+
+.step-attachment-report dt {
+  color: #52635e;
+}
+
+.step-attachment-report dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 750;
+}
+
+.step-metric-summary {
+  display: grid;
+  margin: 8px 0;
+  grid-template-columns: minmax(112px, auto) minmax(0, 1fr);
+  gap: 3px 8px;
+  border-top: 1px solid #cbd8d3;
+  border-bottom: 1px solid #cbd8d3;
+  padding: 6px 0;
+  font-size: 10px;
+}
+
+.step-metric-summary dt {
+  color: #52635e;
+}
+
+.step-metric-summary dd {
+  margin: 0;
+  color: #1d2723;
+  font-weight: 800;
 }
 
 .step-parameter-table-wrap {

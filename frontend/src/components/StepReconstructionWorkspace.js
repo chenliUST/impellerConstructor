@@ -9,26 +9,42 @@ import {
   auditArtifactUrls,
   auditInProgress,
   auditStageRows,
+  defaultStepOverlayVisibility,
   heatmapLegend,
   parameterDifferenceRows,
+  reportSummaryRows,
+  selectedInspectionProvenance,
+  semanticRegionOptions,
+  stepInspectionModel,
+  stepOverlayOptions,
   terminalAuditStatus,
-} from "../stepReconstructionModel.js?v=1.1.6-r2";
-import { StepComparisonScene } from "./StepComparisonScene.js?v=1.1.6";
+  unsupportedSourceFeatures,
+} from "../stepReconstructionModel.js?v=1.1.6-r4";
+import { StepComparisonScene } from "./StepComparisonScene.js?v=1.1.6-r5";
 
 const h = React.createElement;
 
-export function StepReconstructionWorkspace({ apiBase }) {
+export function StepReconstructionWorkspace({ apiBase, initialManifest = null, SceneComponent = StepComparisonScene, sceneRuntime }) {
   const [file, setFile] = useState(null);
   const [auditId, setAuditId] = useState("");
   const [status, setStatus] = useState(null);
-  const [manifest, setManifest] = useState(null);
+  const [manifest, setManifest] = useState(initialManifest);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [readout, setReadout] = useState(null);
-  const artifactUrls = useMemo(() => auditArtifactUrls(apiBase, manifest?.audit_id), [apiBase, manifest?.audit_id]);
+  const [selection, setSelection] = useState({ populationId: "main", spanStationId: "" });
+  const [semanticRegion, setSemanticRegion] = useState("all");
+  const [regionFilterStatus, setRegionFilterStatus] = useState({ mode: "unknown", filterable: null, message: "Region membership will be checked against the heatmap artifact." });
+  const [overlays, setOverlays] = useState(defaultStepOverlayVisibility);
+  const artifactUrls = useMemo(() => auditArtifactUrls(apiBase, manifest?.audit_id || auditId), [apiBase, auditId, manifest?.audit_id]);
   const reportRows = useMemo(() => parameterDifferenceRows(manifest), [manifest]);
   const legend = useMemo(() => heatmapLegend(manifest), [manifest]);
+  const inspection = useMemo(() => stepInspectionModel(manifest, selection), [manifest, selection]);
+  const regionOptions = useMemo(() => semanticRegionOptions(manifest), [manifest]);
+  const selectedRegionAliases = useMemo(() => regionOptions.find((option) => option.id === semanticRegion)?.aliases || [semanticRegion], [regionOptions, semanticRegion]);
+  const unsupportedFeatures = useMemo(() => unsupportedSourceFeatures(manifest), [manifest]);
   const updateReadout = useCallback((value) => setReadout(value), []);
+  const updateRegionFilterStatus = useCallback((value) => setRegionFilterStatus(value), []);
   const auditActive = uploading || auditInProgress(status);
   const actionLabel = uploading ? "Uploading..." : status?.status === "QUEUED" ? "Queued" : status?.status === "RUNNING" ? "Reconstructing..." : "Reconstruct";
 
@@ -54,12 +70,18 @@ export function StepReconstructionWorkspace({ apiBase }) {
     };
   }, [apiBase, auditId, status?.status]);
 
+  useEffect(() => {
+    if (!manifest) return;
+    if (!regionOptions.some((option) => option.id === semanticRegion)) setSemanticRegion("all");
+  }, [manifest, regionOptions, semanticRegion]);
+
   async function startAudit() {
     if (auditActive) return;
     setUploading(true);
     setError("");
     setManifest(null);
     setReadout(null);
+    setRegionFilterStatus({ mode: "unknown", filterable: null, message: "Region membership will be checked against the heatmap artifact." });
     try {
       const accepted = await createStepReconstructionAudit(apiBase, file);
       setAuditId(accepted.audit_id);
@@ -91,57 +113,131 @@ export function StepReconstructionWorkspace({ apiBase }) {
       auditStageRows(status).map((row) => h("li", { key: row.id, className: row.state }, h("span", null), row.label)),
     ),
     h("div", { className: "step-audit-grid" },
-      manifest ? h(StepComparisonScene, { artifactUrls, onHeatmapReadout: updateReadout }) : h("div", { className: "step-comparison-placeholder" },
-        h("strong", null, status?.status === "RUNNING" ? `Processing ${status.current_stage?.replaceAll("_", " ") || "STEP"}` : status?.status === "QUEUED" ? "Queued for reconstruction" : "Load a STEP model to begin reconstruction."),
-        h("p", null, "The source B-Rep remains authoritative. The reconstructed pane uses unchanged V1.1.2 geometry rules."),
+      manifest ? h(SceneErrorBoundary, { auditId: manifest?.audit_id }, h(SceneComponent, {
+        artifactUrls,
+        inspection,
+        overlays,
+        semanticRegion,
+        semanticRegionAliases: selectedRegionAliases,
+        onHeatmapReadout: updateReadout,
+        onRegionFilterStatus: updateRegionFilterStatus,
+        runtime: sceneRuntime,
+      })) : h("div", { className: "step-comparison-placeholder" },
+        h("strong", null, status?.status === "RUNNING" ? `Processing ${stageLabel(status.current_stage)}` : status?.status === "QUEUED" ? "Queued for reconstruction" : "Load a STEP model to begin reconstruction."),
       ),
       h("aside", { className: "step-report-pane" },
         h("header", null, h("h3", null, "Parameter & deviation report"), h("span", null, manifest?.units || "mm")),
+        manifest ? h(InspectionControls, {
+          inspection,
+          overlays,
+          semanticRegion,
+          regionOptions,
+          regionFilterStatus,
+          onSelection: setSelection,
+          onOverlays: setOverlays,
+          onSemanticRegion: (value) => {
+            setSemanticRegion(value);
+            setRegionFilterStatus({ mode: "unknown", filterable: null, message: "Region membership will be checked against the heatmap artifact." });
+          },
+        }) : null,
         legend.length ? h("div", { className: "heatmap-legend" }, legend.map((row) => h("div", { key: row.label }, h("span", null, row.label), h("strong", null, formatNumber(row.value))))) : null,
         readout ? h("p", { className: "heatmap-readout" }, `Cursor deviation ${formatNumber(readout.error_mm)} mm`) : null,
-        manifest ? h(ReportSummary, { manifest }) : h("p", null, "Numeric evidence becomes available after all reconstruction stages pass."),
+        manifest ? h(ReportSummary, { manifest, inspection }) : h("p", null, "Numeric evidence becomes available after all reconstruction stages pass."),
         reportRows.length ? h("div", { className: "step-parameter-table-wrap" }, h("table", { className: "step-parameter-table" },
           h("thead", null, h("tr", null, ["Parameter", "Source", "Mapped", "Rebuilt", "Delta", "Measure C", "Map C"].map((label) => h("th", { key: label }, label)))),
           h("tbody", null, reportRows.map((row) => h("tr", { key: row.feature_id },
-            h("th", null, row.parameter_id),
-            h("td", null, formatNumber(row.source_measurement)),
-            h("td", null, formatNumber(row.mapped_v11_value)),
-            h("td", null, formatNumber(row.reconstructed_value)),
-            h("td", null, formatNumber(row.delta)),
-            h("td", null, formatConfidence(row.measurement_confidence)),
-            h("td", null, formatConfidence(row.mapping_confidence)),
+            h("th", null, row.parameter_id), h("td", null, formatNumber(row.source_measurement)), h("td", null, formatNumber(row.mapped_v11_value)), h("td", null, formatNumber(row.reconstructed_value)), h("td", null, formatNumber(row.delta)), h("td", null, formatConfidence(row.measurement_confidence)), h("td", null, formatConfidence(row.mapping_confidence)),
           ))),
         )) : null,
-        manifest?.parameter_mapping?.unsupported_source_features?.length ? h("section", { className: "unsupported-feature-list" },
+        unsupportedFeatures.length ? h("section", { className: "unsupported-feature-list" },
           h("h4", null, "Unsupported source features"),
-          manifest.parameter_mapping.unsupported_source_features.map((item) => h("p", { key: item.feature }, item.feature.replaceAll("_", " "))),
+          unsupportedFeatures.map((item, index) => h("p", { key: item.feature || index }, stageLabel(item.feature, "Unnamed source feature"))),
         ) : null,
       ),
     ),
   );
 }
 
-function ReportSummary({ manifest }) {
-  const source = manifest.source || {};
-  const comparison = manifest.comparison?.bidirectional || {};
-  const alignment = manifest.comparison_alignment || {};
-  return h("dl", { className: "step-report-summary" },
-    h("dt", null, "Source topology"), h("dd", null, `${source.solid_count} solid / ${source.face_count} faces / ${source.edge_count} edges`),
-    h("dt", null, "Blade population"), h("dd", null, `${manifest.semantics?.main_blade_count || 0} main + ${manifest.semantics?.splitter_blade_count || 0} splitter`),
-    h("dt", null, "Geometry authority"), h("dd", null, manifest.canonical_geometry_version),
-    h("dt", null, "Periodic phase alignment"), h("dd", null, `${formatNumber(alignment.rotation_about_axis_deg)} deg about confirmed axis`),
-    h("dt", null, "Phase-search RMS"), h("dd", null, `${formatNumber(alignment.objective_rms_before_mm)} -> ${formatNumber(alignment.objective_rms_after_mm)} mm`),
-    h("dt", null, "RMS deviation"), h("dd", null, `${formatNumber(comparison.rms_mm)} mm`),
-    h("dt", null, "P95 deviation"), h("dd", null, `${formatNumber(comparison.p95_mm)} mm`),
+function InspectionControls({ inspection, overlays, semanticRegion, regionOptions, regionFilterStatus, onSelection, onOverlays, onSemanticRegion }) {
+  return h("div", { className: "step-inspection-controls" },
+    h("label", null, "Population", h("select", { value: inspection.populationId, onChange: (event) => onSelection((current) => ({ ...current, populationId: event.target.value, spanStationId: "" })) }, inspection.populations.map((population) => h("option", { key: population.id, value: population.id }, population.label)))),
+    h("label", null, "Span", h("select", { value: inspection.spanStationId, onChange: (event) => onSelection((current) => ({ ...current, spanStationId: event.target.value })) },
+      inspection.spanStationId && !inspection.stations.some((station) => station.id === inspection.spanStationId) ? h("option", { value: inspection.spanStationId }, `Unavailable: ${inspection.spanStationId}`) : null,
+      inspection.stations.map((station) => h("option", { key: station.id, value: station.id }, station.label)),
+    )),
+    h("label", null, "Heatmap", h("select", { value: semanticRegion, onChange: (event) => onSemanticRegion(event.target.value) }, regionOptions.map((region) => h("option", { key: region.id, value: region.id }, region.label)))),
+    semanticRegion !== "all" ? h("p", {
+      className: `step-region-filter-status ${regionFilterStatus?.filterable === false ? "evidence-only" : regionFilterStatus?.filterable === true ? "filterable" : "unknown"}`,
+      role: "status",
+    }, regionFilterStatus?.message || "Region membership is unavailable.") : null,
+    h("fieldset", { className: "step-overlay-toggles" }, h("legend", null, "Overlays"), stepOverlayOptions.map((option) => h("label", { key: option.id }, h("input", { type: "checkbox", checked: Boolean(overlays[option.id]), onChange: (event) => onOverlays((current) => ({ ...current, [option.id]: event.target.checked })) }), option.label))),
   );
+}
+
+function ReportSummary({ manifest, inspection }) {
+  const summaryRows = reportSummaryRows(manifest, inspection);
+  const provenance = selectedInspectionProvenance(inspection);
+  return h(React.Fragment, null,
+    h("dl", { className: "step-report-summary" },
+      summaryRows.map((row) => h(React.Fragment, { key: row.id }, h("dt", null, row.label), h("dd", null, row.value))),
+    ),
+    inspection.selectedLoop ? h("dl", { className: "step-selected-provenance" },
+      h("dt", null, "Selected source loop"), h("dd", null, `${provenance.representative_source_component_id || "Unavailable"} / ${provenance.span_station_id || "Unavailable"} / ${provenance.loop_id || "Unavailable"}`),
+      h("dt", null, "Source face IDs"), h("dd", null, provenance.source_face_ids.length ? provenance.source_face_ids.join(", ") : "Unavailable in this manifest"),
+      h("dt", null, "Coordinate frame"), h("dd", null, provenance.coordinate_frame || "Unavailable in this manifest"),
+      h("dt", null, "Measurement method"), h("dd", null, provenance.measurement_method || "Unavailable in this manifest"),
+      h("dt", null, "Selected mapping evidence"), h("dd", null, provenance.mapping_term_count ? `${provenance.mapping_term_count} bound record(s)` : "Unavailable for this population/station/loop"),
+    ) : h("p", { className: "step-selection-unavailable", role: "status" }, inspection.selectionEvidence?.message || "Selected source-loop evidence is unavailable."),
+    inspection.attachmentRows?.length ? h("section", { className: "step-attachment-report", "aria-label": "Attachment mapping evidence" },
+      h("h4", null, "Root attachment mapping"),
+      inspection.attachmentRows.map((row) => h("dl", { key: row.id },
+        h("dt", null, "Lift"), h("dd", null, `${formatNumber(row.measured_lift_mm)} source / ${formatNumber(row.fitted_lift_mm)} fitted mm`),
+        h("dt", null, "Width"), h("dd", null, `${formatNumber(row.measured_width_mm)} source / ${formatNumber(row.fitted_width_mm)} fitted mm`),
+        h("dt", null, "Residual / gate"), h("dd", null, `${formatPercent(row.maximum_relative_residual)} / ${row.status}`),
+        h("dt", null, "Promotability"), h("dd", null, row.promotable === true ? "Promotable" : row.promotable === false ? "Diagnostic only" : "Unavailable"),
+        h("dt", null, "Source provenance"), h("dd", null, row.source_ids.length ? row.source_ids.join(", ") : "Unavailable"),
+        h("dt", null, "Method / frame"), h("dd", null, `${row.method || "Unavailable"} / ${row.coordinate_frame || "Unavailable"}`),
+      )),
+    ) : null,
+    inspection.metricRows.length ? h("dl", { className: "step-metric-summary" }, inspection.metricRows.map((row) => h(React.Fragment, { key: row.id }, h("dt", null, row.label), h("dd", null, `${formatNumber(row.value)}${row.state ? ` / ${row.state}` : ""}`)))) : null,
+  );
+}
+
+class SceneErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, auditId: props.auditId };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  static getDerivedStateFromProps(props, state) {
+    return props.auditId !== state.auditId ? { error: null, auditId: props.auditId } : null;
+  }
+
+  render() {
+    if (this.state.error) return h("div", { className: "step-comparison-placeholder error-banner", role: "alert" }, this.state.error.message || "STEP inspection renderer failed");
+    return this.props.children;
+  }
 }
 
 function formatNumber(value) {
   const number = Number(value);
-  return Number.isFinite(number) ? number.toFixed(Math.abs(number) >= 100 ? 1 : 3) : "--";
+  return value !== null && value !== "" && value !== undefined && Number.isFinite(number) ? number.toFixed(Math.abs(number) >= 100 ? 1 : 3) : "--";
 }
 
 function formatConfidence(value) {
   const number = Number(value);
-  return Number.isFinite(number) ? `${Math.round(number * 100)}%` : "--";
+  return value !== null && value !== "" && value !== undefined && Number.isFinite(number) ? `${Math.round(number * 100)}%` : "--";
+}
+
+function formatPercent(value) {
+  const number = Number(value);
+  return value !== null && value !== "" && value !== undefined && Number.isFinite(number) ? `${(number * 100).toFixed(2)}%` : "--";
+}
+
+function stageLabel(value, fallback = "STEP") {
+  return typeof value === "string" && value ? value.replaceAll("_", " ") : fallback;
 }
