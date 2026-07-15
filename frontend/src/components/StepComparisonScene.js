@@ -171,11 +171,7 @@ function comparisonScene(Three) {
 
 function neutralMesh(Three, geometry) {
   geometry.computeVertexNormals();
-  const group = new Three.Group();
-  const mesh = new Three.Mesh(geometry, new Three.MeshStandardMaterial({ color: "#e8ecea", roughness: 0.72, metalness: 0.05, side: Three.DoubleSide }));
-  const edges = new Three.LineSegments(new Three.EdgesGeometry(geometry, 30), new Three.LineBasicMaterial({ color: "#1d2723" }));
-  group.add(mesh, edges);
-  return group;
+  return new Three.Mesh(geometry, new Three.MeshStandardMaterial({ color: "#e8ecea", roughness: 0.72, metalness: 0.05, side: Three.DoubleSide }));
 }
 
 function heatmapObject(Three, payload, included) {
@@ -206,6 +202,11 @@ function validTriangleIndex(value) {
 function addInspectionOverlays(Three, scene, inspection, overlays, pane) {
   if (!inspection) return;
   if (overlays?.axis && inspection.axis) scene.add(axisOverlay(Three, inspection.axis));
+  if (pane === "source") {
+    if (overlays?.selectedLoop) addPointEvidence(Three, scene, inspection.selectedLoop, "#a92525", "source-loop-evidence");
+    return;
+  }
+  if (pane !== "reconstruction") return;
   if (overlays?.hub) addRzEvidence(Three, scene, inspection.supportGeometry?.hub, "#b4512a", false);
   if (overlays?.tipSupport && inspection.hasMaterialShroud) {
     inspection.supportGeometry?.closedShroud?.forEach((profile, index) => addShroudMaterial(Three, scene, profile, index));
@@ -214,7 +215,6 @@ function addInspectionOverlays(Three, scene, inspection, overlays, pane) {
   }
   if (overlays?.spanSurfaces) addSpanSurfaces(Three, scene, inspection.stations);
   if (overlays?.representativeBlade) addRepresentativeEvidence(Three, scene, inspection.representative);
-  if (overlays?.selectedLoop && pane === "source") addPointEvidence(Three, scene, inspection.selectedLoop, "#a92525", "source-loop-evidence");
 }
 
 function axisOverlay(Three, axis) {
@@ -245,7 +245,7 @@ function addShroudMaterial(Three, scene, evidence, profileIndex) {
   const profile = points.map(([r, z]) => new Three.Vector2(Number(r), Number(z)));
   const material = new Three.MeshStandardMaterial({ color: "#176b58", roughness: 0.72, metalness: 0.03, transparent: true, opacity: 0.38, side: Three.DoubleSide });
   const shroud = new Three.Mesh(new Three.LatheGeometry(profile, 40), material);
-  shroud.rotation.x = -Math.PI / 2;
+  shroud.rotation.x = Math.PI / 2;
   shroud.userData.overlayKind = "closed-shroud-material";
   shroud.userData.profileIndex = profileIndex;
   scene.add(shroud);
@@ -259,8 +259,9 @@ function addSpanSurfaces(Three, scene, stations) {
       const geometry = new Three.LatheGeometry(profile.map(([r, z]) => new Three.Vector2(Number(r), Number(z))), 40);
       const material = new Three.MeshBasicMaterial({ color: "#8a9691", transparent: true, opacity: 0.12, side: Three.DoubleSide, depthWrite: false });
       const surface = new Three.Mesh(geometry, material);
-      surface.rotation.x = -Math.PI / 2;
+      surface.rotation.x = Math.PI / 2;
       surface.userData.overlayKind = "span-surface-evidence";
+      surface.userData.latticeKind = "active-blade-lattice";
       surface.userData.stationId = station.id;
       scene.add(surface);
       continue;
@@ -274,6 +275,7 @@ function addSpanSurfaces(Three, scene, stations) {
     surface.rotation.x = Math.PI / 2;
     surface.position.z = z;
     surface.userData.overlayKind = "span-surface-evidence";
+    surface.userData.latticeKind = "active-blade-lattice";
     surface.userData.stationId = station.id;
     scene.add(surface);
   }

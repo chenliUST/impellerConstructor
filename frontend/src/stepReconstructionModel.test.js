@@ -25,6 +25,7 @@ describe("STEP reconstruction model", () => {
     assert.equal(model.topology, "open");
     assert.equal(model.hasMaterialShroud, false);
     assert.equal(defaultStepOverlayVisibility.openTipReference, false);
+    assert.equal(defaultStepOverlayVisibility.spanSurfaces, false);
     assert.deepEqual(model.supportGeometry.openTip.control_points_rz_mm, tipControls());
     assert.deepEqual(model.stations[1].support_profile_rz_mm, [[20, 2], [25, 6], [31, 10]]);
     assert.equal(model.representative.source_component_id, "main-component-03");

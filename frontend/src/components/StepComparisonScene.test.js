@@ -71,8 +71,11 @@ describe("STEP comparison scene", () => {
       assert.ok(overlayObjects(runtime.renderers, "open-tip-reference").every((object) => object.material?.isLineDashedMaterial));
       await act(async () => root.render(sceneElement(runtime, { inspection: task8Inspection("closed"), overlays: overlayState({ tipSupport: true }) })));
       await flush();
-      assert.equal(overlayCount(runtime.renderers, "closed-shroud-material"), 4);
+      assert.equal(overlayCount(runtime.renderers, "closed-shroud-material"), 2);
+      assert.equal(overlayCount(runtime.renderers.at(-3), "closed-shroud-material"), 0);
+      assert.equal(overlayCount(runtime.renderers.at(-2), "closed-shroud-material"), 2);
       assert.ok(overlayObjects(runtime.renderers, "closed-shroud-material").every((object) => object.material?.isMeshStandardMaterial));
+      assert.ok(overlayObjects(runtime.renderers, "closed-shroud-material").every((object) => object.rotation.x === Math.PI / 2));
       assert.deepEqual([...new Set(overlayObjects(runtime.renderers, "closed-shroud-material").map((object) => object.userData.profileIndex))].sort(), [0, 1]);
       await act(async () => root.render(sceneElement(runtime, {
         inspection: base,
@@ -93,9 +96,28 @@ describe("STEP comparison scene", () => {
       })));
       await flush();
       assert.ok(overlayCount(runtime.renderers, "span-surface-evidence") >= 2);
+      assert.equal(overlayCount(runtime.renderers[0], "span-surface-evidence"), 0);
+      assert.ok(overlayCount(runtime.renderers[1], "span-surface-evidence") >= 2);
       assert.ok(overlayCount(runtime.renderers, "representative-blade-evidence") >= 2);
       assert.ok(overlayObjects(runtime.renderers, "span-surface-evidence").every((object) => object.geometry?.getAttribute("position")?.count > 0));
+      assert.ok(overlayObjects(runtime.renderers, "span-surface-evidence").every((object) => object.rotation.x === Math.PI / 2));
+      assert.ok(overlayObjects(runtime.renderers, "span-surface-evidence").every((object) => object.userData.latticeKind === "active-blade-lattice"));
       assert.ok(overlayObjects(runtime.renderers, "representative-blade-evidence").every((object) => object.geometry?.getAttribute("position")?.count > 0));
+      await act(async () => root.unmount());
+    });
+  });
+
+  test("keeps STEP and reconstructed shade free of triangulation edge clutter", async () => {
+    await withScene(async ({ container, runtime }) => {
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime)));
+      await flush();
+      const neutralEdges = runtime.renderers.flatMap((renderer) => renderer.rendered).flatMap(({ scene }) => {
+        const found = [];
+        scene.traverse((object) => { if (object.isLineSegments) found.push(object); });
+        return found;
+      });
+      assert.equal(neutralEdges.length, 0);
       await act(async () => root.unmount());
     });
   });

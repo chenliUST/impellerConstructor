@@ -7,14 +7,14 @@ export const stepOverlayOptions = [
   { id: "axis", label: "Axis" },
   { id: "hub", label: "Hub" },
   { id: "tipSupport", label: "Tip/shroud" },
-  { id: "spanSurfaces", label: "Span" },
+  { id: "spanSurfaces", label: "Active blade lattice" },
   { id: "representativeBlade", label: "Blade" },
   { id: "selectedLoop", label: "Source loop" },
   { id: "openTipReference", label: "Open tip reference" },
 ];
 
 export const defaultStepOverlayVisibility = Object.freeze({
-  axis: true, hub: true, tipSupport: true, spanSurfaces: true, representativeBlade: true,
+  axis: true, hub: true, tipSupport: true, spanSurfaces: false, representativeBlade: true,
   selectedLoop: true, openTipReference: false,
 });
 
