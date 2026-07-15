@@ -24,12 +24,14 @@ from part_rule_synthesis.impeller_v11_blade_to_blade_loop import (
     build_v11_blade_to_blade_loop_family,
 )
 from part_rule_synthesis.impeller_v11_6_section_recovery import (
+    SectionRecoveryError,
     SectionSegmentMeasurement,
+    solve_meridional_correspondence,
 )
 
 
-MEASUREMENT_SCHEMA_VERSION = "v1.1.6_axis_first_measurement_bundle_r2"
-MAPPING_VERSION = "v1.1.6_bounded_to_v1.1.2_r2"
+MEASUREMENT_SCHEMA_VERSION = "v1.1.6_axis_first_measurement_bundle_r3"
+MAPPING_VERSION = "v1.1.6_bounded_to_v1.1.2_r3"
 GEOMETRY_PATCH_VERSION = "1.1.2"
 CANONICAL_STATIONS_H = (0.0, 0.25, 0.5, 0.75, 1.0)
 CANONICAL_INPUT_SOURCE = "v116_bounded_measurement_mapping"
@@ -472,7 +474,10 @@ def map_measurements_to_v112(
     try:
         _assert_output_whitelists(parameters, defaults)
         _assert_output_limits_and_material_domain(
-            parameters, defaults, bundle["topology"]
+            parameters,
+            defaults,
+            bundle["topology"],
+            minimum_active_span_mm=context.minimum_measurable_active_span_mm,
         )
         canonical = canonical_nurbs_from_v11_defaults(
             parameters,
@@ -583,29 +588,9 @@ def map_measurements_to_v112(
         "tolerances": context.tolerance_contract,
         "solver": solver,
         "bounds": bounds,
-        "representational_losses": [
-            {
-                "feature": "leading_and_trailing_edge_source_nurbs",
-                "source_role": "measurement_target_only",
-                "v112_representation": "thickness_driven_nurbs_cap_intent",
-                "direct_curve_constructor_mode": False,
-            },
-            {
-                "feature": "cap_roundness",
-                "policy": "frozen_v1_1_2_release_default",
-                "leading_edge_cap_roundness": defaults["leading_edge_cap_roundness"],
-                "trailing_edge_cap_roundness": defaults["trailing_edge_cap_roundness"],
-                "geometry_sensitivity": "not_independently_identifiable_in_v1_1_2",
-            },
-            {
-                "feature": "adaptive_span_lattice",
-                "source_station_count_by_family": {
-                    name: len(family["stations"])
-                    for name, family in bundle["section_families"].items()
-                },
-                "constructor_stations_h": list(CANONICAL_STATIONS_H),
-            },
-        ],
+        "representational_losses": _representational_losses(
+            defaults, bundle["section_families"]
+        ),
         "provenance": {
             "source": deepcopy(bundle["provenance"]),
             "frame": deepcopy(bundle["frame"]),
@@ -616,6 +601,162 @@ def map_measurements_to_v112(
             "canonical_hash_excludes_source_identity": True,
         },
     }
+
+
+def map_measurements_to_v112_review(
+    measurements: Mapping[str, Any],
+    *,
+    tolerances: V112MappingTolerances | Mapping[str, Any],
+    initial_guess: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a hashed review candidate only for a complete residual-gate rejection.
+
+    Schema, topology, material-domain, solver, and canonical-authority failures remain
+    terminal. This path exists so a rejected bounded V1.1.2 candidate can still be
+    compared with the source STEP without being represented as promotable geometry.
+    """
+
+    try:
+        return map_measurements_to_v112(
+            measurements,
+            tolerances=tolerances,
+            initial_guess=initial_guess,
+        )
+    except V112MappingError as exc:
+        if exc.reason != "v116_v112_mapping_residual_exceeded":
+            raise
+        details = deepcopy(exc.details)
+        candidate = details.get("candidate")
+        objective_terms = details.get("objective_terms")
+        failed_terms = details.get("failed_terms")
+        if not (
+            isinstance(candidate, Mapping)
+            and isinstance(objective_terms, Mapping)
+            and isinstance(failed_terms, list)
+            and failed_terms
+        ):
+            raise
+        required_candidate_keys = {
+            "parameters",
+            "resolved_blade_to_blade_loop_family_defaults",
+            "regenerated_canonical_payload",
+            "canonical_payload_hash_sha256",
+            "five_station_resampling_report",
+        }
+        if not required_candidate_keys.issubset(candidate):
+            raise
+        if any(
+            name not in objective_terms
+            or objective_terms[name].get("gate", {}).get("status") != "FAIL"
+            for name in failed_terms
+        ):
+            raise
+
+        parameters = deepcopy(candidate["parameters"])
+        defaults = deepcopy(candidate["resolved_blade_to_blade_loop_family_defaults"])
+        canonical = deepcopy(candidate["regenerated_canonical_payload"])
+        canonical_hash = str(candidate["canonical_payload_hash_sha256"])
+        if (
+            canonical.get("canonical_payload_version") != GEOMETRY_PATCH_VERSION
+            or _stable_hash(canonical) != canonical_hash
+        ):
+            raise
+        constructor_hash = _stable_hash(
+            {
+                "geometry_patch_version": GEOMETRY_PATCH_VERSION,
+                "parameters": parameters,
+                "defaults": defaults,
+                "canonical_payload": canonical,
+            }
+        )
+        tolerance_promotion = deepcopy(dict(details.get("promotion", {})))
+        promotion = {
+            **tolerance_promotion,
+            "promotable": False,
+            "objective_terms_pass": False,
+            "rejection_reason": exc.reason,
+        }
+        section_families = (
+            measurements.get("section_families", {})
+            if isinstance(measurements, Mapping)
+            else {}
+        )
+        return {
+            "mapping_status": "REJECTED_REVIEW_CANDIDATE",
+            "promotable": False,
+            "promotion": promotion,
+            "promotion_contract": deepcopy(promotion),
+            "mapping_version": MAPPING_VERSION,
+            "measurement_schema_version": MEASUREMENT_SCHEMA_VERSION,
+            "geometry_patch_version": GEOMETRY_PATCH_VERSION,
+            "math_parameterization": MATH_PARAMETERIZATION,
+            "parameters": parameters,
+            "resolved_blade_to_blade_loop_family_defaults": defaults,
+            "regenerated_canonical_payload": canonical,
+            "canonical_payload_hash_sha256": canonical_hash,
+            "constructor_input_hash_sha256": constructor_hash,
+            "five_station_resampling_report": deepcopy(
+                candidate["five_station_resampling_report"]
+            ),
+            "objective_terms": deepcopy(dict(objective_terms)),
+            "passed_terms": deepcopy(list(details.get("passed_terms", []))),
+            "failed_terms": deepcopy(failed_terms),
+            "tolerances": deepcopy(dict(details.get("tolerances", {}))),
+            "solver": deepcopy(dict(details.get("solver", {}))),
+            "bounds": deepcopy(dict(details.get("bounds", {}))),
+            "rejection": {
+                "reason": exc.reason,
+                "message": str(exc),
+                "failed_terms": deepcopy(failed_terms),
+                "candidate_disposition": "review_only_not_constructor_promotion",
+            },
+            "representational_losses": _representational_losses(
+                defaults, section_families
+            )
+            + [
+                {
+                    "feature": "frozen_v1_1_2_objective_gates",
+                    "failed_terms": deepcopy(failed_terms),
+                    "disposition": "candidate_retained_for_deviation_review_only",
+                }
+            ],
+            "provenance": {
+                "source": deepcopy(details.get("provenance")),
+                "frame": deepcopy(details.get("frame")),
+                "canonical_hash_excludes_source_identity": True,
+                "candidate_authority": (
+                    "bounded_v112_solver_candidate_rejected_by_objective_gates"
+                ),
+            },
+        }
+
+
+def _representational_losses(
+    defaults: Mapping[str, Any], section_families: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "feature": "leading_and_trailing_edge_source_nurbs",
+            "source_role": "measurement_target_only",
+            "v112_representation": "thickness_driven_nurbs_cap_intent",
+            "direct_curve_constructor_mode": False,
+        },
+        {
+            "feature": "cap_roundness",
+            "policy": "frozen_v1_1_2_release_default",
+            "leading_edge_cap_roundness": defaults["leading_edge_cap_roundness"],
+            "trailing_edge_cap_roundness": defaults["trailing_edge_cap_roundness"],
+            "geometry_sensitivity": "not_independently_identifiable_in_v1_1_2",
+        },
+        {
+            "feature": "adaptive_span_lattice",
+            "source_station_count_by_family": {
+                name: len(family["stations"])
+                for name, family in section_families.items()
+            },
+            "constructor_stations_h": list(CANONICAL_STATIONS_H),
+        },
+    ]
 
 
 def _solver_contract(
@@ -1608,6 +1749,8 @@ class _MappingContext:
             if all(record["status"] == "PASS" for record in attachment_records)
             else "FAIL"
         )
+        active_span_mm = self._active_span_minimum(defaults)
+        active_span_pass = active_span_mm >= self.minimum_measurable_active_span_mm
         terms["root_tip_offsets"] = _term(
             target={
                 "root_lift_median_mm": median(root["lift_samples_mm"]),
@@ -1621,10 +1764,14 @@ class _MappingContext:
             },
             unit="mm",
             weight="hard_material_boundary",
-            residual={"active_span_minimum_mm": self._active_span_minimum(defaults)},
+            residual={
+                "active_span_minimum_mm": active_span_mm,
+                "minimum_measurable_active_span_mm": self.minimum_measurable_active_span_mm,
+            },
             gate={
-                "strictly_positive_active_span": self._active_span_minimum(defaults) > 0.0,
-                "status": "PASS" if self._active_span_minimum(defaults) > 0.0 else "FAIL",
+                "strictly_positive_active_span": active_span_mm > 0.0,
+                "active_span_above_measured_minimum": active_span_pass,
+                "status": "PASS" if active_span_pass else "FAIL",
             },
             source_ids=root["source_ids"] + ([] if shroud is None else shroud["source_ids"]),
         )
@@ -1652,10 +1799,16 @@ class _MappingContext:
         splitter = populations.get("splitter")
         splitter_count = 0 if splitter is None else splitter["count"]
         exact_count = int(parameters["blade_count"]) == main_count + splitter_count
+        exact_collision_pass = (
+            populations["collision_free"] is True
+            and populations["collision_status"] == "PASS"
+            and populations["exact_brep_collision_checked"] is True
+            and populations["exact_brep_collision_free"] is True
+        )
         hard_pass = (
             exact_count
             and populations["closure_pass"]
-            and populations["collision_free"]
+            and exact_collision_pass
             and populations["phase_consistent"]
         )
         terms["periodicity"] = _term(
@@ -1682,6 +1835,16 @@ class _MappingContext:
                 "phase_consistent": populations["phase_consistent"],
                 "closure_pass": populations["closure_pass"],
                 "collision_free": populations["collision_free"],
+                "collision_status": populations.get("collision_status", "UNKNOWN"),
+                "source_topology_separated": populations.get(
+                    "source_topology_separated"
+                ),
+                "exact_brep_collision_checked": populations.get(
+                    "exact_brep_collision_checked", False
+                ),
+                "exact_brep_collision_free": populations.get(
+                    "exact_brep_collision_free"
+                ),
                 "status": "PASS" if hard_pass else "FAIL",
             },
             source_ids=populations["source_ids"],
@@ -1937,6 +2100,13 @@ class _MappingContext:
         distances = np.linalg.norm(tip - hub, axis=1) - root_offset - tip_offset
         return _round(float(np.min(distances)), 12)
 
+    @property
+    def minimum_measurable_active_span_mm(self) -> float:
+        return max(
+            float(family["active_span_contract"]["minimum_measurable_active_span_mm"])
+            for family in self.bundle["section_families"].values()
+        )
+
     def five_station_report(
         self,
         canonical: Mapping[str, Any],
@@ -2130,12 +2300,14 @@ def _validate_and_normalize_bundle(measurements: Mapping[str, Any]) -> dict[str,
     _validate_topology(bundle["topology"])
     _validate_support_fits(bundle["support_fits"])
     _validate_populations(bundle["populations"])
+    _validate_attachments(bundle["attachments"], bundle["topology"])
     _validate_section_families(
         bundle["section_families"],
         bundle["populations"],
         source_tolerance_mm=float(bundle["frame"]["source_tolerance_mm"]),
+        support_fits=bundle["support_fits"],
+        attachments=bundle["attachments"],
     )
-    _validate_attachments(bundle["attachments"], bundle["topology"])
     return _normalized_bundle_order(bundle)
 
 
@@ -2535,8 +2707,8 @@ def _validate_populations(populations: Any) -> None:
     _require_mapping(populations, "populations")
     _require_keys(
         populations,
-        {"main", "splitter", "relative_phase_pitch", "closure_pass", "collision_free", "phase_consistent", "source_ids"},
-        {"main", "splitter", "relative_phase_pitch", "closure_pass", "collision_free", "phase_consistent", "source_ids"},
+        {"main", "splitter", "relative_phase_pitch", "closure_pass", "collision_free", "collision_status", "source_topology_separated", "exact_brep_collision_checked", "exact_brep_collision_free", "phase_consistent", "source_ids"},
+        {"main", "splitter", "relative_phase_pitch", "closure_pass", "collision_free", "collision_status", "source_topology_separated", "exact_brep_collision_checked", "exact_brep_collision_free", "phase_consistent", "source_ids"},
         "populations",
     )
     main = populations["main"]
@@ -2544,11 +2716,38 @@ def _validate_populations(populations: Any) -> None:
     splitter = populations["splitter"]
     if splitter is not None:
         _validate_population(splitter, "populations.splitter")
-    for key in ("closure_pass", "collision_free", "phase_consistent"):
+    for key in ("closure_pass", "phase_consistent"):
         if not isinstance(populations[key], bool) or not populations[key]:
             raise V112MappingError(
                 "v116_v112_topology_failed",
                 f"populations.{key} must be true",
+            )
+    collision_free = populations["collision_free"]
+    if collision_free is False:
+        raise V112MappingError(
+            "v116_v112_topology_failed",
+            "populations.collision_free records a confirmed collision",
+        )
+    if collision_free is not True and collision_free is not None:
+        _schema_error("populations.collision_free must be true, false, or null")
+    if collision_free is True and not (
+        populations["collision_status"] == "PASS"
+        and populations["source_topology_separated"] is True
+        and populations["exact_brep_collision_checked"] is True
+        and populations["exact_brep_collision_free"] is True
+    ):
+        _schema_error(
+            "collision-free promotion requires an explicit passing exact B-Rep collision check"
+        )
+    if collision_free is None:
+        if (
+            populations["collision_status"] != "UNKNOWN"
+            or populations["source_topology_separated"] is not True
+            or populations["exact_brep_collision_checked"] is not False
+            or populations["exact_brep_collision_free"] is not None
+        ):
+            _schema_error(
+                "unknown collision state requires separated source topology and an explicit missing exact B-Rep check"
             )
     relative_phase = _finite(populations["relative_phase_pitch"], "populations.relative_phase_pitch")
     if splitter is None and abs(relative_phase) > 1.0e-12:
@@ -2591,6 +2790,8 @@ def _validate_section_families(
     populations: Mapping[str, Any],
     *,
     source_tolerance_mm: float,
+    support_fits: Mapping[str, Any],
+    attachments: Mapping[str, Any],
 ) -> None:
     _require_mapping(families, "section_families")
     expected = {"main"}
@@ -2600,7 +2801,12 @@ def _validate_section_families(
     for name, family in families.items():
         path = f"section_families.{name}"
         _require_mapping(family, path)
-        _require_keys(family, {"population", "stations", "source_ids"}, {"population", "stations", "source_ids"}, path)
+        _require_keys(
+            family,
+            {"population", "stations", "source_ids", "active_span_contract"},
+            {"population", "stations", "source_ids", "active_span_contract"},
+            path,
+        )
         if family["population"] != name:
             _schema_error(f"{path}.population must equal its family key")
         _source_ids(family["source_ids"], f"{path}.source_ids")
@@ -2618,6 +2824,154 @@ def _validate_section_families(
             _schema_error(f"{path}.stations must include active root h=0 and active tip h=1")
         if any(right - left <= 1.0e-9 for left, right in zip(ordered_h, ordered_h[1:])):
             _schema_error(f"{path}.stations must have unique increasing h values")
+        _validate_active_span_contract(
+            family["active_span_contract"],
+            f"{path}.active_span_contract",
+            source_tolerance_mm=source_tolerance_mm,
+            support_fits=support_fits,
+            attachments=attachments,
+        )
+
+
+def _validate_active_span_contract(
+    contract: Any,
+    path: str,
+    *,
+    source_tolerance_mm: float,
+    support_fits: Mapping[str, Any],
+    attachments: Mapping[str, Any],
+) -> None:
+    _require_mapping(contract, path)
+    keys = {
+        "active_root_h",
+        "active_tip_h",
+        "minimum_support_separation_mm",
+        "active_span_mm",
+        "minimum_measurable_active_span_mm",
+        "local_thickness_proxy_mm",
+        "source_tolerance_mm",
+        "measurement_authority",
+        "source_ids",
+    }
+    _require_keys(contract, keys, keys, path)
+    root_h = _finite(contract["active_root_h"], f"{path}.active_root_h")
+    tip_h = _finite(contract["active_tip_h"], f"{path}.active_tip_h")
+    support_span = _positive(
+        contract["minimum_support_separation_mm"],
+        f"{path}.minimum_support_separation_mm",
+    )
+    active_span = _positive(contract["active_span_mm"], f"{path}.active_span_mm")
+    minimum_span = _positive(
+        contract["minimum_measurable_active_span_mm"],
+        f"{path}.minimum_measurable_active_span_mm",
+    )
+    thickness_proxy = _positive(
+        contract["local_thickness_proxy_mm"],
+        f"{path}.local_thickness_proxy_mm",
+    )
+    recorded_tolerance = _positive(
+        contract["source_tolerance_mm"], f"{path}.source_tolerance_mm"
+    )
+    if not math.isclose(
+        recorded_tolerance, source_tolerance_mm, rel_tol=0.0, abs_tol=1.0e-12
+    ):
+        _schema_error(f"{path}.source_tolerance_mm must match the source frame")
+    if not 0.0 < root_h < tip_h < 1.0:
+        _schema_error(f"{path} must retain an ordered interior support interval")
+    expected = _derive_active_span_contract_values(
+        support_fits,
+        attachments,
+        source_tolerance_mm=source_tolerance_mm,
+    )
+    actual = {
+        "active_root_h": root_h,
+        "active_tip_h": tip_h,
+        "minimum_support_separation_mm": support_span,
+        "active_span_mm": active_span,
+        "minimum_measurable_active_span_mm": minimum_span,
+        "local_thickness_proxy_mm": thickness_proxy,
+    }
+    absolute_tolerance = max(1.0e-9, source_tolerance_mm * 1.0e-6)
+    for name, expected_value in expected.items():
+        if not math.isclose(
+            actual[name],
+            expected_value,
+            rel_tol=1.0e-9,
+            abs_tol=absolute_tolerance,
+        ):
+            _schema_error(
+                f"{path}.{name} must be derived from authenticated supports and attachments"
+            )
+    if active_span < minimum_span:
+        raise V112MappingError(
+            "v116_v112_material_domain_failed",
+            f"{path} records a near-collapsed blade-body span",
+            {
+                "active_span_mm": active_span,
+                "minimum_measurable_active_span_mm": minimum_span,
+            },
+        )
+    if contract["measurement_authority"] != "attachment_clearance_on_authenticated_meridional_supports":
+        _schema_error(f"{path} lacks authenticated active-span authority")
+    _source_ids(contract["source_ids"], f"{path}.source_ids")
+
+
+def _derive_active_span_contract_values(
+    support_fits: Mapping[str, Any],
+    attachments: Mapping[str, Any],
+    *,
+    source_tolerance_mm: float,
+) -> dict[str, float]:
+    try:
+        correspondence = solve_meridional_correspondence(
+            support_fits["hub"]["control_points_rz_mm"],
+            support_fits["tip_or_shroud"]["control_points_rz_mm"],
+        )
+    except SectionRecoveryError as exc:
+        _schema_error(
+            "support_fits cannot derive an authenticated active-span interval"
+        )
+        raise AssertionError("unreachable") from exc
+    hub = np.asarray(correspondence.hub_points_rz_mm, dtype=float)
+    tip = np.asarray(correspondence.tip_points_rz_mm, dtype=float)
+    support_span = float(np.min(np.linalg.norm(tip - hub, axis=1)))
+    if not math.isfinite(support_span) or support_span <= _EPSILON:
+        _schema_error("support_fits collapse the meridional support separation")
+
+    root = attachments["root"]
+    shroud = attachments.get("shroud")
+    root_lift = max(float(value) for value in root["lift_samples_mm"])
+    root_width = float(median(root["width_samples_mm"]))
+    root_margin = max(4.0 * source_tolerance_mm, 0.10 * root_width)
+    root_h = max(
+        (root_lift + root_margin) / support_span,
+        4.0 * source_tolerance_mm / support_span,
+    )
+
+    tip_lift = (
+        0.0
+        if shroud is None
+        else max(float(value) for value in shroud["lift_samples_mm"])
+    )
+    tip_width = root_width if shroud is None else float(median(shroud["width_samples_mm"]))
+    tip_margin = max(4.0 * source_tolerance_mm, 0.10 * tip_width)
+    tip_h = 1.0 - max(
+        (tip_lift + tip_margin) / support_span,
+        4.0 * source_tolerance_mm / support_span,
+    )
+    thickness_proxy = min(root_lift, root_lift if shroud is None else tip_lift)
+    active_span = (tip_h - root_h) * support_span
+    return {
+        "active_root_h": root_h,
+        "active_tip_h": tip_h,
+        "minimum_support_separation_mm": support_span,
+        "active_span_mm": active_span,
+        "minimum_measurable_active_span_mm": max(
+            8.0 * source_tolerance_mm,
+            0.25 * thickness_proxy,
+        ),
+        "local_thickness_proxy_mm": thickness_proxy,
+    }
 
 
 def _validate_station(
@@ -2893,14 +3247,36 @@ def _validate_nurbs_target(
         ],
         "source_ids": evidence_source_ids,
     }
-    fit_certificate = _certified_parameter_matched_curve_to_polyline_distance(
-        fit_curve,
-        source_points,
-        gate_limit_mm=fit_tolerance_mm,
-        convergence_mm=min(_CURVE_DISTANCE_CONVERGENCE_MM, 0.25 * fit_tolerance_mm),
+    fit_certificate = _certify_task7_fit_to_tolerance(
+        fit_curve, source_points, fit_tolerance_mm=fit_tolerance_mm
     )
     if fit_certificate["upper_bound_mm"] > fit_tolerance_mm + 1.0e-12:
         _schema_error(f"{path} is not within tolerance of its authenticated Task 7 source segment")
+
+
+def _certify_task7_fit_to_tolerance(curve, source_points, *, fit_tolerance_mm):
+    convergence = min(_CURVE_DISTANCE_CONVERGENCE_MM, 0.25 * fit_tolerance_mm)
+    certificate = _certified_parameter_matched_curve_to_polyline_distance(
+        curve,
+        source_points,
+        gate_limit_mm=fit_tolerance_mm,
+        convergence_mm=convergence,
+    )
+    if (
+        certificate["upper_bound_mm"] > fit_tolerance_mm
+        and certificate["lower_bound_mm"] <= fit_tolerance_mm
+        and certificate["decision_certified"] is not True
+    ):
+        headroom = fit_tolerance_mm - certificate["lower_bound_mm"]
+        refined_convergence = min(convergence, max(1.0e-6, 0.5 * headroom))
+        if refined_convergence < convergence - 1.0e-15:
+            certificate = _certified_parameter_matched_curve_to_polyline_distance(
+                curve,
+                source_points,
+                gate_limit_mm=fit_tolerance_mm,
+                convergence_mm=refined_convergence,
+            )
+    return certificate
 
 
 def _validate_sample_series(record: Any, value_key: str, path: str) -> None:
@@ -3051,6 +3427,8 @@ def _assert_output_limits_and_material_domain(
     parameters: Mapping[str, Any],
     defaults: Mapping[str, Any],
     topology: Mapping[str, Any],
+    *,
+    minimum_active_span_mm: float,
 ) -> None:
     violations: list[dict[str, Any]] = []
     for name, value in parameters.items():
@@ -3124,12 +3502,13 @@ def _assert_output_limits_and_material_domain(
     else:
         bore = float(parameters["mounting_bore_radius_mm"])
         wall = float(parameters["hub_wall_thickness_mm"])
-        if bore + wall >= float(np.min(hub[:, 0])):
+        if bore + wall > float(np.min(hub[:, 0])) + 1.0e-9:
             material_failures.append("mounting_bore_plus_wall_inside_hub_support")
         root_offset = float(defaults["root_blade_lift_mm"])
         tip_offset = float(defaults.get("shroud_blade_inset_mm", 0.0))
-        if np.any(np.linalg.norm(tip - hub, axis=1) - root_offset - tip_offset <= 0.0):
-            material_failures.append("positive_active_span")
+        mapped_active_span = np.linalg.norm(tip - hub, axis=1) - root_offset - tip_offset
+        if np.any(mapped_active_span < float(minimum_active_span_mm) - 1.0e-9):
+            material_failures.append("minimum_measurable_active_span")
     if material_failures:
         raise V112MappingError(
             "v116_v112_material_domain_failed",

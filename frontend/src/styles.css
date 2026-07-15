@@ -1663,7 +1663,30 @@ circle.engineering-feature {
   z-index: 1;
 }
 
-.step-comparison-scene canvas {
+.comparison-pane {
+  position: absolute;
+  width: 50%;
+  height: 50%;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.comparison-pane.source {
+  top: 0;
+  left: 0;
+}
+
+.comparison-pane.reconstruction {
+  top: 0;
+  left: 50%;
+}
+
+.comparison-pane.heatmap {
+  top: 50%;
+  left: 0;
+}
+
+.comparison-pane canvas {
   display: block;
   width: 100%;
   height: 100%;
@@ -1688,18 +1711,8 @@ circle.engineering-feature {
   pointer-events: none;
 }
 
-.comparison-pane-label.source {
+.comparison-pane .comparison-pane-label {
   top: 8px;
-  left: 8px;
-}
-
-.comparison-pane-label.reconstruction {
-  top: 8px;
-  left: calc(50% + 8px);
-}
-
-.comparison-pane-label.heatmap {
-  top: calc(50% + 8px);
   left: 8px;
 }
 

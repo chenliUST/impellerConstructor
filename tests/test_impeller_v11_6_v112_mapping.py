@@ -39,6 +39,7 @@ from part_rule_synthesis.impeller_v11_6_v112_mapping import (  # noqa: E402
     adapt_task3_frame_for_mapping,
     adapt_task7_segment_for_mapping,
     map_measurements_to_v112,
+    map_measurements_to_v112_review,
 )
 
 
@@ -483,6 +484,38 @@ def test_task7_chord_parameter_fit_certificate_is_bounded_and_detects_excursion(
     assert rejected["gate_status"] == "FAIL"
 
 
+def test_near_gate_task7_certificate_refines_until_decision_is_certified(monkeypatch):
+    calls = []
+
+    def certificate(_curve, _points, *, gate_limit_mm, convergence_mm):
+        calls.append(convergence_mm)
+        if convergence_mm > 0.001:
+            return {
+                "lower_bound_mm": 0.029,
+                "upper_bound_mm": 0.031,
+                "decision_certified": False,
+            }
+        return {
+            "lower_bound_mm": 0.029,
+            "upper_bound_mm": 0.0295,
+            "decision_certified": True,
+        }
+
+    monkeypatch.setattr(
+        mapping_module,
+        "_certified_parameter_matched_curve_to_polyline_distance",
+        certificate,
+    )
+
+    result = mapping_module._certify_task7_fit_to_tolerance(
+        {}, [[0.0, 0.0], [1.0, 0.0]], fit_tolerance_mm=0.03
+    )
+
+    assert calls == pytest.approx([0.0025, 0.0005])
+    assert result["upper_bound_mm"] == pytest.approx(0.0295)
+    assert result["decision_certified"] is True
+
+
 def test_piecewise_affine_task7_certificate_uses_exact_endpoint_bound(monkeypatch):
     target = _nurbs_target(
         [[0.0, 0.0], [1.0, 0.25], [3.0, 0.5]],
@@ -633,6 +666,7 @@ def test_real_task7_section_fit_passes_through_mapping_adapter():
     bundle["frame"]["axis_consensus"]["selected_cluster"]["tolerance"][
         "line_distance_mm"
     ] = 0.15
+    _synchronize_fixture_active_span_contracts(bundle)
 
     result = map_measurements_to_v112(bundle, tolerances={})
 
@@ -1074,6 +1108,34 @@ def test_edge_gate_rejects_semicircle_proxy_instead_of_comparing_against_one():
     assert "edge_curves" in captured.value.details["failed_terms"]
 
 
+def test_review_mapping_retains_complete_residual_rejection_as_non_promotable_candidate():
+    bundle = _measurement_bundle(station_count=5)
+    station = bundle["section_families"]["main"]["stations"][2]
+    station["camber"]["samples"][3]["q_mm"] += 8.0
+
+    reviewed = map_measurements_to_v112_review(bundle, tolerances={})
+
+    assert reviewed["mapping_status"] == "REJECTED_REVIEW_CANDIDATE"
+    assert reviewed["promotable"] is False
+    assert reviewed["promotion"]["promotable"] is False
+    assert reviewed["rejection"]["reason"] == "v116_v112_mapping_residual_exceeded"
+    assert "camber" in reviewed["failed_terms"]
+    assert reviewed["objective_terms"]["camber"]["gate"]["status"] == "FAIL"
+    assert reviewed["geometry_patch_version"] == "1.1.2"
+    assert reviewed["regenerated_canonical_payload"]["canonical_payload_version"] == "1.1.2"
+    assert len(reviewed["constructor_input_hash_sha256"]) == 64
+
+
+def test_review_mapping_does_not_convert_schema_failure_into_a_candidate():
+    bundle = _measurement_bundle(station_count=5)
+    del bundle["frame"]["axis_consensus"]
+
+    with pytest.raises(V112MappingError) as captured:
+        map_measurements_to_v112_review(bundle, tolerances={})
+
+    assert captured.value.reason == "v116_v112_measurement_schema_invalid"
+
+
 @pytest.mark.parametrize(
     "mutation",
     (
@@ -1100,6 +1162,23 @@ def test_runtime_parameter_limits_and_material_domain_are_hard_gates(mutation):
         "v116_v112_material_domain_failed",
         "v116_v112_material_measurement_missing",
     }
+
+
+def test_measured_bore_wall_may_terminate_exactly_on_hub_support():
+    bundle = _measurement_bundle(station_count=5)
+    minimum_hub_radius = min(
+        point[0] for point in bundle["support_fits"]["hub"]["control_points_rz_mm"]
+    )
+    bore = bundle["topology"]["material_measurements"][
+        "mounting_bore_radius_mm"
+    ]["value"]
+    bundle["topology"]["material_measurements"]["hub_wall_thickness_mm"][
+        "value"
+    ] = minimum_hub_radius - bore
+
+    mapped = map_measurements_to_v112(bundle, tolerances={})
+
+    assert mapped["mapping_status"] == "PASS"
 
 
 def test_tolerance_overrides_can_tighten_but_relaxed_runs_are_non_promotable():
@@ -1193,6 +1272,9 @@ def test_strict_frame_adapter_accepts_the_real_task3_result_without_fixture_exte
 
     bundle = _measurement_bundle(station_count=5, main_count=7)
     bundle["frame"] = task3_frame
+    bundle["section_families"]["main"]["active_span_contract"][
+        "source_tolerance_mm"
+    ] = adapted["source_tolerance_mm"]
     result = map_measurements_to_v112(bundle, tolerances={})
     assert result["provenance"]["frame"] == adapted
 
@@ -1219,6 +1301,59 @@ def test_missing_material_measurement_and_material_topology_conflict_are_termina
     with pytest.raises(V112MappingError) as captured_topology:
         map_measurements_to_v112(false_shroud, tolerances={})
     assert captured_topology.value.reason == "v116_v112_topology_failed"
+
+
+def test_collision_pass_requires_explicit_exact_brep_evidence():
+    bundle = _measurement_bundle(station_count=5)
+    del bundle["populations"]["exact_brep_collision_checked"]
+    del bundle["populations"]["exact_brep_collision_free"]
+
+    with pytest.raises(V112MappingError) as captured:
+        map_measurements_to_v112(bundle, tolerances={})
+
+    assert captured.value.reason == "v116_v112_measurement_schema_invalid"
+
+
+def test_support_mutation_without_rederived_active_span_contract_is_schema_invalid():
+    bundle = _measurement_bundle(station_count=5)
+    hub = bundle["support_fits"]["hub"]["control_points_rz_mm"]
+    bundle["support_fits"]["tip_or_shroud"]["control_points_rz_mm"] = [
+        [point[0] + 2.0, point[1]] for point in hub
+    ]
+
+    with pytest.raises(V112MappingError) as captured:
+        map_measurements_to_v112(bundle, tolerances={})
+
+    assert captured.value.reason == "v116_v112_measurement_schema_invalid"
+    assert "active_span_contract" in str(captured.value)
+
+
+@pytest.mark.parametrize("mapper", (map_measurements_to_v112, map_measurements_to_v112_review))
+def test_active_span_contract_cannot_lower_threshold_with_tampered_support(mapper):
+    bundle = _measurement_bundle(station_count=5)
+    bundle["support_fits"]["tip_or_shroud"]["control_points_rz_mm"][0][0] += 0.05
+    _synchronize_fixture_active_span_contracts(bundle)
+    support_span = bundle["section_families"]["main"]["active_span_contract"][
+        "minimum_support_separation_mm"
+    ]
+    near_collapse_lift = support_span - 1.2
+    bundle["attachments"]["root"]["lift_samples_mm"] = [
+        near_collapse_lift,
+        near_collapse_lift,
+        near_collapse_lift,
+    ]
+    _synchronize_fixture_active_span_contracts(bundle)
+    contract = bundle["section_families"]["main"]["active_span_contract"]
+    assert 0.0 < contract["active_span_mm"] < contract[
+        "minimum_measurable_active_span_mm"
+    ]
+    contract["minimum_measurable_active_span_mm"] = 0.01
+
+    with pytest.raises(V112MappingError) as captured:
+        mapper(bundle, tolerances={})
+
+    assert captured.value.reason == "v116_v112_measurement_schema_invalid"
+    assert "minimum_measurable_active_span_mm" in str(captured.value)
 
 
 def test_canonical_payload_hash_regenerates_and_mapping_does_not_mutate_old_presets():
@@ -1318,7 +1453,7 @@ def _measurement_bundle(
             1.0, 3.0, "shroud-attachment", material_side=-1
         )
 
-    return {
+    bundle = {
         "schema_version": MEASUREMENT_SCHEMA_VERSION,
         "frame": {
             "source_to_canonical_matrix": [
@@ -1432,12 +1567,66 @@ def _measurement_bundle(
             "relative_phase_pitch": 0.0 if splitter is None else 0.5,
             "closure_pass": True,
             "collision_free": True,
+            "collision_status": "PASS",
+            "source_topology_separated": True,
+            "exact_brep_collision_checked": True,
+            "exact_brep_collision_free": True,
             "phase_consistent": True,
             "source_ids": ["periodic-analysis"],
         },
         "section_families": section_families,
         "attachments": attachments,
     }
+    _synchronize_fixture_active_span_contracts(bundle)
+    return bundle
+
+
+def _synchronize_fixture_active_span_contracts(bundle: dict) -> None:
+    correspondence = mapping_module.solve_meridional_correspondence(
+        bundle["support_fits"]["hub"]["control_points_rz_mm"],
+        bundle["support_fits"]["tip_or_shroud"]["control_points_rz_mm"],
+    )
+    support_span = min(
+        math.dist(hub, tip)
+        for hub, tip in zip(
+            correspondence.hub_points_rz_mm,
+            correspondence.tip_points_rz_mm,
+        )
+    )
+    tolerance = mapping_module.adapt_task3_frame_for_mapping(bundle["frame"])[
+        "source_tolerance_mm"
+    ]
+    root = bundle["attachments"]["root"]
+    shroud = bundle["attachments"].get("shroud")
+    root_lift = max(root["lift_samples_mm"])
+    root_width = sorted(root["width_samples_mm"])[1]
+    root_margin = max(4.0 * tolerance, 0.10 * root_width)
+    root_h = max(
+        (root_lift + root_margin) / support_span,
+        4.0 * tolerance / support_span,
+    )
+    tip_lift = 0.0 if shroud is None else max(shroud["lift_samples_mm"])
+    tip_width = root_width if shroud is None else sorted(shroud["width_samples_mm"])[1]
+    tip_margin = max(4.0 * tolerance, 0.10 * tip_width)
+    tip_h = 1.0 - max(
+        (tip_lift + tip_margin) / support_span,
+        4.0 * tolerance / support_span,
+    )
+    thickness_proxy = min(root_lift, root_lift if shroud is None else tip_lift)
+    derived = {
+        "active_root_h": root_h,
+        "active_tip_h": tip_h,
+        "minimum_support_separation_mm": support_span,
+        "active_span_mm": (tip_h - root_h) * support_span,
+        "minimum_measurable_active_span_mm": max(
+            8.0 * tolerance,
+            0.25 * thickness_proxy,
+        ),
+        "local_thickness_proxy_mm": thickness_proxy,
+        "source_tolerance_mm": tolerance,
+    }
+    for family in bundle["section_families"].values():
+        family["active_span_contract"].update(derived)
 
 
 def _constructor_seed(
@@ -1600,6 +1789,17 @@ def _section_family(
         "population": name,
         "stations": stations,
         "source_ids": [f"{name}-representative"],
+        "active_span_contract": {
+            "active_root_h": 0.125,
+            "active_tip_h": 0.875,
+            "minimum_support_separation_mm": 8.0,
+            "active_span_mm": 6.0,
+            "minimum_measurable_active_span_mm": 1.0,
+            "local_thickness_proxy_mm": 4.0,
+            "source_tolerance_mm": 0.01,
+            "measurement_authority": "attachment_clearance_on_authenticated_meridional_supports",
+            "source_ids": [f"{name}-active-span"],
+        },
     }
 
 

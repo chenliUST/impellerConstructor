@@ -124,6 +124,10 @@ def _periodic_evidence(graph: dict, *, angular_span_deg: float = 1.0) -> dict:
         "method": "angular_sector_overlap_with_radial_axial_support",
         "collision_free": True,
         "collision_count": 0,
+        "collision_status": "PASS",
+        "source_topology_separated": True,
+        "exact_brep_collision_checked": True,
+        "exact_brep_collision_free": True,
         "minimum_angular_clearance_deg": None,
         "tolerance_deg": 1.0e-6,
         "collisions": [],
@@ -927,6 +931,9 @@ def test_open_n_plus_zero_decorates_every_blade_surface_and_freezes_manifest():
     assert manifest["pattern"]["collision_fidelity"] == (
         "sampled_v112_uv_grid_not_cad_certified"
     )
+    assert manifest["pattern"]["source_topology_separated"] is True
+    assert manifest["pattern"]["exact_brep_collision_checked"] is True
+    assert manifest["pattern"]["exact_brep_collision_free"] is True
     assert "v1_1_6_pattern_material" not in graph
     assert graph == graph_before
     assert periodic == periodic_before
@@ -1063,6 +1070,74 @@ def test_mapped_adapter_rejects_task8_source_collision_before_graph_collision():
         )
 
     assert raised.value.reason == "v116_pattern_collision"
+
+
+def test_mapped_adapter_allows_explicit_unknown_source_collision_for_review_only_graph():
+    graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
+    periodic = _periodic_evidence(graph)
+    periodic["collision_diagnostics"].update(
+        {
+            "collision_status": "UNKNOWN",
+            "collision_free": None,
+            "collision_count": 0,
+            "collisions": [],
+            "source_topology_separated": True,
+            "exact_brep_collision_checked": False,
+            "exact_brep_collision_free": None,
+        }
+    )
+    support = _open_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    mapping = _task8_mapping(
+        periodic,
+        _trusted_material_partition(support, source_manifest),
+        source_manifest,
+    )
+
+    decorated, manifest = validate_mapped_pattern_reconstruction(
+        graph,
+        mapping,
+        source_manifest,
+        task8_recovery_authority=_task8_authority(mapping, source_manifest),
+    )
+
+    assert manifest["status"] == "REVIEW_ONLY"
+    assert manifest["pattern"]["source_collision_status"] == "UNKNOWN"
+    assert (
+        manifest["pattern"]["collision_status"]
+        == "SOURCE_UNKNOWN_RECONSTRUCTED_SAMPLE_PASS"
+    )
+    assert decorated["v1_1_6_pattern_material"]["status"] == "REVIEW_ONLY"
+
+
+def test_mapped_adapter_rejects_legacy_collision_free_boolean_without_exact_evidence():
+    graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
+    periodic = _periodic_evidence(graph)
+    diagnostics = periodic["collision_diagnostics"]
+    for key in (
+        "collision_status",
+        "source_topology_separated",
+        "exact_brep_collision_checked",
+        "exact_brep_collision_free",
+    ):
+        diagnostics.pop(key)
+    support = _open_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    mapping = _task8_mapping(
+        periodic,
+        _trusted_material_partition(support, source_manifest),
+        source_manifest,
+    )
+
+    with pytest.raises(PatternReconstructionError) as raised:
+        validate_mapped_pattern_reconstruction(
+            graph,
+            mapping,
+            source_manifest,
+            task8_recovery_authority=_task8_authority(mapping, source_manifest),
+        )
+
+    assert raised.value.reason == "v116_pattern_evidence_invalid"
 
 
 def test_open_mapped_adapter_excludes_tip_reference_from_real_triangulation():

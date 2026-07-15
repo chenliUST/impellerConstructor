@@ -11,7 +11,7 @@ import { apiDefault, exportFilename, exportFileOptions, presets, selectedPreset 
 import { defaultVisibleLayers } from "./workspaceModel.js?v=1.1.5";
 import { ModelViewer } from "./components/ModelViewer.js?v=1.1.8";
 import { ReviewEngineeringDrawing } from "./components/ReviewEngineeringDrawing.js?v=1.1.5.1";
-import { StepReconstructionWorkspace } from "./components/StepReconstructionWorkspace.js?v=1.1.6-r2";
+import { StepReconstructionWorkspace } from "./components/StepReconstructionWorkspace.js?v=1.1.6-r6";
 
 const h = React.createElement;
 const WORKSPACES = [
@@ -21,6 +21,7 @@ const WORKSPACES = [
 ];
 
 export function App() {
+  const initialStepAuditId = useMemo(() => stepAuditIdFromSearch(globalThis.window?.location?.search), []);
   const [apiBase, setApiBase] = useState(apiDefault);
   const [selectedPresetId, setSelectedPresetId] = useState(presets[0].id);
   const [manifest, setManifest] = useState(null);
@@ -29,7 +30,7 @@ export function App() {
   const [drawingError, setDrawingError] = useState("");
   const [drawingRevision, setDrawingRevision] = useState(0);
   const [stlUrl, setStlUrl] = useState("");
-  const [workspace, setWorkspace] = useState("cad_review");
+  const [workspace, setWorkspace] = useState(initialStepAuditId ? "step_reconstruction" : "cad_review");
   const [viewMode, setViewMode] = useState("shaded");
   const [autoRotate, setAutoRotate] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -178,7 +179,7 @@ export function App() {
       ReviewErrorBoundary,
       { resetKey: `${selectedPresetId}:${workspace}:${manifest?.run_id || "empty"}` },
       workspace === "step_reconstruction"
-        ? h(StepReconstructionWorkspace, { apiBase })
+        ? h(StepReconstructionWorkspace, { apiBase, initialAuditId: initialStepAuditId })
         : workspace === "engineering_drawing"
         ? h(ReviewEngineeringDrawing, {
             key: manifest?.run_id || selectedPresetId,
@@ -206,6 +207,10 @@ export function App() {
           }),
     ),
   );
+}
+
+export function stepAuditIdFromSearch(search = "") {
+  return new URLSearchParams(String(search || "")).get("stepAudit")?.trim() || "";
 }
 
 function mergeDrawingView(current, payload) {

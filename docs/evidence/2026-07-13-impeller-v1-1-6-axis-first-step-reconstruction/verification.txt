@@ -1,0 +1,47 @@
+V1.1.6 Task 12 verification
+Date: 2026-07-15 Asia/Shanghai
+Branch: feature/ks007g23b-preset
+Base commit: 1e78c30 fix: reconstruct measured periodic blades without false shroud
+
+Final real-STEP audit
+  Source: KS007G23B.stp
+  Audit: step-audit-a7a5e88b539e41c5
+  Algorithm revision: axis_first_pattern_material_r6
+  Measurement schema: v1.1.6_axis_first_measurement_bundle_r3
+  Runtime root: C:\Users\CHEN Li\AppData\Local\Temp\impeller-v116-http-task12-r6-20260715-214340
+  Process status: PASS
+  Axis-first algorithm status: REJECTED
+  Mapping status: REJECTED_REVIEW_CANDIDATE
+  Acceptance status: REJECTED
+  Promotable: false
+
+Backend regression command
+  python -m pytest tests/test_impeller_v11_6_step_audit.py tests/test_impeller_v11_6_axis_first_pipeline.py tests/test_impeller_v11_6_v112_mapping.py tests/test_impeller_v11_6_periodic_blades.py tests/test_impeller_v11_6_loop_decomposition.py tests/test_impeller_v11_6_pattern_reconstruction.py tests/test_impeller_v11_6_step_api.py tests/test_impeller_v11_6_axis_first_contract.py -q
+  Final complete run: 221 passed, 1 skipped in 807.63 s.
+  The skipped test is the optional environment-gated local STEP fixture in the aggregate run.
+
+Real STEP regression command
+  $env:KS007G23B_STEP_PATH='C:\Users\CHEN Li\Documents\WeChat Files\wxid_r615kksejqyt22\FileStorage\File\2026-07\KS007G23B.stp'; python -m pytest tests/test_impeller_v11_6_step_audit.py::test_optional_ks007g23b_exact_source_facts_and_mapping -q
+  Result: 1 passed in 272.75 s.
+  Verified top/bottom material-plane face identity, centroid-axis tolerance and bolt-hole cap exclusion.
+
+Frontend verification
+  npm.cmd test
+  Result: 235 passed, 0 failed.
+  npm.cmd run build
+  Result: frontend build check passed.
+
+Static checks
+  git diff --check
+  Result: passed (line-ending conversion warnings only).
+  python -m ruff check <changed V1.1.6 backend and test files>
+  Result: all checks passed.
+  Debug-render search
+  Result: no red diagnostic renderer or console logging branches remain.
+
+Browser smoke
+  URL: http://127.0.0.1:5199/?stepAudit=step-audit-a7a5e88b539e41c5
+  Three independent WebGL canvases loaded source, reconstruction and heatmap.
+  The report loaded simultaneously and exposed process PASS separately from algorithm REJECTED, acceptance REJECTED, NOT PROMOTABLE and COLLISION UNKNOWN.
+  Browser error log: empty.
+  Final screenshots are retained in this directory.

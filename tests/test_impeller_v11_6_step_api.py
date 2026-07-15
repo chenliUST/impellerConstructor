@@ -52,7 +52,7 @@ def test_step_upload_returns_202_and_persists_recoverable_status(tmp_path):
     status = client.get(f"/api/step-reconstruction-audits/{audit_id}")
     assert status.status_code == 200
     assert status.json()["source"]["sha256"]
-    assert status.json()["algorithm_revision"] == "axis_first_section_periodic_r3"
+    assert status.json()["algorithm_revision"] == "axis_first_pattern_material_r6"
     assert status.json()["canonical_geometry_version"] == "1.1.2"
     assert status.json()["legacy_workflow_status"] == "PENDING"
     assert status.json()["axis_first_algorithm_status"] == "INCOMPLETE"

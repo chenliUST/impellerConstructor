@@ -5,7 +5,7 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, NoReturn, Sequence
 
 import numpy as np
 
@@ -17,6 +17,7 @@ from part_rule_synthesis.impeller_v11_6_v112_mapping import (
     V112MappingTolerances,
     adapt_task7_segment_for_mapping,
     map_measurements_to_v112,
+    map_measurements_to_v112_review,
 )
 
 
@@ -32,8 +33,19 @@ _STABLE_REASONS = {
     "v116_section_loop_open",
     "v116_section_loop_correspondence_failed",
     "v116_section_tangent_flip_detected",
+    "v116_span_surface_ordering_failed",
     "v116_thickness_field_invalid",
     "v116_root_attachment_measurement_failed",
+    "v116_v112_canonical_hash_mismatch",
+    "v116_v112_canonical_patch_mismatch",
+    "v116_v112_forbidden_parameter",
+    "v116_v112_mapping_solver_exception",
+    "v116_v112_mapping_solver_failed",
+    "v116_v112_material_domain_failed",
+    "v116_v112_material_measurement_missing",
+    "v116_v112_measurement_schema_invalid",
+    "v116_v112_parameter_limit_failed",
+    "v116_v112_topology_failed",
     "v116_v112_mapping_residual_exceeded",
     "v116_false_material_surface_forbidden",
 }
@@ -207,16 +219,51 @@ def extract_v11_parameters(
             initial_guess=initial_guess,
         )
     except V112MappingError as exc:
-        raise AxisFirstPipelineError(
-            "v116_v112_mapping_residual_exceeded",
-            str(exc),
-            stage="v112_mapping",
-            evidence={
-                "upstream_reason": exc.reason,
-                "mapping_details": copy.deepcopy(exc.details),
-            },
-            details={"completed_stages": list(result.stage_evidence)},
-        ) from exc
+        _raise_mapping_error(exc, result)
+    return _enrich_mapping(mapped, result)
+
+
+def extract_v11_review_parameters(
+    source_shape: Any,
+    source_manifest: Mapping[str, Any],
+    frame: Mapping[str, Any],
+    semantics: Mapping[str, Any],
+    *,
+    tolerances: V112MappingTolerances | Mapping[str, Any] | None = None,
+    initial_guess: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Extract a strict mapping or a clearly rejected, review-only candidate."""
+
+    result = build_measurement_bundle(source_shape, source_manifest, frame, semantics)
+    try:
+        mapped = map_measurements_to_v112_review(
+            result.measurements,
+            tolerances=V112MappingTolerances() if tolerances is None else tolerances,
+            initial_guess=initial_guess,
+        )
+    except V112MappingError as exc:
+        _raise_mapping_error(exc, result)
+    return _enrich_mapping(mapped, result)
+
+
+def _raise_mapping_error(
+    exc: V112MappingError, result: MeasurementBundleResult
+) -> NoReturn:
+    raise AxisFirstPipelineError(
+        exc.reason,
+        str(exc),
+        stage="v112_mapping",
+        evidence={
+            "upstream_reason": exc.reason,
+            "mapping_details": copy.deepcopy(exc.details),
+        },
+        details={"completed_stages": list(result.stage_evidence)},
+    ) from exc
+
+
+def _enrich_mapping(
+    mapped: dict[str, Any], result: MeasurementBundleResult
+) -> dict[str, Any]:
 
     parameters = mapped["parameters"]
     unsupported_audit = _unsupported_source_feature_audit(
@@ -357,16 +404,9 @@ def _build_exact_incidence_index(source_shape, faces_by_id, edges_by_id):
                 evidence={"source_edge_id": edge_id, "occt_index": index},
             )
         edge_id_by_index[index] = edge_id
-    if len(edge_id_by_index) != edge_index.Extent():
-        raise AxisFirstPipelineError(
-            "v116_hub_support_classification_failed",
-            "source edge inventory is incomplete relative to OCCT topology",
-            stage="source_inventory",
-            evidence={
-                "inventory_edge_count": len(edge_id_by_index),
-                "occt_edge_count": int(edge_index.Extent()),
-            },
-        )
+    # MapShapes also retains degenerate edge subshapes that CadQuery omits from
+    # both Shape.Edges() and Face.Edges(). They do not participate in semantic
+    # face adjacency. Every edge that a face exposes is still checked below.
     face_edge_ids: dict[str, tuple[str, ...]] = {}
     edge_face_ids: dict[str, list[str]] = {
         edge_id: [] for edge_id in edges_by_id
@@ -639,7 +679,12 @@ def _classify_support_topology(inventory, frame, semantics) -> dict[str, Any]:
             item["member_face_ids"],
         )
     )
-    hub_group = groups[0]
+    expected_instance_ids = {
+        str(instance["instance_id"])
+        for population in semantics["periodic_population_recovery"]["populations"]
+        for instance in population["instances"]
+    }
+    hub_group = _select_complete_hub_group(groups, expected_instance_ids)
     representative_faces = {
         face_id
         for population in semantics["periodic_population_recovery"]["populations"]
@@ -663,10 +708,12 @@ def _classify_support_topology(inventory, frame, semantics) -> dict[str, Any]:
         hub_members,
         key=lambda item: (-item["shared_contact_length_mm"], item["face_id"]),
     )[0]
+    selected_hub_faces = set(hub_group["member_face_ids"])
     comparable_groups = [
         item
-        for item in groups[1:]
-        if item["periodic_instance_ids"] == hub_group["periodic_instance_ids"]
+        for item in groups
+        if selected_hub_faces.isdisjoint(item["member_face_ids"])
+        and item["periodic_instance_ids"] == expected_instance_ids
         and item["shared_contact_length_mm"]
         >= 0.5 * hub_group["shared_contact_length_mm"]
     ]
@@ -1077,7 +1124,17 @@ def _recover_periodic_evidence(
     result = {
         "status": "PASS",
         "closure_pass": bool(recovery["closure_diagnostics"]["all_populations_closed"]),
-        "collision_free": bool(recovery["collision_diagnostics"]["collision_free"]),
+        "collision_status": recovery["collision_diagnostics"]["collision_status"],
+        "collision_free": recovery["collision_diagnostics"]["collision_free"],
+        "source_topology_separated": recovery["collision_diagnostics"][
+            "source_topology_separated"
+        ],
+        "exact_brep_collision_checked": recovery["collision_diagnostics"][
+            "exact_brep_collision_checked"
+        ],
+        "exact_brep_collision_free": recovery["collision_diagnostics"][
+            "exact_brep_collision_free"
+        ],
         "phase_consistent": True,
         "source_ids": sorted(
             {
@@ -1156,6 +1213,10 @@ def _recover_periodic_evidence(
         ]
         if interval[1] <= interval[0]:
             interval = [0.05, 0.95]
+        angular_sector, sector_evidence = _measurement_sector_from_envelope(
+            instance["angular_envelope_deg"],
+            pitch_deg=float(population["pitch_deg"]),
+        )
         result[name] = {
             "count": int(population["count"]),
             "pitch_deg": float(population["pitch_deg"]),
@@ -1164,12 +1225,116 @@ def _recover_periodic_evidence(
             "streamwise_interval_s": interval,
             "source_ids": sorted(instance["source_face_ids"]),
             "representative_instance": copy.deepcopy(instance),
-            "angular_sector_deg": (
-                float(instance["angular_envelope_deg"]["start_angle_deg"]),
-                float(instance["angular_envelope_deg"]["end_angle_deg"]),
-            ),
+            "angular_sector_deg": angular_sector,
+            "angular_sector_evidence": sector_evidence,
         }
     return result
+
+
+def _measurement_sector_from_envelope(envelope, *, pitch_deg):
+    start = float(envelope["start_angle_deg"])
+    end = float(envelope["end_angle_deg"])
+    span = float(envelope["span_deg"])
+    pitch = float(pitch_deg)
+    if not 0.0 < span < 300.0 or not 0.0 < pitch <= 120.0:
+        raise AxisFirstPipelineError(
+            "v116_representative_blade_selection_failed",
+            "representative angular envelope cannot define a bounded measurement sector",
+            stage="periodic_representatives",
+            evidence={"angular_envelope_deg": dict(envelope), "pitch_deg": pitch},
+        )
+    measurement_span = span + 2.0 * pitch
+    if measurement_span >= 300.0:
+        raise AxisFirstPipelineError(
+            "v116_representative_blade_selection_failed",
+            "representative measurement sector leaves no stable periodic seam",
+            stage="periodic_representatives",
+            evidence={
+                "angular_envelope_deg": dict(envelope),
+                "pitch_deg": pitch,
+                "measurement_span_deg": measurement_span,
+            },
+        )
+    sector = (start - pitch, end + pitch)
+    return sector, {
+        "method": "representative_side_envelope_plus_one_pitch_each_side",
+        "raw_envelope_deg": [start, end],
+        "raw_span_deg": span,
+        "margin_each_side_deg": pitch,
+        "measurement_span_deg": measurement_span,
+    }
+
+
+def _select_complete_hub_group(groups, expected_instance_ids):
+    """Complete the strongest support family without mixing surface types."""
+
+    if not groups or not expected_instance_ids:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_classification_failed",
+            "hub support selection requires candidates and periodic instances",
+            stage="support_recovery",
+        )
+    seed = max(
+        groups,
+        key=lambda item: (
+            float(item["shared_contact_length_mm"]),
+            len(item["periodic_instance_ids"]),
+            float(item["total_area_mm2"]),
+            tuple(sorted(item["member_face_ids"])),
+        ),
+    )
+    selected = copy.deepcopy(seed)
+    selected["member_face_ids"] = list(seed["member_face_ids"])
+    selected["adjacent_periodic_face_ids"] = set(
+        seed["adjacent_periodic_face_ids"]
+    )
+    selected["periodic_instance_ids"] = set(seed["periodic_instance_ids"])
+    remaining = [item for item in groups if item is not seed]
+    while selected["periodic_instance_ids"] != expected_instance_ids:
+        missing = expected_instance_ids - selected["periodic_instance_ids"]
+        compatible = [
+            item
+            for item in remaining
+            if item["geometry_type"] == selected["geometry_type"]
+            and missing.intersection(item["periodic_instance_ids"])
+        ]
+        if not compatible:
+            raise AxisFirstPipelineError(
+                "v116_hub_support_classification_failed",
+                "strongest hub support family does not cover every periodic instance",
+                stage="support_recovery",
+                evidence={
+                    "geometry_type": selected["geometry_type"],
+                    "hub_support_face_ids": sorted(selected["member_face_ids"]),
+                    "missing_periodic_instance_ids": sorted(missing),
+                },
+            )
+        addition = max(
+            compatible,
+            key=lambda item: (
+                len(missing.intersection(item["periodic_instance_ids"])),
+                float(item["shared_contact_length_mm"]),
+                float(item["total_area_mm2"]),
+                tuple(sorted(item["member_face_ids"])),
+            ),
+        )
+        remaining.remove(addition)
+        selected["member_face_ids"].extend(addition["member_face_ids"])
+        selected["adjacent_periodic_face_ids"].update(
+            addition["adjacent_periodic_face_ids"]
+        )
+        selected["periodic_instance_ids"].update(
+            addition["periodic_instance_ids"]
+        )
+        selected["shared_contact_length_mm"] += addition[
+            "shared_contact_length_mm"
+        ]
+        selected["total_area_mm2"] += addition["total_area_mm2"]
+    selected["member_face_ids"] = sorted(set(selected["member_face_ids"]))
+    selected["mean_area_mm2"] = selected["total_area_mm2"] / len(
+        selected["member_face_ids"]
+    )
+    return selected
 
 
 def _bounded_representative_fit_tolerance(frame, observed_residual_mm):
@@ -1260,7 +1425,7 @@ def _section_family(inventory, frame, support, name, population, attachments):
     root_evidence, tip_evidence = _active_span_evidence_from_adjacency(
         inventory, population, support["support_face_ids"], tolerance
     )
-    raw_root, raw_tip = _measured_active_span_interval(
+    raw_root, raw_tip, active_span_contract = _measured_active_span_interval(
         hub["control_points_rz_mm"], tip["control_points_rz_mm"], tolerance,
         root_evidence, tip_evidence,
         root_attachment=attachments["root"],
@@ -1322,7 +1487,12 @@ def _section_family(inventory, frame, support, name, population, attachments):
                 local_projector=projector,
                 section_normal_xyz=normal_source,
                 source_tolerance_mm=tolerance,
-                edge_sample_count=65,
+                # Preserve the exact-curve gate at source tolerance.  A 65-point
+                # polyline introduced about 0.038 mm of reverse-distance chord
+                # error on KS007G23B even though source-to-fit error was only
+                # about 0.001 mm.  Doubling the exact-edge sampling density
+                # removes that discretization floor without relaxing tolerance.
+                edge_sample_count=129,
                 reference_loop=prior,
                 source_shape_scope="complete_source_shape",
             )
@@ -1335,9 +1505,9 @@ def _section_family(inventory, frame, support, name, population, attachments):
                 }
             )
             raise
-        decomposition = section_recovery.decompose_section_loop(
+        decomposition = _decompose_measured_section_loop(
             result.accepted_loop,
-            maximum_control_count=25,
+            tolerance,
         )
         _assert_section_segment_fit_quality(decomposition, tolerance, raw_h)
         thickness = _measure_section_thickness(
@@ -1417,6 +1587,7 @@ def _section_family(inventory, frame, support, name, population, attachments):
             "population": name,
             "stations": output_stations,
             "source_ids": allowed,
+            "active_span_contract": active_span_contract,
         },
         records,
     )
@@ -1862,32 +2033,21 @@ def _measured_active_span_interval(
     )
     tip_boundary_margin = max(4.0 * float(tolerance_mm), 0.10 * tip_width)
     tip_clearance = (tip_lift + tip_boundary_margin) / minimum_span
-    if root_clearance >= 0.25 or tip_clearance >= 0.25:
-        raise AxisFirstPipelineError(
-            "v116_span_surface_ordering_failed",
-            "source support separation cannot provide a blade-body section clearance",
-            stage="exact_sections",
-            evidence={
-                "minimum_support_separation_mm": minimum_span,
-                "source_tolerance_mm": tolerance_mm,
-                "root_attachment_lift_mm": float(root_attachment.lift_mm),
-                "root_attachment_maximum_lift_mm": root_lift,
-                "root_attachment_width_mm": float(
-                    root_attachment.attachment_width_mm
-                ),
-                "root_boundary_margin_mm": root_boundary_margin,
-                "tip_attachment_width_mm": tip_width,
-                "tip_boundary_margin_mm": tip_boundary_margin,
-                "tip_attachment_lift_mm": (
-                    None if tip_attachment is None else float(tip_attachment.lift_mm)
-                ),
-                "root_source_edge_ids": root["source_edge_ids"],
-                "tip_source_edge_ids": tip["source_edge_ids"],
-            },
-        )
     root_h = max(root_clearance, tolerance_clearance)
     tip_h = 1.0 - max(tip_clearance, tolerance_clearance)
-    if not 0.0 < root_h < tip_h < 1.0:
+    active_span_mm = (tip_h - root_h) * minimum_span
+    thickness_proxy_mm = min(
+        root_lift,
+        root_lift if tip_attachment is None else tip_lift,
+    )
+    minimum_measurable_span_mm = max(
+        8.0 * float(tolerance_mm),
+        0.25 * thickness_proxy_mm,
+    )
+    if (
+        not 0.0 < root_h < tip_h < 1.0
+        or active_span_mm < minimum_measurable_span_mm
+    ):
         raise AxisFirstPipelineError(
             "v116_span_surface_ordering_failed",
             "measured attachment clearances leave no ordered blade-body span",
@@ -1896,9 +2056,31 @@ def _measured_active_span_interval(
                 "active_root_h": root_h,
                 "active_tip_h": tip_h,
                 "minimum_support_separation_mm": minimum_span,
+                "active_span_mm": active_span_mm,
+                "minimum_measurable_active_span_mm": minimum_measurable_span_mm,
+                "local_thickness_proxy_mm": thickness_proxy_mm,
             },
         )
-    return root_h, tip_h
+    source_ids = sorted(
+        {
+            str(source_id)
+            for record in (root, tip)
+            if isinstance(record, Mapping)
+            for key in ("source_ids", "source_face_ids", "source_edge_ids")
+            for source_id in record.get(key, ())
+        }
+    )
+    return root_h, tip_h, {
+        "active_root_h": float(root_h),
+        "active_tip_h": float(tip_h),
+        "minimum_support_separation_mm": minimum_span,
+        "active_span_mm": active_span_mm,
+        "minimum_measurable_active_span_mm": minimum_measurable_span_mm,
+        "local_thickness_proxy_mm": thickness_proxy_mm,
+        "source_tolerance_mm": float(tolerance_mm),
+        "measurement_authority": "attachment_clearance_on_authenticated_meridional_supports",
+        "source_ids": source_ids,
+    }
 
 
 def _measurement_surface_in_source_frame(surface, source_to_canonical):
@@ -2105,6 +2287,10 @@ def _assemble_measurements(inventory, frame, support, periodic, sections):
         "relative_phase_pitch": 0.0,
         "closure_pass": periodic["closure_pass"],
         "collision_free": periodic["collision_free"],
+        "collision_status": periodic["collision_status"],
+        "source_topology_separated": periodic["source_topology_separated"],
+        "exact_brep_collision_checked": periodic["exact_brep_collision_checked"],
+        "exact_brep_collision_free": periodic["exact_brep_collision_free"],
         "phase_consistent": periodic["phase_consistent"],
         "source_ids": periodic["source_ids"],
     }
@@ -2158,68 +2344,97 @@ def _material_measurements(inventory, frame, topology, sections, support):
             "no coaxial analytic cylinder with matching circular source edges",
             {"coaxial_cylinder_candidates": []},
         )
-    bore = cylinders[0]
-    if len(cylinders) > 1 and abs(cylinders[1]["radius_mm"] - bore["radius_mm"]) <= tolerance:
-        _material_failure(
-            "mounting_bore_radius_mm",
-            "the smallest authenticated coaxial cylinder radius is not unique",
-            {"coaxial_cylinder_candidates": cylinders},
+    caps_by_cylinder = {
+        candidate["face_id"]: _perpendicular_plane_neighbors_for_cylinder(
+            inventory, candidate, axis, tolerance
         )
-
-    bore_caps = _perpendicular_plane_neighbors(
-        inventory, bore["face_id"], axis, tolerance
+        for candidate in cylinders
+    }
+    bore = _select_mounting_bore_group(
+        cylinders,
+        frame,
+        tolerance,
+        caps_by_cylinder=caps_by_cylinder,
     )
-    if len(bore_caps) != 2:
-        _material_failure(
-            "mounting_bore_radius_mm",
-            "the bore does not terminate at exactly two authenticated perpendicular planes",
-            {"bore": bore, "bore_cap_candidates": bore_caps},
-        )
+
+    bore_caps = caps_by_cylinder[bore["face_id"]]
     bore_caps.sort(key=lambda item: item["axis_parameter_mm"])
-    outer_low, outer_high = bore_caps
 
     core_candidates = []
-    for candidate in cylinders[1:]:
-        caps = _perpendicular_plane_neighbors(
-            inventory, candidate["face_id"], axis, tolerance
-        )
+    for candidate in cylinders:
+        if candidate is bore:
+            continue
+        caps = caps_by_cylinder[candidate["face_id"]]
         if len(caps) != 2:
             continue
         caps.sort(key=lambda item: item["axis_parameter_mm"])
-        if (
-            outer_low["axis_parameter_mm"] + tolerance
+        if len(bore_caps) == 2 and (
+            bore_caps[0]["axis_parameter_mm"] + tolerance
             < caps[0]["axis_parameter_mm"]
             < caps[1]["axis_parameter_mm"]
-            < outer_high["axis_parameter_mm"] - tolerance
+            < bore_caps[1]["axis_parameter_mm"] - tolerance
         ):
             core_candidates.append({**candidate, "cap_planes": caps})
-    if len(core_candidates) != 1:
-        _material_failure(
-            "hub_wall_thickness_mm",
-            "exact bore-to-core material wall relationship is missing or ambiguous",
-            {
-                "bore": bore,
-                "outer_bore_cap_face_ids": [
-                    outer_low["face_id"],
-                    outer_high["face_id"],
-                ],
-                "nested_coaxial_core_candidates": core_candidates,
-            },
+    if len(bore_caps) == 2 and len(core_candidates) == 1:
+        outer_low, outer_high = bore_caps
+        core = core_candidates[0]
+        inner_low, inner_high = core["cap_planes"]
+        wall = float(core["radius_mm"] - bore["radius_mm"])
+        bottom = float(
+            inner_low["axis_parameter_mm"] - outer_low["axis_parameter_mm"]
         )
-    core = core_candidates[0]
-    inner_low, inner_high = core["cap_planes"]
-    wall = float(core["radius_mm"] - bore["radius_mm"])
-    bottom = float(
-        inner_low["axis_parameter_mm"] - outer_low["axis_parameter_mm"]
-    )
-    top = float(
-        outer_high["axis_parameter_mm"] - inner_high["axis_parameter_mm"]
-    )
+        top = float(
+            outer_high["axis_parameter_mm"] - inner_high["axis_parameter_mm"]
+        )
+        material_distance_evidence = {
+            "method": "nested_coaxial_cylinder_and_parallel_caps",
+            "core": core,
+            "bottom_plane_pair": [outer_low, inner_low],
+            "top_plane_pair": [inner_high, outer_high],
+            "bottom_source_face_ids": [
+                outer_low["face_id"],
+                inner_low["face_id"],
+            ],
+            "top_source_face_ids": [
+                inner_high["face_id"],
+                outer_high["face_id"],
+            ],
+            "bottom_axis_parameters_mm": [
+                outer_low["axis_parameter_mm"],
+                inner_low["axis_parameter_mm"],
+            ],
+            "top_axis_parameters_mm": [
+                inner_high["axis_parameter_mm"],
+                outer_high["axis_parameter_mm"],
+            ],
+            "wall_source_ids": sorted(
+                set(bore["source_ids"]) | set(core["source_ids"])
+            ),
+        }
+    else:
+        (
+            wall,
+            bottom,
+            top,
+            material_distance_evidence,
+        ) = _measure_support_bound_hub_material(
+            inventory,
+            frame,
+            bore,
+            support,
+            axis,
+            tolerance,
+        )
     if min(wall, bottom, top) <= tolerance:
         _material_failure(
             "hub_wall_thickness_mm",
             "authenticated nested material distances are not positive",
-            {"wall_mm": wall, "bottom_mm": bottom, "top_mm": top},
+            {
+                "wall_mm": wall,
+                "bottom_mm": bottom,
+                "top_mm": top,
+                "measurement_evidence": material_distance_evidence,
+            },
         )
 
     root_radius = _measure_transition_radius(
@@ -2235,7 +2450,12 @@ def _material_measurements(inventory, frame, topology, sections, support):
         tolerance_mm=tolerance,
     )
     chamfer = _measure_bore_edge_treatment(
-        inventory, bore, bore_caps, tolerance_mm=tolerance
+        inventory,
+        bore,
+        bore_caps,
+        tolerance_mm=tolerance,
+        material_distance_evidence=material_distance_evidence,
+        axis=axis,
     )
     result = {
         "mounting_bore_radius_mm": _material_record(
@@ -2251,35 +2471,36 @@ def _material_measurements(inventory, frame, topology, sections, support):
         "hub_wall_thickness_mm": _material_record(
             wall,
             "coaxial_cylinder_radial_face_distance",
-            sorted(set(bore["source_ids"]) | set(core["source_ids"])),
+            material_distance_evidence["wall_source_ids"],
             {
                 "inner_radius_mm": bore["radius_mm"],
-                "outer_radius_mm": core["radius_mm"],
-                "paired_face_ids": [bore["face_id"], core["face_id"]],
+                "outer_radius_mm": bore["radius_mm"] + wall,
+                "bore_face_ids": list(bore["face_ids"]),
+                "measurement_evidence": material_distance_evidence,
             },
         ),
         "hub_bottom_thickness_mm": _material_record(
             bottom,
             "parallel_material_plane_distance",
-            [outer_low["face_id"], inner_low["face_id"]],
+            material_distance_evidence["bottom_source_face_ids"],
             {
-                "axis_parameters_mm": [
-                    outer_low["axis_parameter_mm"],
-                    inner_low["axis_parameter_mm"],
+                "axis_parameters_mm": material_distance_evidence[
+                    "bottom_axis_parameters_mm"
                 ],
                 "material_orientation": "canonical_axis_low_side",
+                "measurement_evidence": material_distance_evidence,
             },
         ),
         "hub_top_cap_thickness_mm": _material_record(
             top,
             "parallel_material_plane_distance",
-            [inner_high["face_id"], outer_high["face_id"]],
+            material_distance_evidence["top_source_face_ids"],
             {
-                "axis_parameters_mm": [
-                    inner_high["axis_parameter_mm"],
-                    outer_high["axis_parameter_mm"],
+                "axis_parameters_mm": material_distance_evidence[
+                    "top_axis_parameters_mm"
                 ],
                 "material_orientation": "canonical_axis_high_side",
+                "measurement_evidence": material_distance_evidence,
             },
         ),
         "root_fillet_radius_mm": root_radius,
@@ -2388,14 +2609,127 @@ def _authenticated_coaxial_cylinders(inventory, axis, outer_radius, tolerance):
         records.append(
             {
                 "face_id": face_id,
+                "face_ids": [face_id],
                 "radius_mm": radius,
                 "axis_residual_mm": line_residual,
                 "axis_alignment": angular_alignment,
+                "analytic_area_mm2": float(
+                    inventory["records_by_id"][face_id]["area_mm2"]
+                ),
                 "circular_source_edge_ids": sorted(circular_ids),
                 "source_ids": [face_id, *sorted(circular_ids)],
             }
         )
-    return sorted(records, key=lambda item: (item["radius_mm"], item["face_id"]))
+    return _group_coaxial_cylinder_records(records, tolerance)
+
+
+def _group_coaxial_cylinder_records(records, tolerance):
+    groups = []
+    for record in sorted(records, key=lambda item: (item["radius_mm"], item["face_id"])):
+        group = next(
+            (
+                candidate
+                for candidate in groups
+                if abs(candidate["radius_mm"] - record["radius_mm"]) <= tolerance
+            ),
+            None,
+        )
+        if group is None:
+            groups.append(copy.deepcopy(record))
+            continue
+        group["face_ids"] = sorted(
+            set(group["face_ids"]) | set(record["face_ids"])
+        )
+        group["face_id"] = group["face_ids"][0]
+        group["axis_residual_mm"] = max(
+            group["axis_residual_mm"], record["axis_residual_mm"]
+        )
+        group["axis_alignment"] = min(
+            group["axis_alignment"], record["axis_alignment"]
+        )
+        group["analytic_area_mm2"] += record["analytic_area_mm2"]
+        group["circular_source_edge_ids"] = sorted(
+            set(group["circular_source_edge_ids"])
+            | set(record["circular_source_edge_ids"])
+        )
+        group["source_ids"] = sorted(
+            set(group["source_ids"]) | set(record["source_ids"])
+        )
+    return sorted(groups, key=lambda item: (item["radius_mm"], item["face_id"]))
+
+
+def _select_mounting_bore_group(
+    cylinders, frame, tolerance, *, caps_by_cylinder=None
+):
+    caps_by_cylinder = caps_by_cylinder or {}
+    nested_bore_candidates = []
+    for candidate in cylinders:
+        caps = sorted(
+            caps_by_cylinder.get(candidate["face_id"], ()),
+            key=lambda item: item["axis_parameter_mm"],
+        )
+        if len(caps) != 2:
+            continue
+        for core in cylinders:
+            if core is candidate or core["radius_mm"] <= candidate["radius_mm"]:
+                continue
+            core_caps = sorted(
+                caps_by_cylinder.get(core["face_id"], ()),
+                key=lambda item: item["axis_parameter_mm"],
+            )
+            if len(core_caps) != 2:
+                continue
+            if (
+                caps[0]["axis_parameter_mm"] + tolerance
+                < core_caps[0]["axis_parameter_mm"]
+                < core_caps[1]["axis_parameter_mm"]
+                < caps[1]["axis_parameter_mm"] - tolerance
+            ):
+                nested_bore_candidates.append(candidate)
+                break
+    if len(nested_bore_candidates) == 1:
+        return nested_bore_candidates[0]
+    if len(nested_bore_candidates) > 1:
+        _material_failure(
+            "mounting_bore_radius_mm",
+            "multiple coaxial cylinder families enclose nested material cores",
+            {"nested_bore_candidates": nested_bore_candidates},
+        )
+
+    target = frame.get("main_bore_radius_mm")
+    if target is None:
+        _material_failure(
+            "mounting_bore_radius_mm",
+            "axis consensus did not identify an area-dominant coaxial bore radius",
+            {"coaxial_cylinder_candidates": cylinders},
+        )
+    candidates = [
+        item
+        for item in cylinders
+        if abs(float(item["radius_mm"]) - float(target)) <= tolerance
+    ]
+    if len(candidates) != 1:
+        _material_failure(
+            "mounting_bore_radius_mm",
+            "axis-consensus bore radius does not resolve one geometric cylinder family",
+            {
+                "axis_consensus_bore_radius_mm": target,
+                "coaxial_cylinder_candidates": cylinders,
+            },
+        )
+    return candidates[0]
+
+
+def _perpendicular_plane_neighbors_for_cylinder(
+    inventory, cylinder, axis, tolerance
+):
+    by_face_id = {}
+    for face_id in cylinder["face_ids"]:
+        for record in _perpendicular_plane_neighbors(
+            inventory, face_id, axis, tolerance
+        ):
+            by_face_id[record["face_id"]] = record
+    return list(by_face_id.values())
 
 
 def _perpendicular_plane_neighbors(inventory, face_id, axis, tolerance):
@@ -2640,18 +2974,30 @@ def _analytic_curvature_radius(face):
     return None
 
 
-def _measure_bore_edge_treatment(inventory, bore, bore_caps, *, tolerance_mm):
-    bore_face_id = bore["face_id"]
+def _measure_bore_edge_treatment(
+    inventory,
+    bore,
+    bore_caps,
+    *,
+    tolerance_mm,
+    material_distance_evidence=None,
+    axis=None,
+):
+    bore_face_ids = set(bore["face_ids"])
     direct_edges = set()
-    exhaustive_faces = {bore_face_id}
+    exhaustive_faces = set(bore_face_ids)
     for cap in bore_caps:
         exhaustive_faces.add(cap["face_id"])
-        direct_edges.update(
-            _face_edge_ids(inventory, bore_face_id)
-            & _face_edge_ids(inventory, cap["face_id"])
+        for bore_face_id in bore_face_ids:
+            direct_edges.update(
+                _face_edge_ids(inventory, bore_face_id)
+                & _face_edge_ids(inventory, cap["face_id"])
+            )
+    adjacent_faces = set().union(
+        *(
+            set(inventory["source_manifest"]["adjacency"].get(face_id, ()))
+            for face_id in bore_face_ids
         )
-    adjacent_faces = set(
-        inventory["source_manifest"]["adjacency"].get(bore_face_id, ())
     )
     exhaustive_faces.update(adjacent_faces)
     treatment_faces = {
@@ -2661,6 +3007,20 @@ def _measure_bore_edge_treatment(inventory, bore, bore_caps, *, tolerance_mm):
         and inventory["faces_by_id"][face_id].geomType() in {"CONE", "TORUS"}
     }
     if treatment_faces:
+        if (
+            material_distance_evidence
+            and material_distance_evidence.get("method")
+            == "support_bound_axisymmetric_material_envelope"
+            and axis is not None
+        ):
+            return _measure_coaxial_bore_opening_treatment(
+                inventory,
+                bore,
+                treatment_faces,
+                material_distance_evidence,
+                axis,
+                tolerance_mm,
+            )
         _material_failure(
             "hub_chamfer_radius_mm",
             "bore edge treatment is present but lacks an unambiguous scalar curvature authority",
@@ -3074,6 +3434,12 @@ def _tip_cap_face_ids(inventory, semantics, *, hub_face_ids):
                 for face_id, distance in distances.items()
                 if distance == farthest and face_id not in side_ids
             }
+            selected = _select_opposite_tip_cap(
+                inventory, candidates, side_ids
+            )
+            if selected is not None:
+                result[str(instance["instance_id"])] = selected
+                continue
             if len(candidates) != 1:
                 raise AxisFirstPipelineError(
                     "v116_tip_reference_inference_failed",
@@ -3089,6 +3455,378 @@ def _tip_cap_face_ids(inventory, semantics, *, hub_face_ids):
                 )
             result[str(instance["instance_id"])] = candidates.pop()
     return result
+
+
+def _measure_support_bound_hub_material(
+    inventory, frame, bore, support, axis, tolerance
+):
+    hub_fit = support.get("mapping_fits", {}).get("hub")
+    if not isinstance(hub_fit, Mapping):
+        _material_failure(
+            "hub_wall_thickness_mm",
+            "support-bound material reduction requires an authenticated hub fit",
+            {"hub_support_fit": hub_fit},
+        )
+    hub_controls = np.asarray(hub_fit["control_points_rz_mm"], dtype=float)
+    if hub_controls.shape != (6, 2) or not np.all(np.isfinite(hub_controls)):
+        _material_failure(
+            "hub_wall_thickness_mm",
+            "authenticated hub support fit cannot define the reduced material envelope",
+            {"hub_support_fit": hub_fit},
+        )
+    minimum_hub_radius = float(np.min(hub_controls[:, 0]))
+    maximum_hub_radius = float(np.max(hub_controls[:, 0]))
+    hub_terminal_axis = float(np.max(hub_controls[:, 1]))
+    wall = minimum_hub_radius - float(bore["radius_mm"])
+    if wall <= tolerance:
+        _material_failure(
+            "hub_wall_thickness_mm",
+            "axis-consensus bore leaves no positive radial material to the hub support",
+            {
+                "bore_radius_mm": bore["radius_mm"],
+                "minimum_hub_support_radius_mm": minimum_hub_radius,
+            },
+        )
+
+    hub_source_face_ids = sorted(
+        set(hub_fit["source_ids"]).intersection(inventory["faces_by_id"])
+    )
+    if not hub_source_face_ids:
+        _material_failure(
+            "hub_bottom_thickness_mm",
+            "authenticated hub fit does not retain a source-face material component",
+            {"hub_support_source_ids": list(hub_fit["source_ids"])},
+        )
+    material_component = _connected_nonperiodic_face_component(
+        inventory, hub_source_face_ids
+    )
+    planes = [
+        record
+        for record in _axis_perpendicular_material_planes(inventory, axis)
+        if record["face_id"] in material_component
+        and record["centroid_axis_offset_mm"] <= tolerance
+        and record["axis_parameter_mm"] > hub_terminal_axis + tolerance
+        and record["maximum_radius_mm"] > float(bore["radius_mm"]) + tolerance
+    ]
+    if len(planes) < 2:
+        _material_failure(
+            "hub_bottom_thickness_mm",
+            "support-bound hub reduction lacks two authenticated back-material planes",
+            {
+                "hub_terminal_axis_parameter_mm": hub_terminal_axis,
+                "material_plane_candidates": planes,
+            },
+        )
+    top_candidates = [
+        item
+        for item in planes
+        if item["maximum_radius_mm"] >= maximum_hub_radius - tolerance
+    ]
+    bottom_candidates = [
+        item
+        for item in planes
+        if item["minimum_radius_mm"] <= minimum_hub_radius + tolerance
+    ]
+    if not top_candidates or not bottom_candidates:
+        _material_failure(
+            "hub_bottom_thickness_mm",
+            "support-bound stepped material lacks authenticated outer-top or inner-bottom terminal planes",
+            {
+                "material_plane_candidates": planes,
+                "outer_top_candidates": top_candidates,
+                "inner_bottom_candidates": bottom_candidates,
+                "minimum_hub_support_radius_mm": minimum_hub_radius,
+                "maximum_hub_support_radius_mm": maximum_hub_radius,
+            },
+        )
+    first = min(top_candidates, key=lambda item: item["axis_parameter_mm"])
+    last = max(bottom_candidates, key=lambda item: item["axis_parameter_mm"])
+    top = float(first["axis_parameter_mm"] - hub_terminal_axis)
+    bottom = float(last["axis_parameter_mm"] - first["axis_parameter_mm"])
+    if bottom <= tolerance:
+        _material_failure(
+            "hub_bottom_thickness_mm",
+            "support-bound back-material planes do not define positive axial thickness",
+            {"material_plane_candidates": planes},
+        )
+    hub_source_ids = list(hub_fit["source_ids"])
+    return (
+        wall,
+        bottom,
+        top,
+        {
+            "method": "support_bound_axisymmetric_material_envelope",
+            "bore_radius_mm": float(bore["radius_mm"]),
+            "minimum_hub_support_radius_mm": minimum_hub_radius,
+            "maximum_hub_support_radius_mm": maximum_hub_radius,
+            "hub_terminal_axis_parameter_mm": hub_terminal_axis,
+            "top_material_plane": first,
+            "bottom_material_plane": last,
+            "intermediate_material_planes": [
+                item
+                for item in sorted(
+                    planes, key=lambda record: record["axis_parameter_mm"]
+                )
+                if item["face_id"] not in {first["face_id"], last["face_id"]}
+            ],
+            "wall_source_ids": sorted(set(bore["source_ids"]) | set(hub_source_ids)),
+            "top_source_face_ids": sorted(
+                set(hub_source_ids) | {first["face_id"]}
+            ),
+            "bottom_source_face_ids": [first["face_id"], last["face_id"]],
+            "top_axis_parameters_mm": [hub_terminal_axis, first["axis_parameter_mm"]],
+            "bottom_axis_parameters_mm": [
+                first["axis_parameter_mm"],
+                last["axis_parameter_mm"],
+            ],
+            "hub_material_component_face_ids": sorted(material_component),
+            "radial_coverage_gate": {
+                "outer_top_minimum_radius_mm": maximum_hub_radius - tolerance,
+                "inner_bottom_maximum_radius_mm": minimum_hub_radius + tolerance,
+            },
+        },
+    )
+
+
+def _connected_nonperiodic_face_component(inventory, start_face_ids):
+    face_ids = set(inventory["faces_by_id"])
+    periodic_face_ids = set(inventory["instance_by_face"])
+    adjacency = inventory["source_manifest"]["adjacency"]
+    visited = set(start_face_ids).intersection(face_ids).difference(periodic_face_ids)
+    pending = sorted(visited)
+    while pending:
+        current = pending.pop(0)
+        for neighbor in sorted(adjacency.get(current, ())):
+            if (
+                neighbor in face_ids
+                and neighbor not in periodic_face_ids
+                and neighbor not in visited
+            ):
+                visited.add(neighbor)
+                pending.append(neighbor)
+    return visited
+
+
+def _measure_coaxial_bore_opening_treatment(
+    inventory,
+    bore,
+    treatment_face_ids,
+    material_distance_evidence,
+    axis,
+    tolerance,
+):
+    try:
+        from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
+    except ImportError as exc:  # pragma: no cover
+        _material_failure(
+            "hub_chamfer_radius_mm",
+            "OCP analytic measurement adaptors are unavailable",
+            {"exception_type": type(exc).__name__},
+        )
+    origin, direction = axis
+    exterior_parameters = {
+        float(material_distance_evidence["top_material_plane"]["axis_parameter_mm"]),
+        float(material_distance_evidence["bottom_material_plane"]["axis_parameter_mm"]),
+    }
+    measurements = []
+    for face_id in sorted(treatment_face_ids):
+        face = inventory["faces_by_id"][face_id]
+        if face.geomType() != "CONE":
+            continue
+        cone = BRepAdaptor_Surface(face.wrapped).Cone()
+        cone_axis = cone.Axis()
+        cone_direction = np.asarray(cone_axis.Direction().Coord(), dtype=float)
+        cone_origin = np.asarray(cone_axis.Location().Coord(), dtype=float)
+        if (
+            abs(float(np.dot(cone_direction, direction)))
+            < math.cos(math.radians(0.05))
+            or float(np.linalg.norm(np.cross(cone_origin - origin, direction)))
+            > tolerance
+        ):
+            continue
+        circles = []
+        for edge_id in sorted(_face_edge_ids(inventory, face_id)):
+            edge = inventory["edges_by_id"][edge_id]
+            if edge.geomType() != "CIRCLE":
+                continue
+            circle = BRepAdaptor_Curve(edge.wrapped).Circle()
+            center = np.asarray(circle.Location().Coord(), dtype=float)
+            circles.append(
+                {
+                    "edge_id": edge_id,
+                    "radius_mm": float(circle.Radius()),
+                    "axis_parameter_mm": float(np.dot(center - origin, direction)),
+                }
+            )
+        bore_circles = [
+            item
+            for item in circles
+            if abs(item["radius_mm"] - float(bore["radius_mm"])) <= tolerance
+        ]
+        other_circles = [
+            item
+            for item in circles
+            if abs(item["radius_mm"] - float(bore["radius_mm"])) > tolerance
+        ]
+        for bore_circle in bore_circles:
+            for other in other_circles:
+                exterior = next(
+                    (
+                        value
+                        for value in exterior_parameters
+                        if abs(other["axis_parameter_mm"] - value) <= tolerance
+                    ),
+                    None,
+                )
+                if exterior is None:
+                    continue
+                measurements.append(
+                    {
+                        "value_mm": abs(
+                            other["radius_mm"] - bore_circle["radius_mm"]
+                        ),
+                        "face_id": face_id,
+                        "source_edge_ids": sorted(
+                            {bore_circle["edge_id"], other["edge_id"]}
+                        ),
+                        "bore_axis_parameter_mm": bore_circle[
+                            "axis_parameter_mm"
+                        ],
+                        "exterior_axis_parameter_mm": exterior,
+                    }
+                )
+    if not measurements:
+        _material_failure(
+            "hub_chamfer_radius_mm",
+            "conical bore treatment is not bound to an authenticated exterior material plane",
+            {"treatment_source_face_ids": sorted(treatment_face_ids)},
+        )
+    values = [item["value_mm"] for item in measurements]
+    if max(values) - min(values) > tolerance:
+        _material_failure(
+            "hub_chamfer_radius_mm",
+            "exterior bore treatments do not reduce to one scalar radial width",
+            {"measurements": measurements},
+        )
+    value = float(np.mean(values))
+    source_ids = set(bore["source_ids"])
+    for item in measurements:
+        source_ids.add(item["face_id"])
+        source_ids.update(item["source_edge_ids"])
+    return _material_record(
+        value,
+        "coaxial_conical_bore_opening_radial_width",
+        sorted(source_ids),
+        {
+            "measurements": measurements,
+            "scalar_reduction": "equal_exterior_opening_radial_widths",
+        },
+    )
+
+
+def _axis_perpendicular_material_planes(inventory, axis):
+    try:
+        from OCP.BRepAdaptor import BRepAdaptor_Surface
+    except ImportError as exc:  # pragma: no cover
+        _material_failure(
+            "hub_bottom_thickness_mm",
+            "OCP analytic measurement adaptors are unavailable",
+            {"exception_type": type(exc).__name__},
+        )
+    origin, direction = axis
+    result = []
+    for face_id, face in inventory["faces_by_id"].items():
+        if face_id in inventory["instance_by_face"] or face.geomType() != "PLANE":
+            continue
+        plane = BRepAdaptor_Surface(face.wrapped).Plane()
+        normal = np.asarray(plane.Axis().Direction().Coord(), dtype=float)
+        if abs(float(np.dot(normal, direction))) < math.cos(math.radians(0.05)):
+            continue
+        location = np.asarray(plane.Location().Coord(), dtype=float)
+        centroid = np.asarray(face.Center().toTuple(), dtype=float)
+        centroid_offset = centroid - origin
+        centroid_radial = centroid_offset - np.dot(centroid_offset, direction) * direction
+        radii = []
+        for vertex in face.Vertices():
+            point = np.asarray(vertex.toTuple(), dtype=float)
+            offset = point - origin
+            radial = offset - np.dot(offset, direction) * direction
+            radii.append(float(np.linalg.norm(radial)))
+        if not radii:
+            continue
+        result.append(
+            {
+                "face_id": face_id,
+                "axis_parameter_mm": float(np.dot(location - origin, direction)),
+                "minimum_radius_mm": min(radii),
+                "maximum_radius_mm": max(radii),
+                "centroid_axis_offset_mm": float(np.linalg.norm(centroid_radial)),
+                "area_mm2": float(inventory["records_by_id"][face_id]["area_mm2"]),
+                "source_edge_ids": sorted(_face_edge_ids(inventory, face_id)),
+            }
+        )
+    return result
+
+
+def _select_opposite_tip_cap(inventory, candidates, side_ids):
+    """Select a multi-patch tip's principal cap by balanced side contact."""
+
+    sides = sorted(side_ids)
+    if len(sides) != 2:
+        return None
+    scored = []
+    for face_id in sorted(candidates):
+        contacts = [
+            _shared_contact_length(inventory, face_id, {side_id})
+            for side_id in sides
+        ]
+        if all(length > 0.0 for length in contacts):
+            scored.append(
+                {
+                    "face_id": face_id,
+                    "minimum_contact_mm": min(contacts),
+                    "total_contact_mm": sum(contacts),
+                }
+            )
+    if not scored:
+        return None
+    best_minimum = max(item["minimum_contact_mm"] for item in scored)
+    minimum_winners = [
+        item
+        for item in scored
+        if math.isclose(
+            item["minimum_contact_mm"], best_minimum, rel_tol=1.0e-12, abs_tol=1.0e-9
+        )
+    ]
+    best_total = max(item["total_contact_mm"] for item in minimum_winners)
+    winners = [
+        item
+        for item in minimum_winners
+        if math.isclose(
+            item["total_contact_mm"], best_total, rel_tol=1.0e-12, abs_tol=1.0e-9
+        )
+    ]
+    return winners[0]["face_id"] if len(winners) == 1 else None
+
+
+def _decompose_measured_section_loop(loop, fit_tolerance):
+    decomposition = None
+    # Use the first source-tolerance fit in increasing complexity order.  Fit
+    # error is not monotone in control count: dense uniform-knot fits can
+    # oscillate between exact samples, while an intermediate budget remains
+    # both smoother and more accurate.  Every budget stays below the source
+    # sample count and cannot activate the degree-one polyline fallback.
+    for maximum_control_count in (25, 49, 65, 81, 97):
+        decomposition = section_recovery.decompose_section_loop(
+            loop,
+            maximum_control_count=maximum_control_count,
+        )
+        if all(
+            segment.fit.residual_max_mm <= fit_tolerance + 1.0e-12
+            for segment in decomposition.segments
+        ):
+            return decomposition
+    return decomposition
 
 
 def _representative_face_roles(

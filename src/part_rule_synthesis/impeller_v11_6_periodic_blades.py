@@ -14,7 +14,7 @@ _POPULATION_METHOD = "periodic_connected_face_components_v1_1_6"
 _MEDOID_METHOD = (
     "minimum_total_symmetric_surface_sample_residual_after_cyclic_alignment"
 )
-_COLLISION_METHOD = "angular_sector_overlap_with_radial_axial_support"
+_COLLISION_METHOD = "source_topology_separation_with_angular_envelope_warning"
 _STRICT_FACE_FIELDS = frozenset(
     {
         "source_face_id",
@@ -155,6 +155,7 @@ def recover_periodic_blade_populations(
     populations = [main] if splitter is None else [main, splitter]
     collision_diagnostics = measure_cyclic_collision_diagnostics(
         populations,
+        adjacency=adjacency,
         collision_tolerance_deg=collision_tolerance_deg,
     )
     closure_diagnostics = {
@@ -497,14 +498,15 @@ def select_population_medoid(
 def measure_cyclic_collision_diagnostics(
     populations: Sequence[Mapping[str, Any]],
     *,
+    adjacency: Mapping[str, Iterable[str]] | None = None,
     collision_tolerance_deg: float = 1.0e-6,
 ) -> dict[str, Any]:
-    """Measure conservative angular-sector collisions for recovered instances."""
+    """Authenticate source separation and retain swept-envelope warnings."""
 
     instances = [
         instance for population in populations for instance in population["instances"]
     ]
-    pairs = []
+    envelope_warnings = []
     clearances = []
     for first_index, first in enumerate(instances):
         for second in instances[first_index + 1 :]:
@@ -529,7 +531,7 @@ def measure_cyclic_collision_diagnostics(
             clearance = separation - half_width
             clearances.append(clearance)
             if clearance < -collision_tolerance_deg:
-                pairs.append(
+                envelope_warnings.append(
                     {
                         "first_population_id": first["population_id"],
                         "first_source_component_id": first["source_component_id"],
@@ -539,7 +541,7 @@ def measure_cyclic_collision_diagnostics(
                         "angular_clearance_deg": _round(clearance, 9),
                     }
                 )
-    pairs.sort(
+    envelope_warnings.sort(
         key=lambda item: (
             item["angular_clearance_deg"],
             item["first_source_component_id"],
@@ -547,19 +549,64 @@ def measure_cyclic_collision_diagnostics(
         )
     )
     minimum_clearance = None if not clearances else _round(min(clearances), 9)
+    topology_contacts = _source_topology_contact_pairs(instances, adjacency)
+    topology_checked = adjacency is not None
+    collision_status = "FAIL" if topology_contacts else "UNKNOWN"
     return {
         "method": _COLLISION_METHOD,
-        "collision_free": not pairs,
-        "diagnostic_collision_free": not pairs,
-        "collision_count": len(pairs),
+        "collision_status": collision_status,
+        "collision_free": False if topology_contacts else None,
+        "collision_count": len(topology_contacts),
+        "collisions": topology_contacts,
+        "source_topology_separation_checked": topology_checked,
+        "source_topology_separated": topology_checked and not topology_contacts,
+        "source_topology_contact_pairs": topology_contacts,
+        "diagnostic_collision_free": not envelope_warnings,
+        "angular_envelope_warning_count": len(envelope_warnings),
+        "angular_envelope_warnings": envelope_warnings,
         "minimum_angular_clearance_deg": minimum_clearance,
         "tolerance_deg": _round(collision_tolerance_deg, 9),
-        "collisions": pairs,
-        "diagnostic_scope": "conservative circular angular-envelope overlap only",
+        "diagnostic_scope": (
+            "exact source-face topology separation; circular swept envelopes are warnings only"
+        ),
         "exact_brep_collision_checked": False,
         "exact_brep_collision_free": None,
-        "maturity_claim": "diagnostic_only_not_exact_brep",
+        "maturity_claim": "source_topology_authenticated_collision_state_unknown_without_exact_solid_intersection",
     }
+
+
+def _source_topology_contact_pairs(
+    instances: Sequence[Mapping[str, Any]],
+    adjacency: Mapping[str, Iterable[str]] | None,
+) -> list[dict[str, Any]]:
+    if adjacency is None:
+        return []
+    graph = _normalize_adjacency(adjacency)
+    contacts = []
+    for first_index, first in enumerate(instances):
+        first_faces = {str(value) for value in first["source_face_ids"]}
+        for second in instances[first_index + 1 :]:
+            second_faces = {str(value) for value in second["source_face_ids"]}
+            shared = sorted(
+                [face_id, neighbor]
+                for face_id in first_faces
+                for neighbor in graph.get(face_id, set()).intersection(second_faces)
+            )
+            if shared:
+                contacts.append(
+                    {
+                        "first_source_component_id": first["source_component_id"],
+                        "second_source_component_id": second["source_component_id"],
+                        "shared_adjacency_pairs": shared,
+                    }
+                )
+    contacts.sort(
+        key=lambda item: (
+            item["first_source_component_id"],
+            item["second_source_component_id"],
+        )
+    )
+    return contacts
 
 
 def _build_components_with_rejections(
@@ -671,8 +718,6 @@ def _component_record(
                 ],
             },
         )
-    angular_envelope = _component_angular_envelope(ordered)
-    angle_deg = float(angular_envelope["center_angle_deg"])
     samples = sorted(sample for face in ordered for sample in face.samples_mm)
     node_degree_signature = sorted(
         len(graph.get(face.face_id, set()) & set(face_ids)) for face in ordered
@@ -687,6 +732,15 @@ def _component_record(
         ordered, key=lambda face: (-face.area_mm2, face.face_id)
     )
     side_face_ids = sorted(face.face_id for face in ordered_by_area[:2])
+    # The two largest authenticated faces are the pressure/suction material
+    # sides.  Root and edge transition patches can cross a periodic seam in
+    # their parameterization, so their circular sample envelope is not a valid
+    # blade-collision proxy.  Use the side pair that defines the actual blade
+    # occupancy while retaining every component face for topology/provenance.
+    angular_envelope = _component_angular_envelope(
+        [by_id[face_id] for face_id in side_face_ids]
+    )
+    angle_deg = float(angular_envelope["center_angle_deg"])
     root_edge_face_ids = sorted(set(face_ids) - set(side_face_ids))
     component_completeness = {
         "status": (

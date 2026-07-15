@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402
+
 import hashlib
 import json
 import os
@@ -25,7 +27,7 @@ from part_rule_synthesis.impeller_v11_6_step_audit import (
     _atomic_json,
     _validated_mapping_canonical_payload,
     classify_impeller_semantics,
-    extract_v11_parameters,
+    extract_v11_review_parameters,
     fit_profile_controls,
     load_step_source,
     resolve_canonical_frame,
@@ -513,18 +515,165 @@ def test_synthetic_step_inventory_axis_and_periodicity(tmp_path):
     assert semantics["classified_face_count"] == source["face_count"]
 
 
+def test_step_audit_review_extractor_wraps_axis_pipeline_failures(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise step_audit_module.axis_first_pipeline.AxisFirstPipelineError(
+            "v116_v112_mapping_residual_exceeded",
+            "review extraction failed",
+            stage="v112_mapping",
+            details={"failed_terms": ["camber"]},
+        )
+
+    monkeypatch.setattr(
+        step_audit_module.axis_first_pipeline,
+        "extract_v11_review_parameters",
+        fail,
+    )
+
+    with pytest.raises(StepAuditError) as captured:
+        extract_v11_review_parameters(None, {}, {}, {})
+
+    assert captured.value.reason == "v116_v112_mapping_residual_exceeded"
+    assert captured.value.details["failed_terms"] == ["camber"]
+
+
+def test_residual_rejected_candidate_has_explicit_review_disposition():
+    disposition = step_audit_module._axis_first_algorithm_disposition(
+        {
+            "mapping_status": "REJECTED_REVIEW_CANDIDATE",
+            "promotable": False,
+            "failed_terms": ["camber", "edge_curves"],
+            "rejection": {"reason": "v116_v112_mapping_residual_exceeded"},
+        }
+    )
+
+    assert disposition["status_scope"] == "axis_first_rejected_review_candidate"
+    assert disposition["axis_first_algorithm_status"] == "REJECTED"
+    assert disposition["promotable"] is False
+    assert disposition["reconstruction_disposition"] == "review_only_not_promotable"
+    assert disposition["algorithm_readiness"]["status"] == "REJECTED"
+    assert disposition["algorithm_readiness"]["failed_terms"] == [
+        "camber",
+        "edge_curves",
+    ]
+
+
+def test_acceptance_evaluation_reports_regression_without_promoting_topology_pass():
+    evaluation = step_audit_module._evaluate_axis_first_acceptance(
+        {
+            "mapping_status": "REJECTED_REVIEW_CANDIDATE",
+            "failed_terms": ["camber", "normal_thickness", "edge_curves"],
+        },
+        {
+            "pattern_material_contract": {
+                "status": "PASS",
+                "pattern": {
+                    "main_blade_count": 13,
+                    "splitter_blade_count": 0,
+                    "collision_status": "PASS",
+                    "source_topology_separated": True,
+                    "exact_brep_collision_checked": True,
+                    "exact_brep_collision_free": True,
+                },
+                "material": {
+                    "mode": "open",
+                    "material_shroud": None,
+                    "material_shroud_area_mm2": None,
+                },
+            }
+        },
+        {
+            "bidirectional": {"rms_mm": 2.608269, "p95_mm": 6.040549},
+            "silhouettes": {
+                "top_xy_hausdorff_mm": 5.27592,
+                "meridional_rz_hausdorff_mm": 10.184372,
+            },
+        },
+    )
+
+    assert evaluation["status"] == "REJECTED"
+    assert evaluation["topology"]["status"] == "PASS"
+    assert evaluation["mapping"]["status"] == "FAIL"
+    assert evaluation["improvement"]["bidirectional_rms"]["status"] == "FAIL"
+    assert evaluation["improvement"]["top_silhouette"]["status"] == "FAIL"
+    assert evaluation["improvement"]["meridional_silhouette"]["status"] == "FAIL"
+
+
+def test_acceptance_rejects_legacy_pattern_collision_pass_without_exact_evidence():
+    reconstruction = {
+        "pattern_material_contract": {
+            "status": "PASS",
+            "pattern": {
+                "main_blade_count": 13,
+                "splitter_blade_count": 0,
+                "collision_status": "PASS",
+            },
+            "material": {
+                "mode": "open",
+                "material_shroud": None,
+                "material_shroud_area_mm2": None,
+            },
+        }
+    }
+
+    evaluation = step_audit_module._evaluate_axis_first_acceptance(
+        {"mapping_status": "PASS", "promotion": {"promotable": True}},
+        reconstruction,
+        {
+            "bidirectional": {"rms_mm": 0.0, "p95_mm": 0.0},
+            "silhouettes": {
+                "top_xy_hausdorff_mm": 0.0,
+                "meridional_rz_hausdorff_mm": 0.0,
+            },
+        },
+    )
+
+    assert evaluation["topology"]["status"] == "FAIL"
+    assert evaluation["status"] == "REJECTED"
+
+
 @pytest.mark.skipif(not os.environ.get("KS007G23B_STEP_PATH"), reason="local customer STEP not configured")
 def test_optional_ks007g23b_exact_source_facts_and_mapping():
     path = Path(os.environ["KS007G23B_STEP_PATH"])
     shape, source = load_step_source(path)
     frame = resolve_canonical_frame(shape, source)
     semantics = classify_impeller_semantics(shape, source, frame)
-    mapping = extract_v11_parameters(shape, source, frame, semantics)
+    mapping = extract_v11_review_parameters(shape, source, frame, semantics)
 
     assert (source["solid_count"], source["face_count"], source["edge_count"], source["vertex_count"]) == (1, 240, 666, 433)
     assert frame["outer_radius_mm"] == 51.6
     assert frame["main_bore_radius_mm"] == 7.9
     assert frame["axial_extent_mm"] == pytest.approx(36.5, abs=1.0e-4)
     assert semantics["main_blade_count"] == 13
+    collision = semantics["periodic_population_recovery"]["collision_diagnostics"]
+    assert collision["collision_free"] is None
+    assert collision["collision_status"] == "UNKNOWN"
+    assert collision["source_topology_separated"] is True
+    assert collision["exact_brep_collision_checked"] is False
+    assert mapping["mapping_status"] == "REJECTED_REVIEW_CANDIDATE"
+    assert mapping["promotable"] is False
+    assert set(mapping["failed_terms"]) == {
+        "camber",
+        "normal_thickness",
+        "edge_curves",
+        "periodicity",
+    }
     assert mapping["geometry_patch_version"] == "1.1.2"
-    assert mapping["profile_fits"]["hub_profile_rz_mm"]["target_sample_count"] > 6
+    assert mapping["support_recovery"]["hub_profile"]["accepted_sample_count"] > 6
+    assert len(mapping["profile_fits"]["hub"]["control_points_rz_mm"]) == 6
+    measurements = mapping["measurement_bundle"]
+    tolerance = mapping["provenance"]["frame"]["source_tolerance_mm"]
+    material = measurements["topology"]["material_measurements"]
+    top_plane = material["hub_top_cap_thickness_mm"]["evidence"][
+        "measurement_evidence"
+    ]["top_material_plane"]
+    bottom_plane = material["hub_bottom_thickness_mm"]["evidence"][
+        "measurement_evidence"
+    ]["bottom_material_plane"]
+    assert top_plane["face_id"] == "source_face_00207"
+    assert bottom_plane["face_id"] == "source_face_00201"
+    assert top_plane["centroid_axis_offset_mm"] <= tolerance
+    assert bottom_plane["centroid_axis_offset_mm"] <= tolerance
+    assert {top_plane["face_id"], bottom_plane["face_id"]}.isdisjoint(
+        {"source_face_00139", "source_face_00144", "source_face_00149"}
+    )

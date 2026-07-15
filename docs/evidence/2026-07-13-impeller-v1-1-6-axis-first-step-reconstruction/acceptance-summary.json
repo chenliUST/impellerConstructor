@@ -1,0 +1,59 @@
+{
+  "audit_id": "step-audit-a7a5e88b539e41c5",
+  "runtime_release_version": "1.1.6",
+  "canonical_geometry_version": "1.1.2",
+  "algorithm_revision": "axis_first_pattern_material_r6",
+  "measurement_schema_version": "v1.1.6_axis_first_measurement_bundle_r3",
+  "process_status": "PASS",
+  "axis_first_algorithm_status": "REJECTED",
+  "mapping_status": "REJECTED_REVIEW_CANDIDATE",
+  "reconstruction_disposition": "review_only_not_promotable",
+  "acceptance_contract": "ks007g23b_axis_first_acceptance_v1",
+  "acceptance_status": "REJECTED",
+  "promotable": false,
+  "source": {
+    "filename": "KS007G23B.stp",
+    "sha256": "1010f341320ce9d98f5ab6456611f73d47dfcc270969a042e8ed10647f1a59f5",
+    "size_bytes": 5583108,
+    "step_schema": "CONFIG_CONTROL_DESIGN"
+  },
+  "periodicity": {
+    "expected_main_count": 13,
+    "expected_splitter_count": 0,
+    "source_topology_separated": true,
+    "source_exact_brep_collision_checked": false,
+    "source_collision_status": "UNKNOWN",
+    "reconstruction_pattern_status": "REVIEW_ONLY",
+    "reconstruction_collision_status": "SOURCE_UNKNOWN_RECONSTRUCTED_SAMPLE_PASS"
+  },
+  "failed_mapping_terms": [
+    "camber",
+    "normal_thickness",
+    "edge_curves",
+    "periodicity"
+  ],
+  "deviation_mm": {
+    "minimum": 0.003759,
+    "median": 0.896158,
+    "p95": 6.040549,
+    "maximum": 7.501618,
+    "rms": 2.608269,
+    "symmetric_chamfer": 3.29079,
+    "top_silhouette_hausdorff": 5.27592,
+    "meridional_silhouette_hausdorff": 10.184372
+  },
+  "acceptance_maximum_mm": {
+    "bidirectional_rms": 1.477053,
+    "bidirectional_p95": 3.373975,
+    "top_silhouette_hausdorff": 3.152468,
+    "meridional_silhouette_hausdorff": 6.101068
+  },
+  "artifact_sha256": {
+    "source_step": "1010F341320CE9D98F5AB6456611F73D47DFCC270969A042E8ED10647F1A59F5",
+    "source_stl": "2410B5F297AA507B9D6B4822202101E7EC27A85E2A14BCA1F5746276B6397B62",
+    "reconstruction_stl": "C1BDC457912FD2732AB0C24B3E9F50E7855D1AE2BA7432B5DEE5F800FCB05836",
+    "heatmap_json": "E642F6375435A1A74387B81362AC965F73B2A44C74806F4D49F70333259B9D66",
+    "reconstruction_runtime_stl": "A24A9EEE1DD10AAD7D7D37827609186450F7E78D02D2E7F465E94756E008EB08",
+    "manifest_json": "DD3D04DBB3D606100C5E0CE90EC62406298DD56E92A14EDDE9D2872EC5CA5EA0"
+  }
+}

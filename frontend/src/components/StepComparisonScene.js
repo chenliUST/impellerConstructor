@@ -4,16 +4,18 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
 import {
-  comparisonViewportRects,
   heatmapTriangleSelection,
   inspectionPolylinePoints,
-} from "../stepReconstructionModel.js?v=1.1.6-r4";
+} from "../stepReconstructionModel.js?v=1.1.6-r6";
 
 const h = React.createElement;
 const defaultRuntime = { THREE, OrbitControls, STLLoader };
 
 export function StepComparisonScene({ artifactUrls, inspection, overlays, semanticRegion, semanticRegionAliases, onHeatmapReadout, onRegionFilterStatus, runtime = defaultRuntime }) {
   const containerRef = useRef(null);
+  const sourcePaneRef = useRef(null);
+  const reconstructionPaneRef = useRef(null);
+  const heatmapPaneRef = useRef(null);
   const [status, setStatus] = useState("Waiting for a completed reconstruction audit.");
 
   useEffect(() => {
@@ -21,30 +23,40 @@ export function StepComparisonScene({ artifactUrls, inspection, overlays, semant
     const container = containerRef.current;
     if (!container) return undefined;
     const { THREE: Three, OrbitControls: Controls, STLLoader: Loader } = runtime;
-    const renderer = new Three.WebGLRenderer({ antialias: true, alpha: false });
-    renderer.setPixelRatio(Math.max(2, Math.min(window.devicePixelRatio || 1, 2.5)));
-    renderer.setScissorTest(true);
-    renderer.outputColorSpace = Three.SRGBColorSpace;
-    container.appendChild(renderer.domElement);
-
+    const paneElements = { source: sourcePaneRef.current, reconstruction: reconstructionPaneRef.current, heatmap: heatmapPaneRef.current };
+    const renderers = Object.fromEntries(Object.entries(paneElements).map(([sceneId, pane]) => {
+      const renderer = new Three.WebGLRenderer({ antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.max(1, Math.min(window.devicePixelRatio || 1, 2.5)));
+      renderer.outputColorSpace = Three.SRGBColorSpace;
+      pane.appendChild(renderer.domElement);
+      return [sceneId, renderer];
+    }));
     const scenes = { source: comparisonScene(Three), reconstruction: comparisonScene(Three), heatmap: comparisonScene(Three) };
-    const camera = new Three.PerspectiveCamera(38, 1, 0.01, 100000);
-    camera.position.set(120, -160, 95);
-    const controls = new Controls(camera, renderer.domElement);
+    const cameras = Object.fromEntries(Object.keys(scenes).map((sceneId) => {
+      const paneCamera = new Three.PerspectiveCamera(38, 1, 0.01, 100000);
+      paneCamera.position.set(120, -160, 95);
+      return [sceneId, paneCamera];
+    }));
+    const controls = new Controls(cameras.source, renderers.source.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    const bounds = new Three.Box3();
+    const paneBounds = Object.fromEntries(Object.keys(scenes).map((sceneId) => [sceneId, new Three.Box3()]));
     const raycaster = new Three.Raycaster();
-    let loadedCount = 0;
+    const loadedSceneIds = new Set();
     let heatmapMesh = null;
     let disposed = false;
     let frameId = 0;
 
     const registerObject = (sceneId, object) => {
       scenes[sceneId].add(object);
-      bounds.expandByObject(object);
-      loadedCount += 1;
-      if (loadedCount >= 3 && !bounds.isEmpty()) frameComparisonCamera(Three, camera, controls, bounds);
+      paneBounds[sceneId].expandByObject(object);
+      frameComparisonCamera(Three, cameras[sceneId], sceneId === "source" ? controls : null, paneBounds[sceneId]);
+      loadedSceneIds.add(sceneId);
+      if (loadedSceneIds.size >= 3) {
+        setStatus("Source, reconstruction and deviation heatmap loaded");
+      } else {
+        setStatus(`Loaded ${loadedSceneIds.size} of 3 comparison panes`);
+      }
     };
 
     const loader = new Loader();
@@ -75,36 +87,31 @@ export function StepComparisonScene({ artifactUrls, inspection, overlays, semant
         heatmapMesh = heatmapObject(Three, payload, selection.indexes);
         registerObject("heatmap", heatmapMesh);
         onRegionFilterStatus?.(selection);
-        setStatus("Source, reconstruction and deviation heatmap loaded");
       })
       .catch((error) => {
         if (disposed) return;
         setStatus(error instanceof Error ? error.message : String(error));
       });
 
-    const resize = () => {
-      const width = Math.max(container.clientWidth, 640);
-      const height = Math.max(container.clientHeight, 520);
-      renderer.setSize(width, height, false);
-    };
+    const resize = () => Object.entries(renderers).forEach(([sceneId, renderer]) => {
+      const pane = paneElements[sceneId];
+      renderer.setSize(Math.max(pane.clientWidth, 320), Math.max(pane.clientHeight, 260), true);
+    });
     const observer = new ResizeObserver(resize);
-    observer.observe(container);
+    Object.values(paneElements).forEach((pane) => observer.observe(pane));
     resize();
 
     const animate = () => {
       frameId = window.requestAnimationFrame(animate);
       controls.update();
-      const width = renderer.domElement.clientWidth;
-      const height = renderer.domElement.clientHeight;
-      const rects = comparisonViewportRects(width, height);
+      synchronizeComparisonCameras(Three, cameras, paneBounds, controls.target);
       for (const sceneId of ["source", "reconstruction", "heatmap"]) {
-        const rect = rects[sceneId];
-        if (!rect.width || !rect.height) continue;
-        renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
-        renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
-        renderer.setClearColor("#ffffff", 1);
-        renderer.clear(true, true, true);
-        camera.aspect = rect.width / Math.max(rect.height, 1);
+        const renderer = renderers[sceneId];
+        const width = renderer.domElement.clientWidth;
+        const height = renderer.domElement.clientHeight;
+        if (!width || !height) continue;
+        const camera = cameras[sceneId];
+        camera.aspect = width / Math.max(height, 1);
         camera.updateProjectionMatrix();
         renderer.render(scenes[sceneId], camera);
       }
@@ -113,40 +120,41 @@ export function StepComparisonScene({ artifactUrls, inspection, overlays, semant
 
     const pointerMove = (event) => {
       if (!heatmapMesh || !onHeatmapReadout) return;
-      const canvasRect = renderer.domElement.getBoundingClientRect();
-      const rects = comparisonViewportRects(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
-      const heat = rects.heatmap;
-      const localX = (event.clientX - canvasRect.left) * (renderer.domElement.clientWidth / canvasRect.width);
-      const localYFromBottom = (canvasRect.bottom - event.clientY) * (renderer.domElement.clientHeight / canvasRect.height);
-      if (localX < heat.x || localX > heat.x + heat.width || localYFromBottom < heat.y || localYFromBottom > heat.y + heat.height) return;
-      const pointer = new Three.Vector2(((localX - heat.x) / heat.width) * 2 - 1, ((localYFromBottom - heat.y) / heat.height) * 2 - 1);
-      raycaster.setFromCamera(pointer, camera);
+      const canvasRect = renderers.heatmap.domElement.getBoundingClientRect();
+      const pointer = new Three.Vector2(
+        ((event.clientX - canvasRect.left) / canvasRect.width) * 2 - 1,
+        ((canvasRect.bottom - event.clientY) / canvasRect.height) * 2 - 1,
+      );
+      raycaster.setFromCamera(pointer, cameras.heatmap);
       const hit = raycaster.intersectObject(heatmapMesh, false)[0];
       if (!hit?.face) return;
       const errors = heatmapMesh.geometry.getAttribute("errorMm");
       const error = errors?.getX(hit.face.a);
       onHeatmapReadout({ error_mm: error, point_mm: hit.point.toArray() });
     };
-    renderer.domElement.addEventListener("pointermove", pointerMove);
+    renderers.heatmap.domElement.addEventListener("pointermove", pointerMove);
 
     return () => {
       disposed = true;
       window.cancelAnimationFrame(frameId);
       observer.disconnect();
-      renderer.domElement.removeEventListener("pointermove", pointerMove);
+      renderers.heatmap.domElement.removeEventListener("pointermove", pointerMove);
       controls.dispose();
       Object.values(scenes).forEach(disposeScene);
-      renderer.renderLists.dispose();
-      renderer.dispose();
-      renderer.forceContextLoss();
-      if (renderer.domElement.parentNode === container) container.removeChild(renderer.domElement);
+      Object.entries(renderers).forEach(([sceneId, renderer]) => {
+        renderer.renderLists.dispose();
+        renderer.dispose();
+        renderer.forceContextLoss();
+        const pane = paneElements[sceneId];
+        if (renderer.domElement.parentNode === pane) pane.removeChild(renderer.domElement);
+      });
     };
   }, [artifactUrls?.source, artifactUrls?.reconstruction, artifactUrls?.heatmap, inspection, overlays, semanticRegion, semanticRegionAliases, onHeatmapReadout, onRegionFilterStatus, runtime]);
 
   return h("div", { className: "step-comparison-scene", ref: containerRef, "data-testid": "step-comparison-scene" },
-    h("span", { className: "comparison-pane-label source" }, "SOURCE STEP"),
-    h("span", { className: "comparison-pane-label reconstruction" }, "V1.1.2 RECONSTRUCTION"),
-    h("span", { className: "comparison-pane-label heatmap" }, "DEVIATION HEATMAP"),
+    h("div", { className: "comparison-pane source", ref: sourcePaneRef }, h("span", { className: "comparison-pane-label" }, "SOURCE STEP")),
+    h("div", { className: "comparison-pane reconstruction", ref: reconstructionPaneRef }, h("span", { className: "comparison-pane-label" }, "V1.1.2 RECONSTRUCTION")),
+    h("div", { className: "comparison-pane heatmap", ref: heatmapPaneRef }, h("span", { className: "comparison-pane-label" }, "DEVIATION HEATMAP")),
     h("p", { className: "comparison-load-status", role: "status" }, status),
   );
 }
@@ -308,9 +316,32 @@ function frameComparisonCamera(Three, camera, controls, bounds) {
   camera.near = Math.max(radius / 1000, 0.01);
   camera.far = distance * 20;
   camera.position.copy(sphere.center).add(new Three.Vector3(distance * 0.7, -distance, distance * 0.55));
+  camera.lookAt(sphere.center);
   camera.updateProjectionMatrix();
-  controls.target.copy(sphere.center);
-  controls.update();
+  if (controls) {
+    controls.target.copy(sphere.center);
+    controls.update();
+  }
+}
+
+function synchronizeComparisonCameras(Three, cameras, paneBounds, sourceTarget) {
+  const sourceSphere = new Three.Sphere();
+  paneBounds.source.getBoundingSphere(sourceSphere);
+  if (!Number.isFinite(sourceSphere.radius) || sourceSphere.radius <= 0) return;
+  const direction = cameras.source.position.clone().sub(sourceTarget);
+  const sourceDistance = direction.length();
+  if (!Number.isFinite(sourceDistance) || sourceDistance <= 0) return;
+  direction.normalize();
+  const distanceRatio = sourceDistance / sourceSphere.radius;
+  for (const sceneId of ["reconstruction", "heatmap"]) {
+    const sphere = new Three.Sphere();
+    paneBounds[sceneId].getBoundingSphere(sphere);
+    if (!Number.isFinite(sphere.radius) || sphere.radius <= 0) continue;
+    const camera = cameras[sceneId];
+    camera.position.copy(sphere.center).addScaledVector(direction, sphere.radius * distanceRatio);
+    camera.up.copy(cameras.source.up);
+    camera.lookAt(sphere.center);
+  }
 }
 
 function disposeScene(scene) {

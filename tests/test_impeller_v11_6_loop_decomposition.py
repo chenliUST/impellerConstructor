@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from part_rule_synthesis.impeller_v11_6_section_recovery import (
+    _averaged_approximation_knots,
     LocalSectionFrame,
     SectionEdge,
     SectionRecoveryError,
@@ -129,6 +130,40 @@ def test_incomplete_authenticated_side_partition_fails_closed_without_geometry_c
     assert "authenticated side" in str(caught.value).lower()
 
 
+def test_two_authenticated_side_curve_loop_uses_measured_geometric_landmarks():
+    streamwise = np.linspace(0.0, 10.0, 129)
+    thickness = 0.42 * np.sin(np.pi * streamwise / 10.0) ** 0.55
+    side_a = np.column_stack([streamwise, thickness])
+    side_b = np.column_stack([streamwise, -0.82 * thickness])
+    frame = LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    loop = order_section_edges(
+        [
+            _edge("source_side_b", "side_b", side_b[::-1]),
+            _edge("source_side_a", "side_a", side_a),
+        ],
+        source_tolerance_mm=1.0e-8,
+        local_frame=frame,
+    )[0]
+
+    decomposition = decompose_section_loop(loop, maximum_control_count=17)
+
+    assert decomposition.landmark_method == (
+        "two_authenticated_side_curves_streamwise_landmarks"
+    )
+    assert [segment.name for segment in decomposition.segments] == [
+        "side_a",
+        "side_b",
+        "leading_edge",
+        "trailing_edge",
+    ]
+    assert all(segment.source_edge_ids for segment in decomposition.segments)
+
+
 def test_geometry_landmark_fallback_still_produces_four_consistently_oriented_segments():
     parameter = np.linspace(0.0, 2.0 * np.pi, 129, endpoint=False)
     loop = make_section_loop(
@@ -159,11 +194,13 @@ def test_sparse_source_curve_fit_reports_bidirectional_sq_and_xyz_residuals_and_
 
     assert fit.residual_fit_to_source_max_sq_mm > 0.1
     assert fit.residual_fit_to_source_max_xyz_mm > 0.1
+    assert fit.residual_parameter_matched_max_sq_mm > 0.1
     assert fit.residual_max_mm == max(
         fit.residual_source_to_fit_max_sq_mm,
         fit.residual_fit_to_source_max_sq_mm,
         fit.residual_source_to_fit_max_xyz_mm,
         fit.residual_fit_to_source_max_xyz_mm,
+        fit.residual_parameter_matched_max_sq_mm,
     )
     assert fit.edge_sag_sq_mm > 1.0
     assert fit.edge_sag_xyz_mm > fit.edge_sag_sq_mm
@@ -193,6 +230,7 @@ def test_source_tolerance_can_select_an_honestly_measured_linear_nurbs_target():
         fit.residual_fit_to_source_max_sq_mm,
         fit.residual_source_to_fit_max_xyz_mm,
         fit.residual_fit_to_source_max_xyz_mm,
+        fit.residual_parameter_matched_max_sq_mm,
     )
 
 
@@ -208,3 +246,26 @@ def test_high_resolution_fit_has_a_bounded_display_sample_budget():
     )
     assert fit.source_sample_count == 4001
     assert fit.fit_sample_count == 1025
+
+
+def test_averaged_approximation_knots_follow_nonuniform_chord_parameters():
+    knots = _averaged_approximation_knots(
+        np.asarray([1.0e-16, 0.01, 0.02, 0.8, 1.0 - 1.0e-16]),
+        control_count=4,
+        degree=2,
+    )
+
+    assert knots == pytest.approx([0.0, 0.0, 0.0, 0.015, 1.0, 1.0, 1.0])
+
+
+def test_duplicate_measurement_points_keep_uniform_knots_without_crashing():
+    sq = np.asarray(
+        [(0.0, 0.0), (1.0, 0.1), (1.0, 0.1), (2.0, 0.0), (3.0, -0.1)]
+    )
+    xyz = np.column_stack([sq, np.zeros(len(sq))])
+
+    fit = fit_nurbs_measurement_curve(
+        xyz, sq, segment_name="duplicate_point_curve", maximum_control_count=4
+    )
+
+    assert fit.knot_strategy == "clamped_uniform_knots"

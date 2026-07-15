@@ -19,14 +19,14 @@ import {
   stepOverlayOptions,
   terminalAuditStatus,
   unsupportedSourceFeatures,
-} from "../stepReconstructionModel.js?v=1.1.6-r4";
-import { StepComparisonScene } from "./StepComparisonScene.js?v=1.1.6-r5";
+} from "../stepReconstructionModel.js?v=1.1.6-r6";
+import { StepComparisonScene } from "./StepComparisonScene.js?v=1.1.6-r20";
 
 const h = React.createElement;
 
-export function StepReconstructionWorkspace({ apiBase, initialManifest = null, SceneComponent = StepComparisonScene, sceneRuntime }) {
+export function StepReconstructionWorkspace({ apiBase, initialAuditId = "", initialManifest = null, SceneComponent = StepComparisonScene, sceneRuntime }) {
   const [file, setFile] = useState(null);
-  const [auditId, setAuditId] = useState("");
+  const [auditId, setAuditId] = useState(initialManifest?.audit_id || initialAuditId);
   const [status, setStatus] = useState(null);
   const [manifest, setManifest] = useState(initialManifest);
   const [error, setError] = useState("");
@@ -49,26 +49,29 @@ export function StepReconstructionWorkspace({ apiBase, initialManifest = null, S
   const actionLabel = uploading ? "Uploading..." : status?.status === "QUEUED" ? "Queued" : status?.status === "RUNNING" ? "Reconstructing..." : "Reconstruct";
 
   useEffect(() => {
-    if (!auditId || terminalAuditStatus(status)) return undefined;
+    if (!auditId || manifest?.audit_id === auditId || terminalAuditStatus(status)) return undefined;
     let cancelled = false;
-    const timer = window.setInterval(async () => {
+    async function refreshAudit() {
       try {
         const next = await stepReconstructionAuditStatus(apiBase, auditId);
+        let resolved = null;
+        if (next.status === "PASS") {
+          resolved = await stepReconstructionAuditManifest(apiBase, auditId);
+        }
         if (cancelled) return;
         setStatus(next);
-        if (next.status === "PASS") {
-          const resolved = await stepReconstructionAuditManifest(apiBase, auditId);
-          if (!cancelled) setManifest(resolved);
-        }
+        if (resolved) setManifest(resolved);
       } catch (caught) {
         if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
       }
-    }, 1200);
+    }
+    void refreshAudit();
+    const timer = window.setInterval(refreshAudit, 1200);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [apiBase, auditId, status?.status]);
+  }, [apiBase, auditId, manifest?.audit_id, status?.status]);
 
   useEffect(() => {
     if (!manifest) return;
@@ -194,7 +197,7 @@ function ReportSummary({ manifest, inspection }) {
         h("dt", null, "Lift"), h("dd", null, `${formatNumber(row.measured_lift_mm)} source / ${formatNumber(row.fitted_lift_mm)} fitted mm`),
         h("dt", null, "Width"), h("dd", null, `${formatNumber(row.measured_width_mm)} source / ${formatNumber(row.fitted_width_mm)} fitted mm`),
         h("dt", null, "Residual / gate"), h("dd", null, `${formatPercent(row.maximum_relative_residual)} / ${row.status}`),
-        h("dt", null, "Promotability"), h("dd", null, row.promotable === true ? "Promotable" : row.promotable === false ? "Diagnostic only" : "Unavailable"),
+        h("dt", null, "Measurement promotability"), h("dd", null, row.promotable === true ? "Locally promotable" : row.promotable === false ? "Diagnostic only" : "Unavailable"),
         h("dt", null, "Source provenance"), h("dd", null, row.source_ids.length ? row.source_ids.join(", ") : "Unavailable"),
         h("dt", null, "Method / frame"), h("dd", null, `${row.method || "Unavailable"} / ${row.coordinate_frame || "Unavailable"}`),
       )),

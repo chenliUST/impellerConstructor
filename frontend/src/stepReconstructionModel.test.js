@@ -6,6 +6,7 @@ import {
   comparisonViewportRects,
   defaultStepOverlayVisibility,
   inspectionPolylinePoints,
+  reportSummaryRows,
   selectedInspectionProvenance,
   stepInspectionModel,
 } from "./stepReconstructionModel.js";
@@ -55,6 +56,37 @@ describe("STEP reconstruction model", () => {
     assert.deepEqual(root.source_ids, ["edge-footprint-root", "face-hub", "face-root"]);
     assert.equal(root.method, "source_median_attachment_fit");
     assert.equal(root.coordinate_frame, "canonical_axis_frame_xyz_mm");
+  });
+
+  test("does not report unknown exact collision state as periodic PASS", () => {
+    const manifest = task8Manifest("open");
+    manifest.parameter_mapping.periodic_provenance.collision_status = "UNKNOWN";
+    manifest.parameter_mapping.periodic_provenance.collision_free = null;
+    const row = reportSummaryRows(manifest, stepInspectionModel(manifest)).find(
+      (candidate) => candidate.id === "periodic_provenance",
+    );
+    assert.equal(row.value, "TOPOLOGY PASS / COLLISION UNKNOWN");
+  });
+
+  test("separates audit completion from global reconstruction acceptance", () => {
+    const manifest = task8Manifest("open");
+    manifest.status = "PASS";
+    manifest.axis_first_algorithm_status = "REJECTED";
+    manifest.reconstruction_disposition = "review_only_not_promotable";
+    manifest.promotable = false;
+    manifest.acceptance_evaluation = {
+      status: "REJECTED",
+      contract: "ks007g23b_axis_first_acceptance_v1",
+    };
+
+    const rows = Object.fromEntries(
+      reportSummaryRows(manifest, stepInspectionModel(manifest)).map((row) => [row.id, row.value]),
+    );
+    assert.equal(rows.audit_process, "PASS");
+    assert.equal(rows.algorithm_status, "REJECTED");
+    assert.equal(rows.reconstruction_disposition, "review_only_not_promotable");
+    assert.equal(rows.global_promotability, "NOT PROMOTABLE");
+    assert.equal(rows.acceptance_status, "REJECTED / ks007g23b_axis_first_acceptance_v1");
   });
 
   test("does not substitute a different loop when the requested station is absent", () => {

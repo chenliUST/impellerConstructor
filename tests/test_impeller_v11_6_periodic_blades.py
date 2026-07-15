@@ -365,7 +365,9 @@ def test_recovers_single_population_without_fabricating_splitters():
     assert result["main"]["pitch_deg"] == pytest.approx(72.0)
     assert result["main"]["phase_deg"] == pytest.approx(7.0)
     assert result["closure_diagnostics"]["all_populations_closed"] is True
-    assert result["collision_diagnostics"]["collision_free"] is True
+    assert result["collision_diagnostics"]["collision_free"] is None
+    assert result["collision_diagnostics"]["collision_status"] == "UNKNOWN"
+    assert result["collision_diagnostics"]["source_topology_separated"] is True
     assert result["rejected"]["isolated_face_ids"] == [
         f"equal_area_decoy_{index:02d}" for index in range(5)
     ]
@@ -410,7 +412,9 @@ def test_separates_overlapping_area_main_and_splitter_and_measures_phase():
     assert result["splitter"]["pitch_deg"] == pytest.approx(60.0)
     assert result["splitter"]["phase_relative_to_main_deg"] == pytest.approx(35.0)
     assert result["splitter"]["passage_bisector_deviation_deg"] == pytest.approx(5.0)
-    assert result["collision_diagnostics"]["collision_free"] is True
+    assert result["collision_diagnostics"]["collision_free"] is None
+    assert result["collision_diagnostics"]["collision_status"] == "UNKNOWN"
+    assert result["collision_diagnostics"]["source_topology_separated"] is True
 
 
 def test_unequal_six_plus_four_reports_phase_distribution_without_bisector():
@@ -518,7 +522,7 @@ def test_rejects_nonclosing_zero_ten_twenty_population():
     assert raised.value.evidence["closure"]["within_tolerance"] is False
 
 
-def test_reports_angular_envelope_collisions_as_diagnostic_only():
+def test_topology_separation_overrides_swept_angular_envelope_warning():
     records, adjacency = _periodic_fixture(
         main_count=4,
         main_phase_deg=0.0,
@@ -532,14 +536,48 @@ def test_reports_angular_envelope_collisions_as_diagnostic_only():
     )
 
     assert result["closure_diagnostics"]["all_populations_closed"] is True
-    assert result["collision_diagnostics"]["collision_free"] is False
-    assert result["collision_diagnostics"]["collision_count"] >= 1
+    assert result["collision_diagnostics"]["collision_free"] is None
+    assert result["collision_diagnostics"]["collision_status"] == "UNKNOWN"
+    assert result["collision_diagnostics"]["diagnostic_collision_free"] is False
+    assert result["collision_diagnostics"]["collision_count"] == 0
+    assert result["collision_diagnostics"]["angular_envelope_warning_count"] >= 1
     assert result["collision_diagnostics"]["minimum_angular_clearance_deg"] < 0.0
+    assert result["collision_diagnostics"]["source_topology_separation_checked"] is True
+    assert result["collision_diagnostics"]["source_topology_separated"] is True
     assert result["collision_diagnostics"]["exact_brep_collision_checked"] is False
     assert result["collision_diagnostics"]["exact_brep_collision_free"] is None
 
 
-def test_component_angular_envelope_unions_offset_face_centers_and_spans():
+def test_cross_component_topology_contact_remains_a_collision_failure():
+    records, adjacency = _periodic_fixture(
+        main_count=4,
+        main_phase_deg=0.0,
+        splitter_count=4,
+        splitter_phase_deg=5.0,
+        angular_span_deg=8.0,
+    )
+    first_main = "main_00_side_a"
+    first_splitter = "splitter_00_side_a"
+    adjacency[first_main].append(first_splitter)
+    adjacency[first_splitter].append(first_main)
+
+    result = recover_periodic_blade_populations(records, adjacency)
+
+    diagnostics = result["collision_diagnostics"]
+    assert diagnostics["collision_free"] is False
+    assert diagnostics["collision_status"] == "FAIL"
+    assert diagnostics["source_topology_separation_checked"] is True
+    assert diagnostics["source_topology_separated"] is False
+    assert diagnostics["source_topology_contact_pairs"] == [
+        {
+            "first_source_component_id": "coarse_main_00",
+            "second_source_component_id": "coarse_splitter_00",
+            "shared_adjacency_pairs": [[first_main, first_splitter]],
+        }
+    ]
+
+
+def test_component_collision_envelope_uses_authenticated_blade_side_pair():
     records, adjacency = _periodic_fixture(
         main_count=4,
         main_phase_deg=358.0,
@@ -555,7 +593,7 @@ def test_component_angular_envelope_unions_offset_face_centers_and_spans():
         ),
     )
     assert first["measured_angle_deg"] == pytest.approx(358.0)
-    assert first["angular_span_deg"] == pytest.approx(12.0)
+    assert first["angular_span_deg"] == pytest.approx(11.0)
     assert first["angular_envelope_deg"]["method"] == (
         "circular_union_of_face_center_offsets_and_spans"
     )

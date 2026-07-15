@@ -145,17 +145,30 @@ export function reportSummaryRows(manifest, inspection) {
   const comparison = asRecord(manifest?.comparison?.bidirectional);
   const alignment = asRecord(manifest?.comparison_alignment);
   const periodic = asRecord(manifest?.parameter_mapping?.periodic_provenance);
+  const acceptance = asRecord(manifest?.acceptance_evaluation);
+  const globalPromotable = manifest?.promotable;
   return [
+    { id: "audit_process", label: "Audit process (not acceptance)", value: display(manifest?.status) },
+    { id: "algorithm_status", label: "Axis-first algorithm", value: display(manifest?.axis_first_algorithm_status) },
+    { id: "reconstruction_disposition", label: "Reconstruction disposition", value: display(manifest?.reconstruction_disposition) },
+    { id: "global_promotability", label: "Global promotability", value: globalPromotable === true ? "PROMOTABLE" : globalPromotable === false ? "NOT PROMOTABLE" : "Unavailable" },
+    { id: "acceptance_status", label: "Acceptance contract", value: `${display(acceptance.status)} / ${display(acceptance.contract)}` },
     { id: "source_topology", label: "Source topology", value: `${display(source.solid_count)} solid / ${display(source.face_count)} faces / ${display(source.edge_count)} edges` },
     { id: "blade_population", label: "Blade population", value: `${display(semantics.main_blade_count, 0)} main + ${display(semantics.splitter_blade_count, 0)} splitter` },
     { id: "geometry_authority", label: "Geometry authority", value: display(manifest?.canonical_geometry_version) },
     { id: "support_topology", label: "Support topology", value: display(inspection?.topology) },
-    { id: "periodic_provenance", label: "Periodic provenance", value: display(periodic.status || periodic.method || periodic.population_count) },
+    { id: "periodic_provenance", label: "Periodic provenance", value: periodicSummary(periodic) },
     { id: "periodic_phase", label: "Periodic phase alignment", value: `${number(alignment.rotation_about_axis_deg)} deg about confirmed axis` },
     { id: "phase_rms", label: "Phase-search RMS", value: `${number(alignment.objective_rms_before_mm)} -> ${number(alignment.objective_rms_after_mm)} mm` },
     { id: "rms", label: "RMS deviation", value: `${number(comparison.rms_mm)} mm` },
     { id: "p95", label: "P95 deviation", value: `${number(comparison.p95_mm)} mm` },
   ];
+}
+
+function periodicSummary(periodic) {
+  if (periodic.collision_status === "UNKNOWN") return "TOPOLOGY PASS / COLLISION UNKNOWN";
+  if (periodic.collision_status === "FAIL") return "COLLISION FAIL";
+  return display(periodic.status || periodic.method || periodic.population_count);
 }
 
 export function unsupportedSourceFeatures(manifest) { return asRecords(manifest?.parameter_mapping?.unsupported_source_features); }

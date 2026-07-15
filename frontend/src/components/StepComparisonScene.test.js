@@ -11,20 +11,30 @@ import { stepInspectionModel } from "../stepReconstructionModel.js";
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("STEP comparison scene", () => {
-  test("uses one renderer at DPR 2 or above and releases renderer resources on unmount", async () => {
+  test("uses one native-DPR renderer per comparison pane and releases all resources on unmount", async () => {
     await withScene(async ({ container, runtime }) => {
       const root = createRoot(container);
       await act(async () => root.render(sceneElement(runtime)));
       await flush();
-      const renderer = runtime.renderers[0];
-      assert.equal(runtime.renderers.length, 1);
-      assert.ok(renderer.pixelRatio >= 2);
-      assert.equal(renderer.scissorTest, true);
+      assert.equal(runtime.renderers.length, 3);
+      assert.ok(runtime.renderers.every((renderer) => renderer.pixelRatio === 1));
+      assert.equal(container.querySelectorAll("canvas").length, 3);
       await act(async () => root.unmount());
-      assert.equal(renderer.disposed, true);
-      assert.equal(renderer.contextLost, true);
+      assert.ok(runtime.renderers.every((renderer) => renderer.disposed && renderer.contextLost));
       assert.equal(runtime.controls[0].disposed, true);
-      assert.equal(container.querySelector("canvas"), null);
+      assert.equal(container.querySelectorAll("canvas").length, 0);
+    });
+  });
+
+  test("frames source reconstruction and heatmap in separate canvases with synchronized cameras", async () => {
+    await withScene(async ({ container, runtime }) => {
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime)));
+      await flush();
+      const cameras = runtime.renderers.map((renderer) => renderer.rendered[0].camera);
+      assert.equal(new Set(cameras).size, 3);
+      assert.ok(runtime.renderers.every((renderer) => renderer.rendered.length >= 1));
+      await act(async () => root.unmount());
     });
   });
 
@@ -54,22 +64,22 @@ describe("STEP comparison scene", () => {
       const base = task8Inspection("open");
       await act(async () => root.render(sceneElement(runtime, { inspection: base, overlays: overlayState({ tipSupport: true, openTipReference: false }) })));
       await flush();
-      assert.equal(hasOverlay(runtime.renderers.at(-1), "open-tip-reference"), false);
+      assert.equal(hasOverlay(runtime.renderers, "open-tip-reference"), false);
       await act(async () => root.render(sceneElement(runtime, { inspection: base, overlays: overlayState({ tipSupport: true, openTipReference: true }) })));
       await flush();
-      assert.equal(hasOverlay(runtime.renderers.at(-1), "open-tip-reference"), true);
-      assert.ok(overlayObjects(runtime.renderers.at(-1), "open-tip-reference").every((object) => object.material?.isLineDashedMaterial));
+      assert.equal(hasOverlay(runtime.renderers, "open-tip-reference"), true);
+      assert.ok(overlayObjects(runtime.renderers, "open-tip-reference").every((object) => object.material?.isLineDashedMaterial));
       await act(async () => root.render(sceneElement(runtime, { inspection: task8Inspection("closed"), overlays: overlayState({ tipSupport: true }) })));
       await flush();
-      assert.equal(overlayCount(runtime.renderers.at(-1), "closed-shroud-material"), 4);
-      assert.ok(overlayObjects(runtime.renderers.at(-1), "closed-shroud-material").every((object) => object.material?.isMeshStandardMaterial));
-      assert.deepEqual([...new Set(overlayObjects(runtime.renderers.at(-1), "closed-shroud-material").map((object) => object.userData.profileIndex))].sort(), [0, 1]);
+      assert.equal(overlayCount(runtime.renderers, "closed-shroud-material"), 4);
+      assert.ok(overlayObjects(runtime.renderers, "closed-shroud-material").every((object) => object.material?.isMeshStandardMaterial));
+      assert.deepEqual([...new Set(overlayObjects(runtime.renderers, "closed-shroud-material").map((object) => object.userData.profileIndex))].sort(), [0, 1]);
       await act(async () => root.render(sceneElement(runtime, {
         inspection: base,
         overlays: overlayState({ selectedLoop: true }),
       })));
       await flush();
-      assert.equal(hasOverlay(runtime.renderers.at(-1), "source-loop-evidence"), true);
+      assert.equal(hasOverlay(runtime.renderers, "source-loop-evidence"), true);
       await act(async () => root.unmount());
     });
   });
@@ -82,11 +92,10 @@ describe("STEP comparison scene", () => {
         overlays: overlayState({ spanSurfaces: true, representativeBlade: true }),
       })));
       await flush();
-      const renderer = runtime.renderers.at(-1);
-      assert.ok(overlayCount(renderer, "span-surface-evidence") >= 2);
-      assert.ok(overlayCount(renderer, "representative-blade-evidence") >= 2);
-      assert.ok(overlayObjects(renderer, "span-surface-evidence").every((object) => object.geometry?.getAttribute("position")?.count > 0));
-      assert.ok(overlayObjects(renderer, "representative-blade-evidence").every((object) => object.geometry?.getAttribute("position")?.count > 0));
+      assert.ok(overlayCount(runtime.renderers, "span-surface-evidence") >= 2);
+      assert.ok(overlayCount(runtime.renderers, "representative-blade-evidence") >= 2);
+      assert.ok(overlayObjects(runtime.renderers, "span-surface-evidence").every((object) => object.geometry?.getAttribute("position")?.count > 0));
+      assert.ok(overlayObjects(runtime.renderers, "representative-blade-evidence").every((object) => object.geometry?.getAttribute("position")?.count > 0));
       await act(async () => root.unmount());
     });
   });
@@ -143,10 +152,11 @@ function overlayCount(renderer, kind) {
 }
 
 function overlayObjects(renderer, kind) {
+  const renderers = Array.isArray(renderer) ? renderer : [renderer];
   const found = new Set();
-  renderer.rendered.forEach((scene) => scene.traverse((object) => { if (object.userData?.overlayKind === kind) found.add(object.uuid); }));
+  renderers.forEach((candidate) => candidate.rendered.forEach(({ scene }) => scene.traverse((object) => { if (object.userData?.overlayKind === kind) found.add(object.uuid); })));
   const objects = [];
-  renderer.rendered.forEach((scene) => scene.traverse((object) => { if (found.has(object.uuid) && !objects.some((candidate) => candidate.uuid === object.uuid)) objects.push(object); }));
+  renderers.forEach((candidate) => candidate.rendered.forEach(({ scene }) => scene.traverse((object) => { if (found.has(object.uuid) && !objects.some((existing) => existing.uuid === object.uuid)) objects.push(object); })));
   return objects;
 }
 
@@ -175,16 +185,17 @@ function mockRuntime(document, { deferLoads = false } = {}) {
       Object.defineProperties(this.domElement, { clientWidth: { value: 800 }, clientHeight: { value: 600 } });
       this.renderLists = { dispose: () => { this.renderListsDisposed = true; } };
       this.rendered = [];
+      this.viewports = [];
       renderers.push(this);
     }
     setPixelRatio(value) { this.pixelRatio = value; }
     setScissorTest(value) { this.scissorTest = value; }
-    setSize() {}
-    setViewport() {}
+    setSize(width, height) { this.domElement.width = width * (this.pixelRatio || 1); this.domElement.height = height * (this.pixelRatio || 1); }
+    setViewport(x, y, width, height) { this.viewports.push({ x, y, width, height }); }
     setScissor() {}
     setClearColor() {}
     clear() {}
-    render(scene) { this.rendered.push(scene); }
+    render(scene, camera) { this.rendered.push({ scene, camera }); }
     dispose() { this.disposed = true; }
     forceContextLoss() { this.contextLost = true; }
   }

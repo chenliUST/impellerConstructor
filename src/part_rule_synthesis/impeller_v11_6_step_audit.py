@@ -45,7 +45,7 @@ from part_rule_synthesis.service import RuleSynthesisService
 AUDIT_CONTRACT_ID = "impeller_v1_1_6_step_reconstruction_audit"
 AUDIT_RUNTIME_VERSION = "1.1.6"
 CANONICAL_GEOMETRY_VERSION = "1.1.2"
-AUDIT_IMPLEMENTATION_REVISION = "axis_first_pattern_material_r4"
+AUDIT_IMPLEMENTATION_REVISION = "axis_first_pattern_material_r6"
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_FACE_COUNT = 20_000
 MAX_QUEUE_LENGTH = 4
@@ -110,6 +110,15 @@ _FINAL_AXIS_FIRST_SECTIONS = (
     "pattern_instances",
     "regional_deviation",
 )
+_KS007G23B_SOURCE_SHA256 = (
+    "1010f341320ce9d98f5ab6456611f73d47dfcc270969a042e8ed10647f1a59f5"
+)
+_KS007G23B_GENERIC_BASELINE = {
+    "bidirectional_rms_mm": 2.110076,
+    "bidirectional_p95_mm": 4.819965,
+    "top_silhouette_hausdorff_mm": 5.254113,
+    "meridional_silhouette_hausdorff_mm": 10.168447,
+}
 
 
 def _staged_axis_first_algorithm_readiness() -> dict[str, Any]:
@@ -342,7 +351,9 @@ class StepReconstructionAuditService:
             audit_id,
             "parameters_extracted",
             stage_records,
-            lambda: extract_v11_parameters(source_shape, source_manifest, frame, semantics),
+            lambda: extract_v11_review_parameters(
+                source_shape, source_manifest, frame, semantics
+            ),
         )
         task8_recovery_authority = (
             axis_first_pipeline.preserve_task8_reconstruction_authority(
@@ -422,6 +433,14 @@ class StepReconstructionAuditService:
             reconstruction=reconstruction["manifest"],
             comparison=comparison,
         )
+        disposition = _axis_first_algorithm_disposition(mapping)
+        acceptance_evaluation = (
+            _evaluate_axis_first_acceptance(
+                mapping, reconstruction["manifest"], comparison
+            )
+            if source_manifest.get("sha256") == _KS007G23B_SOURCE_SHA256
+            else None
+        )
         manifest = {
             "contract_id": AUDIT_CONTRACT_ID,
             "runtime_release_version": AUDIT_RUNTIME_VERSION,
@@ -430,10 +449,15 @@ class StepReconstructionAuditService:
             "canonical_geometry_version": CANONICAL_GEOMETRY_VERSION,
             "audit_id": audit_id,
             "status": "PASS",
-            "status_scope": "legacy_generic_audit_only",
+            "status_scope": disposition["status_scope"],
             "legacy_workflow_status": "PASS",
-            "axis_first_algorithm_status": "INCOMPLETE",
-            "promotable": False,
+            "axis_first_algorithm_status": disposition[
+                "axis_first_algorithm_status"
+            ],
+            "promotable": disposition["promotable"],
+            "reconstruction_disposition": disposition[
+                "reconstruction_disposition"
+            ],
             "algorithm_readiness": copy.deepcopy(
                 axis_first_manifest["algorithm_readiness"]
             ),
@@ -445,6 +469,7 @@ class StepReconstructionAuditService:
             "reconstruction": reconstruction["manifest"],
             "comparison_alignment": comparison_alignment,
             "comparison": comparison,
+            "acceptance_evaluation": acceptance_evaluation,
             "axis_first_section_reconstruction": axis_first_manifest,
             "artifacts": artifacts,
             "stages": stage_records,
@@ -454,6 +479,7 @@ class StepReconstructionAuditService:
                 "Periodic phase alignment rotates only about the confirmed axis; it does not fit translation or scale.",
                 "The V1.1.2 reconstruction is an open review surface graph, so its signed mesh volume is not comparable to the source solid volume.",
                 "Deviation is an unsigned bounded mesh-sample comparison, not certified CAD metrology.",
+                "A rejected review candidate is retained only to diagnose frozen V1.1.2 representational loss; it is not an accepted constructor mapping.",
             ],
         }
         _atomic_json(audit_dir / "manifest.json", manifest)
@@ -462,8 +488,13 @@ class StepReconstructionAuditService:
             {
                 "status": "PASS",
                 "legacy_workflow_status": "PASS",
-                "axis_first_algorithm_status": "INCOMPLETE",
-                "promotable": False,
+                "axis_first_algorithm_status": disposition[
+                    "axis_first_algorithm_status"
+                ],
+                "promotable": disposition["promotable"],
+                "reconstruction_disposition": disposition[
+                    "reconstruction_disposition"
+                ],
                 "current_stage": "complete",
                 "completed_stages": list(AUDIT_STAGES),
                 "finished_at": _now(),
@@ -816,6 +847,20 @@ def extract_v11_parameters(shape, source_manifest: dict[str, Any], frame: dict[s
         raise StepAuditError(exc.reason, str(exc), copy.deepcopy(exc.details)) from exc
 
 
+def extract_v11_review_parameters(
+    shape,
+    source_manifest: dict[str, Any],
+    frame: dict[str, Any],
+    semantics: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        return axis_first_pipeline.extract_v11_review_parameters(
+            shape, source_manifest, frame, semantics
+        )
+    except axis_first_pipeline.AxisFirstPipelineError as exc:
+        raise StepAuditError(exc.reason, str(exc), copy.deepcopy(exc.details)) from exc
+
+
 def fit_profile_controls(samples: list[list[float]], *, control_count: int = 6, degree: int = 3) -> tuple[list[list[float]], float]:
     if len(samples) < control_count:
         raise StepAuditError("v116_step_parameter_fit_failed", "support profile has too few source samples")
@@ -970,6 +1015,138 @@ def reconstruct_with_current_v11(
     return {"manifest": summary, "stl_path": stl_path}
 
 
+def _axis_first_algorithm_disposition(mapping: Mapping[str, Any]) -> dict[str, Any]:
+    mapping_status = mapping.get("mapping_status")
+    if mapping_status == "REJECTED_REVIEW_CANDIDATE":
+        failed_terms = copy.deepcopy(list(mapping.get("failed_terms", ())))
+        rejection = copy.deepcopy(dict(mapping.get("rejection", {})))
+        return {
+            "status_scope": "axis_first_rejected_review_candidate",
+            "axis_first_algorithm_status": "REJECTED",
+            "promotable": False,
+            "reconstruction_disposition": "review_only_not_promotable",
+            "algorithm_readiness": {
+                "status": "REJECTED",
+                "algorithm_ready": False,
+                "cache_reusable": False,
+                "completed_contract_sections": [
+                    "canonical_frame",
+                    "support_recovery",
+                    "periodic_populations",
+                    "span_measurement_lattice",
+                    "representative_blades",
+                    "v11_2_mapping",
+                    "pattern_instances",
+                    "global_deviation",
+                ],
+                "missing_required_sections": ["accepted_regional_deviation"],
+                "rejection_reason": rejection.get(
+                    "reason", "v116_v112_mapping_residual_exceeded"
+                ),
+                "failed_terms": failed_terms,
+            },
+        }
+    return {
+        "status_scope": "axis_first_algorithm_staged",
+        "axis_first_algorithm_status": "INCOMPLETE",
+        "promotable": False,
+        "reconstruction_disposition": "staged_not_promotable",
+        "algorithm_readiness": _staged_axis_first_algorithm_readiness(),
+    }
+
+
+def _evaluate_axis_first_acceptance(
+    mapping: Mapping[str, Any],
+    reconstruction: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+) -> dict[str, Any]:
+    pattern_contract = reconstruction.get("pattern_material_contract", {})
+    pattern = pattern_contract.get("pattern", {})
+    material = pattern_contract.get("material", {})
+    topology_pass = bool(
+        pattern_contract.get("status") == "PASS"
+        and pattern.get("main_blade_count") == 13
+        and pattern.get("splitter_blade_count") == 0
+        and pattern.get("collision_status") == "PASS"
+        and pattern.get("source_topology_separated") is True
+        and pattern.get("exact_brep_collision_checked") is True
+        and pattern.get("exact_brep_collision_free") is True
+        and material.get("mode") == "open"
+        and material.get("material_shroud") is None
+        and material.get("material_shroud_area_mm2") in {None, 0, 0.0}
+    )
+    mapping_pass = bool(
+        mapping.get("mapping_status") == "PASS"
+        and mapping.get("promotion", {}).get("promotable") is True
+    )
+    bidirectional = comparison.get("bidirectional", {})
+    silhouettes = comparison.get("silhouettes", {})
+    improvement = {
+        "bidirectional_rms": _improvement_gate(
+            float(bidirectional.get("rms_mm", math.inf)),
+            _KS007G23B_GENERIC_BASELINE["bidirectional_rms_mm"],
+            0.30,
+            "mm",
+        ),
+        "bidirectional_p95": _improvement_gate(
+            float(bidirectional.get("p95_mm", math.inf)),
+            _KS007G23B_GENERIC_BASELINE["bidirectional_p95_mm"],
+            0.30,
+            "mm",
+        ),
+        "top_silhouette": _improvement_gate(
+            float(silhouettes.get("top_xy_hausdorff_mm", math.inf)),
+            _KS007G23B_GENERIC_BASELINE["top_silhouette_hausdorff_mm"],
+            0.40,
+            "mm",
+        ),
+        "meridional_silhouette": _improvement_gate(
+            float(silhouettes.get("meridional_rz_hausdorff_mm", math.inf)),
+            _KS007G23B_GENERIC_BASELINE[
+                "meridional_silhouette_hausdorff_mm"
+            ],
+            0.40,
+            "mm",
+        ),
+    }
+    improvement_pass = all(
+        gate["status"] == "PASS" for gate in improvement.values()
+    )
+    accepted = topology_pass and mapping_pass and improvement_pass
+    return {
+        "contract": "ks007g23b_axis_first_acceptance_v1",
+        "status": "PASS" if accepted else "REJECTED",
+        "promotable": accepted,
+        "topology": {
+            "status": "PASS" if topology_pass else "FAIL",
+            "expected": {"mode": "open", "main": 13, "splitter": 0},
+            "material_shroud_forbidden": True,
+        },
+        "mapping": {
+            "status": "PASS" if mapping_pass else "FAIL",
+            "mapping_status": mapping.get("mapping_status"),
+            "failed_terms": copy.deepcopy(list(mapping.get("failed_terms", ()))),
+        },
+        "improvement": improvement,
+    }
+
+
+def _improvement_gate(
+    actual: float, baseline: float, required_reduction_fraction: float, unit: str
+) -> dict[str, Any]:
+    threshold = baseline * (1.0 - required_reduction_fraction)
+    reduction = (baseline - actual) / baseline if math.isfinite(actual) else -math.inf
+    return {
+        "status": "PASS" if math.isfinite(actual) and actual <= threshold else "FAIL",
+        "actual": round(actual, 6) if math.isfinite(actual) else None,
+        "baseline": baseline,
+        "required_maximum": round(threshold, 6),
+        "required_reduction_fraction": required_reduction_fraction,
+        "actual_reduction_fraction": round(reduction, 6)
+        if math.isfinite(reduction)
+        else None,
+        "unit": unit,
+    }
 def _disable_zero_radius_legacy_transition_policies(
     runtime: dict[str, Any], parameters: Mapping[str, Any]
 ) -> None:
@@ -1360,10 +1537,15 @@ def _axis_first_section_reconstruction_manifest(
     support = mapping.get("support_recovery", {})
     periodic = mapping.get("periodic_provenance", {})
     sections = mapping.get("section_provenance", {})
+    disposition = _axis_first_algorithm_disposition(mapping)
+    pattern_contract = reconstruction.get("pattern_material_contract", {})
+    pattern = pattern_contract.get("pattern", {})
     return {
         "algorithm_revision": AUDIT_IMPLEMENTATION_REVISION,
-        "contract_phase": "axis_frame_and_coarse_partition",
-        "algorithm_readiness": _staged_axis_first_algorithm_readiness(),
+        "contract_phase": disposition["status_scope"],
+        "algorithm_readiness": copy.deepcopy(
+            disposition["algorithm_readiness"]
+        ),
         "canonical_frame": {
             "coordinate_frame": "source_to_canonical_positive_z_axis",
             "axis": {
@@ -1434,12 +1616,23 @@ def _axis_first_section_reconstruction_manifest(
             "promotion_contract": mapping.get("promotion_contract", {}),
         },
         "pattern_instances": {
-            "status": "existing_constructor_output_retained_until_task_9",
+            "status": pattern_contract.get("status", "FAILED"),
+            "method": pattern.get("method"),
+            "main_blade_count": pattern.get("main_blade_count"),
+            "splitter_blade_count": pattern.get("splitter_blade_count"),
+            "closure_status": pattern.get("closure_status"),
+            "collision_status": pattern.get("collision_status"),
+            "populations": copy.deepcopy(pattern.get("populations", [])),
             "surface_count": reconstruction.get("surface_count"),
         },
         "regional_deviation": {
-            "status": "global_comparison_retained_until_task_10",
+            "status": "GLOBAL_ONLY_REJECTED_MAPPING"
+            if mapping.get("mapping_status") == "REJECTED_REVIEW_CANDIDATE"
+            else "global_comparison_pending_regional_finalizer",
             "bidirectional": comparison.get("bidirectional", {}),
+            "mapping_failed_terms": copy.deepcopy(
+                list(mapping.get("failed_terms", ()))
+            ),
         },
         "invariants": {
             "canonical_geometry_version": CANONICAL_GEOMETRY_VERSION,

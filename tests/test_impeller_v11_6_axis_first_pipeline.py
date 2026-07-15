@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import cadquery as cq
 import numpy as np
 import pytest
 
@@ -23,14 +24,106 @@ if str(Path(__file__).parent) not in sys.path:
 from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as pipeline
 from part_rule_synthesis.impeller_v11_6_v112_mapping import (
     MEASUREMENT_SCHEMA_VERSION,
+    V112MappingError,
     V112MappingTolerances,
     map_measurements_to_v112,
+    map_measurements_to_v112_review,
 )
 from step_fixtures import (
     write_axis_first_impeller_step,
     write_axis_first_representable_step,
 )
 from part_rule_synthesis import impeller_v11_6_step_audit as step_audit
+
+
+def test_exact_incidence_ignores_unreferenced_degenerate_occt_edges():
+    shape = cq.Solid.makeCone(10.0, 0.0, 20.0)
+    faces_by_id = {
+        f"source_face_{index:05d}": face
+        for index, face in enumerate(shape.Faces())
+    }
+    edges_by_id = {
+        f"source_edge_{index:05d}": edge
+        for index, edge in enumerate(shape.Edges())
+    }
+
+    face_edge_ids, edge_face_ids = pipeline._build_exact_incidence_index(
+        shape, faces_by_id, edges_by_id
+    )
+
+    assert set(face_edge_ids) == set(faces_by_id)
+    assert set(edge_face_ids) == set(edges_by_id)
+    assert all(face_edge_ids.values())
+    assert all(edge_face_ids.values())
+
+
+def test_open_tip_candidate_prefers_balanced_two_side_contact_length():
+    class Edge:
+        def __init__(self, length):
+            self._length = length
+
+        def Length(self):
+            return self._length
+
+    inventory = {
+        "face_edge_ids": {
+            "side_a": ("small_a", "main_a"),
+            "side_b": ("small_b", "main_b"),
+            "small_patch": ("small_a", "small_b"),
+            "main_cap": ("main_a", "main_b"),
+        },
+        "edges_by_id": {
+            "small_a": Edge(2.95),
+            "small_b": Edge(1.72),
+            "main_a": Edge(36.52),
+            "main_b": Edge(37.48),
+        },
+    }
+
+    assert pipeline._select_opposite_tip_cap(
+        inventory,
+        {"small_patch", "main_cap"},
+        {"side_a", "side_b"},
+    ) == "main_cap"
+
+
+def test_hub_group_prefers_contact_and_adds_only_missing_same_type_patches():
+    all_instances = {f"blade_{index:02d}" for index in range(13)}
+    groups = [
+        {
+            "geometry_type": "CYLINDER",
+            "member_face_ids": ["outer_rim"],
+            "periodic_instance_ids": set(all_instances),
+            "adjacent_periodic_face_ids": {"rim_contacts"},
+            "shared_contact_length_mm": 47.0,
+            "total_area_mm2": 271.0,
+            "mean_area_mm2": 271.0,
+        },
+        {
+            "geometry_type": "BSPLINE",
+            "member_face_ids": ["hub_main"],
+            "periodic_instance_ids": set(all_instances - {"blade_06"}),
+            "adjacent_periodic_face_ids": {"hub_contacts"},
+            "shared_contact_length_mm": 1061.0,
+            "total_area_mm2": 4600.0,
+            "mean_area_mm2": 4600.0,
+        },
+        {
+            "geometry_type": "BSPLINE",
+            "member_face_ids": ["hub_gap"],
+            "periodic_instance_ids": {"blade_05", "blade_06"},
+            "adjacent_periodic_face_ids": {"gap_contacts"},
+            "shared_contact_length_mm": 105.0,
+            "total_area_mm2": 264.0,
+            "mean_area_mm2": 264.0,
+        },
+    ]
+
+    selected = pipeline._select_complete_hub_group(groups, all_instances)
+
+    assert selected["member_face_ids"] == ["hub_gap", "hub_main"]
+    assert selected["periodic_instance_ids"] == all_instances
+    assert selected["shared_contact_length_mm"] == pytest.approx(1166.0)
 
 
 def _source_inputs(tmp_path: Path, **fixture_options):
@@ -209,6 +302,22 @@ def test_periodic_representative_fit_has_independent_review_grade_ceiling():
     assert raised.value.reason == "v116_periodic_population_ambiguous"
 
 
+def test_measurement_sector_adds_one_pitch_around_swept_blade_envelope():
+    sector, evidence = pipeline._measurement_sector_from_envelope(
+        {"start_angle_deg": 244.0, "end_angle_deg": 286.0, "span_deg": 42.0},
+        pitch_deg=27.5,
+    )
+
+    assert sector == pytest.approx((216.5, 313.5))
+    assert evidence == {
+        "method": "representative_side_envelope_plus_one_pitch_each_side",
+        "raw_envelope_deg": [244.0, 286.0],
+        "raw_span_deg": 42.0,
+        "margin_each_side_deg": 27.5,
+        "measurement_span_deg": 97.0,
+    }
+
+
 def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(monkeypatch):
     calls = []
     instance = {
@@ -270,7 +379,21 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
     monkeypatch.setattr(
         pipeline,
         "_measured_active_span_interval",
-        lambda *_args, **_kwargs: (0.1, 0.9),
+        lambda *_args, **_kwargs: (
+            0.1,
+            0.9,
+            {
+                "active_root_h": 0.1,
+                "active_tip_h": 0.9,
+                "minimum_support_separation_mm": 1.0,
+                "active_span_mm": 0.8,
+                "minimum_measurable_active_span_mm": 0.08,
+                "local_thickness_proxy_mm": 0.32,
+                "source_tolerance_mm": 0.01,
+                "measurement_authority": "attachment_clearance_on_authenticated_meridional_supports",
+                "source_ids": ["root", "tip"],
+            },
+        ),
     )
     monkeypatch.setattr(pipeline.section_recovery, "solve_meridional_correspondence", lambda *_args: correspondence)
     monkeypatch.setattr(pipeline.section_recovery, "build_ordered_span_profiles", lambda *_args: (profile, profile, profile))
@@ -278,9 +401,9 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
     monkeypatch.setattr(pipeline, "_measurement_surface_in_source_frame", lambda surface, *_args: surface)
     monkeypatch.setattr(pipeline, "_meridional_unwrapped_projector", lambda *_args: (lambda _point: (0.0, 0.0), (0.0, 0.0, 1.0)))
     monkeypatch.setattr(
-        pipeline.section_recovery,
-        "decompose_section_loop",
-        lambda _loop, **_kwargs: "decomposition",
+        pipeline,
+        "_decompose_measured_section_loop",
+        lambda *_args: "decomposition",
     )
     monkeypatch.setattr(
         pipeline,
@@ -300,6 +423,7 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
         assert set(kwargs["source_faces_by_id"]) == set(inventory["faces_by_id"])
         assert set(kwargs["allowed_source_face_ids"]) == set(instance["source_face_ids"])
         assert kwargs["source_shape_scope"] == "complete_source_shape"
+        assert kwargs["edge_sample_count"] == 129
         assert kwargs["angular_sector_deg"] == population["angular_sector_deg"]
         assert np.array_equal(
             kwargs["angular_source_to_canonical_matrix"],
@@ -356,6 +480,50 @@ def test_unknown_material_features_fail_closed_without_bbox_or_zero_measurements
     ]
 
 
+def test_mounting_bore_uses_axis_consensus_family_not_smaller_spline_root():
+    records = [
+        {
+            "face_id": "spline-root-a",
+            "face_ids": ["spline-root-a"],
+            "radius_mm": 4.2,
+            "axis_residual_mm": 0.0,
+            "axis_alignment": 1.0,
+            "analytic_area_mm2": 10.0,
+            "circular_source_edge_ids": ["edge-a"],
+            "source_ids": ["spline-root-a", "edge-a"],
+        },
+        {
+            "face_id": "spline-root-b",
+            "face_ids": ["spline-root-b"],
+            "radius_mm": 4.2,
+            "axis_residual_mm": 0.0,
+            "axis_alignment": 1.0,
+            "analytic_area_mm2": 11.0,
+            "circular_source_edge_ids": ["edge-b"],
+            "source_ids": ["spline-root-b", "edge-b"],
+        },
+        {
+            "face_id": "nominal-bore",
+            "face_ids": ["nominal-bore"],
+            "radius_mm": 7.9,
+            "axis_residual_mm": 0.0,
+            "axis_alignment": 1.0,
+            "analytic_area_mm2": 100.0,
+            "circular_source_edge_ids": ["edge-c", "edge-d"],
+            "source_ids": ["nominal-bore", "edge-c", "edge-d"],
+        },
+    ]
+
+    groups = pipeline._group_coaxial_cylinder_records(records, 0.03)
+    selected = pipeline._select_mounting_bore_group(
+        groups, {"main_bore_radius_mm": 7.9}, 0.03
+    )
+
+    assert [group["radius_mm"] for group in groups] == [4.2, 7.9]
+    assert groups[0]["face_ids"] == ["spline-root-a", "spline-root-b"]
+    assert selected["face_ids"] == ["nominal-bore"]
+
+
 def test_source_sha_is_provenance_only_for_mapping_input(monkeypatch):
     base = {
         "schema_version": MEASUREMENT_SCHEMA_VERSION,
@@ -396,6 +564,75 @@ def test_source_sha_is_provenance_only_for_mapping_input(monkeypatch):
     assert captured[1]["provenance"]["source_sha256"] == "2" * 64
     assert first["constructor_input_hash_sha256"] == second["constructor_input_hash_sha256"]
     assert first["unsupported_source_feature_audit"]["complete"] is False
+
+
+def test_review_extraction_preserves_measurement_and_task8_authority(monkeypatch):
+    measurements = {
+        "schema_version": MEASUREMENT_SCHEMA_VERSION,
+        "provenance": {"source_sha256": "a" * 64},
+        "support_fits": {},
+        "topology": {"material_measurements": {}},
+        "populations": {"main": {"count": 8}, "splitter": None, "source_ids": []},
+    }
+    result = pipeline.MeasurementBundleResult(
+        measurements=measurements,
+        support_evidence={"status": "PASS", "support_face_ids": {"hub": ["hub"]}},
+        periodic_evidence={"status": "PASS", "main": {"count": 8}},
+        section_evidence={"section_loop_records": []},
+        stage_evidence=(),
+    )
+
+    monkeypatch.setattr(pipeline, "build_measurement_bundle", lambda *_args: result)
+    monkeypatch.setattr(
+        pipeline,
+        "map_measurements_to_v112_review",
+        lambda *_args, **_kwargs: {
+            "parameters": {"blade_count": 8},
+            "mapping_status": "REJECTED_REVIEW_CANDIDATE",
+            "promotable": False,
+            "constructor_input_hash_sha256": "b" * 64,
+            "objective_terms": {"camber": {"gate": {"status": "FAIL"}}},
+        },
+    )
+
+    mapped = pipeline.extract_v11_review_parameters(
+        None, {"sha256": "a" * 64}, {}, {}
+    )
+
+    assert mapped["mapping_status"] == "REJECTED_REVIEW_CANDIDATE"
+    assert mapped["measurement_bundle"] == measurements
+    assert mapped["support_recovery"]["status"] == "PASS"
+    assert mapped["periodic_provenance"]["main"]["count"] == 8
+    assert mapped["task8_reconstruction_evidence_hash_sha256"] == (
+        pipeline.task8_reconstruction_evidence_hash(
+            mapped["support_recovery"], mapped["periodic_provenance"], "a" * 64
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "v116_v112_measurement_schema_invalid",
+        "v116_v112_mapping_solver_exception",
+        "v116_v112_material_domain_failed",
+        "v116_v112_topology_failed",
+    ],
+)
+def test_mapping_wrapper_preserves_non_residual_failure_reason(reason):
+    result = pipeline.MeasurementBundleResult(
+        measurements={},
+        support_evidence={},
+        periodic_evidence={},
+        section_evidence={},
+        stage_evidence=(),
+    )
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as exc_info:
+        pipeline._raise_mapping_error(V112MappingError(reason, "failure"), result)
+
+    assert exc_info.value.reason == reason
+    assert exc_info.value.details["failure_evidence"]["upstream_reason"] == reason
 
 
 def test_unsupported_source_features_come_from_exact_section_evidence():
@@ -580,7 +817,7 @@ def test_open_tip_active_span_clearance_scales_with_measured_blade_width():
         attachment_width_mm=4.0,
     )
 
-    root_h, tip_h = pipeline._measured_active_span_interval(
+    root_h, tip_h, _contract = pipeline._measured_active_span_interval(
         [(10.0, 0.0), (10.0, 10.0)],
         [(20.0, 0.0), (20.0, 10.0)],
         0.02,
@@ -592,6 +829,137 @@ def test_open_tip_active_span_clearance_scales_with_measured_blade_width():
 
     assert root_h == pytest.approx(0.09)
     assert tip_h == pytest.approx(0.96)
+
+
+def test_active_span_accepts_large_root_lift_when_ordered_body_span_remains():
+    attachment = SimpleNamespace(
+        lift_mm=3.0,
+        lift_samples_mm=(3.0,),
+        attachment_width_mm=4.0,
+    )
+
+    root_h, tip_h, contract = pipeline._measured_active_span_interval(
+        [(10.0, 0.0), (10.0, 10.0)],
+        [(20.0, 0.0), (20.0, 10.0)],
+        0.02,
+        {"source_edge_ids": ["root"]},
+        {"source_edge_ids": ["tip"]},
+        root_attachment=attachment,
+        tip_attachment=None,
+    )
+
+    assert root_h == pytest.approx(0.34)
+    assert tip_h == pytest.approx(0.96)
+    assert contract["active_span_mm"] == pytest.approx(6.2)
+    assert contract["minimum_measurable_active_span_mm"] == pytest.approx(0.75)
+
+
+def test_active_span_rejects_near_collapsed_body_even_when_bounds_remain_ordered():
+    attachment = SimpleNamespace(
+        lift_mm=4.4,
+        lift_samples_mm=(4.4,),
+        attachment_width_mm=4.0,
+    )
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as exc_info:
+        pipeline._measured_active_span_interval(
+            [(10.0, 0.0), (10.0, 10.0)],
+            [(20.0, 0.0), (20.0, 10.0)],
+            0.02,
+            {"source_edge_ids": ["root"]},
+            {"source_edge_ids": ["tip"]},
+            root_attachment=attachment,
+            tip_attachment=attachment,
+        )
+
+    assert exc_info.value.reason == "v116_span_surface_ordering_failed"
+    evidence = exc_info.value.details["failure_evidence"]
+    assert evidence["active_span_mm"] < evidence[
+        "minimum_measurable_active_span_mm"
+    ]
+
+
+def test_support_bound_material_planes_ignore_connected_bolt_hole_end_faces(monkeypatch):
+    inventory = {
+        "faces_by_id": {
+            "hub_support": object(),
+            "hub_top": object(),
+            "hub_bottom": object(),
+            "bolt_hole_end": object(),
+        },
+        "instance_by_face": {},
+        "source_manifest": {
+            "adjacency": {
+                "hub_support": ["hub_top"],
+                "hub_top": ["hub_support", "hub_bottom", "bolt_hole_end"],
+                "hub_bottom": ["hub_top"],
+                "bolt_hole_end": ["hub_top"],
+            }
+        },
+    }
+    planes = [
+        {"face_id": "hub_top", "axis_parameter_mm": 11.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 0.0},
+        {"face_id": "bolt_hole_end", "axis_parameter_mm": 12.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 20.0},
+        {"face_id": "hub_bottom", "axis_parameter_mm": 13.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 0.0},
+    ]
+    monkeypatch.setattr(
+        pipeline, "_axis_perpendicular_material_planes", lambda *_args: planes
+    )
+    support = {
+        "mapping_fits": {
+            "hub": {
+                "control_points_rz_mm": [
+                    [10.0, 10.0],
+                    [10.5, 8.0],
+                    [11.0, 6.0],
+                    [12.0, 4.0],
+                    [13.0, 2.0],
+                    [14.0, 0.0],
+                ],
+                "source_ids": ["hub_support"],
+            }
+        }
+    }
+
+    wall, bottom, top, evidence = pipeline._measure_support_bound_hub_material(
+        inventory,
+        {},
+        {"radius_mm": 8.0, "source_ids": ["bore"]},
+        support,
+        (np.zeros(3), np.asarray([0.0, 0.0, 1.0])),
+        0.01,
+    )
+
+    assert (wall, bottom, top) == pytest.approx((2.0, 2.0, 1.0))
+    assert evidence["top_material_plane"]["face_id"] == "hub_top"
+    assert evidence["bottom_material_plane"]["face_id"] == "hub_bottom"
+    assert "bolt_hole_end" not in {
+        evidence["top_material_plane"]["face_id"],
+        evidence["bottom_material_plane"]["face_id"],
+    }
+
+
+def test_measured_section_fit_stops_at_first_passing_low_complexity_budget(monkeypatch):
+    calls = []
+
+    def fake_decompose(_loop, *, maximum_control_count):
+        calls.append(maximum_control_count)
+        residual = 0.04 if maximum_control_count == 25 else 0.02
+        return SimpleNamespace(
+            control_budget=maximum_control_count,
+            segments=(SimpleNamespace(fit=SimpleNamespace(residual_max_mm=residual)),),
+        )
+
+    monkeypatch.setattr(
+        pipeline.section_recovery,
+        "decompose_section_loop",
+        fake_decompose,
+    )
+
+    result = pipeline._decompose_measured_section_loop(object(), 0.03)
+
+    assert calls == [25, 49]
+    assert result.control_budget == 49
 
 
 def test_meridional_projector_preserves_edge_bulge_beyond_profile_endpoints():
@@ -718,9 +1086,16 @@ def test_representable_step_passes_actual_default_axis_first_mapping(tmp_path):
     root = measurements["attachments"]["root"]
     assert float(np.median(root["lift_samples_mm"])) == pytest.approx(1.0, abs=0.15)
 
-    mapped = map_measurements_to_v112(
+    with pytest.raises(V112MappingError) as exc_info:
+        map_measurements_to_v112(
+            measurements, tolerances=V112MappingTolerances()
+        )
+    assert getattr(exc_info.value, "reason", None) == "v116_v112_mapping_residual_exceeded"
+
+    mapped = map_measurements_to_v112_review(
         measurements, tolerances=V112MappingTolerances()
     )
-    assert mapped["mapping_status"] == "PASS"
-    assert mapped["promotion"]["promotable"] is True
+    assert mapped["mapping_status"] == "REJECTED_REVIEW_CANDIDATE"
+    assert mapped["promotion"]["promotable"] is False
+    assert "periodicity" in mapped["failed_terms"]
     assert mapped["geometry_patch_version"] == "1.1.2"

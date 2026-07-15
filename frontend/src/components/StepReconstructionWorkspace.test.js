@@ -9,6 +9,33 @@ import { StepReconstructionWorkspace } from "./StepReconstructionWorkspace.js";
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("STEP reconstruction workspace", () => {
+  test("reloads a completed audit by id and restores its manifest", async () => {
+    await withDom(async (container) => {
+      const requested = [];
+      globalThis.fetch = async (url) => {
+        requested.push(String(url));
+        const isManifest = String(url).endsWith("/manifest");
+        if (isManifest) await new Promise((resolve) => setTimeout(resolve, 10));
+        const payload = isManifest ? manifest() : { status: "PASS", audit_id: "task8-open-workspace", completed_stages: ["complete"] };
+        return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+      const root = createRoot(container);
+      await act(async () => root.render(React.createElement(StepReconstructionWorkspace, {
+        apiBase: "http://example.test",
+        initialAuditId: "task8-open-workspace",
+        SceneComponent: () => React.createElement("div", null, "restored scene"),
+      })));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 100)));
+      assert.match(container.textContent, /task8-open-workspace/);
+      assert.match(container.textContent, /restored scene/);
+      assert.deepEqual(requested, [
+        "http://example.test/api/step-reconstruction-audits/task8-open-workspace",
+        "http://example.test/api/step-reconstruction-audits/task8-open-workspace/manifest",
+      ]);
+      await act(async () => root.unmount());
+    });
+  });
+
   test("renders incomplete evidence without a white screen and exposes unavailable station evidence", async () => {
     await withDom(async (container) => {
       const stale = { ...manifest(), parameter_mapping: { source_section_loops: [] } };
@@ -33,7 +60,7 @@ describe("STEP reconstruction workspace", () => {
       assert.match(container.textContent, /Periodic provenance/);
       assert.match(container.textContent, /Root attachment mapping/);
       assert.match(container.textContent, /1\.500 source \/ 1\.480 fitted mm/);
-      assert.match(container.textContent, /Promotable/);
+      assert.match(container.textContent, /Measurement promotabilityLocally promotable/);
       assert.match(container.textContent, /edge-footprint-root/);
       assert.match(container.textContent, /source_median_attachment_fit \/ canonical_axis_frame_xyz_mm/);
       await act(async () => root.unmount());
@@ -43,7 +70,7 @@ describe("STEP reconstruction workspace", () => {
 
 async function withDom(run) {
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { url: "http://example.test" });
-  const previous = { window: globalThis.window, document: globalThis.document };
+  const previous = { window: globalThis.window, document: globalThis.document, fetch: globalThis.fetch };
   Object.assign(globalThis, { window: dom.window, document: dom.window.document });
   try { await run(dom.window.document.getElementById("root")); } finally { Object.assign(globalThis, previous); dom.window.close(); }
 }

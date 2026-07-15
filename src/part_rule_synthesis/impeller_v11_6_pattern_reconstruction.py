@@ -135,20 +135,21 @@ def _mapped_periodic_evidence(
             )
         )
     )
-    if (
-        source_collision.get("collision_free") is not True
-        or _nonnegative_int(
-            source_collision.get("collision_count"),
-            "mapping source collision count",
-        )
-        != 0
-    ):
+    source_collision_state = _declared_source_collision_state(source_collision)
+    if source_collision_state == "FAIL":
         raise PatternReconstructionError(
             "v116_pattern_collision",
             "Task 8 source periodic populations contain a measured collision",
             details={"source_collision_diagnostics": source_collision},
         )
+    if source_collision_state == "INVALID":
+        raise PatternReconstructionError(
+            "v116_pattern_evidence_invalid",
+            "Task 8 source collision diagnostics are internally inconsistent",
+            details={"source_collision_diagnostics": source_collision},
+        )
     periodic["source_collision_diagnostics"] = source_collision
+    periodic["source_collision_state"] = source_collision_state
     generated = _generated_blade_surfaces(graph)
     populations = periodic.get("populations")
     if periodic.get("method") != _PERIODIC_METHOD or not _is_sequence(populations):
@@ -709,6 +710,16 @@ def validate_and_decorate_pattern_reconstruction(
         trusted_source=trusted_source,
         trusted_periodic=trusted_periodic,
     )
+    source_collision_diagnostics = _mapping(
+        periodic.get(
+            "source_collision_diagnostics",
+            periodic.get("collision_diagnostics"),
+        ),
+        "periodic_population_evidence.source_collision_diagnostics",
+    )
+    source_collision_state = _declared_source_collision_state(
+        source_collision_diagnostics
+    )
     material_record = _validate_material_topology(
         graph,
         topology_support_evidence,
@@ -732,7 +743,7 @@ def validate_and_decorate_pattern_reconstruction(
     _decorate_material_surfaces(decorated, material_record)
     manifest_payload = {
         "contract": "impeller_v1_1_6_periodic_pattern_material",
-        "status": "PASS",
+        "status": "PASS" if source_collision_state == "PASS" else "REVIEW_ONLY",
         "geometry_patch_version": _GEOMETRY_PATCH_VERSION,
         "source_generation_id": graph.get("generation_id"),
         "pattern": {
@@ -748,7 +759,21 @@ def validate_and_decorate_pattern_reconstruction(
                 for surface_id, binding in sorted(surface_bindings.items())
             ],
             "closure_status": "PASS",
-            "collision_status": "PASS",
+            "collision_status": (
+                "PASS"
+                if source_collision_state == "PASS"
+                else "SOURCE_UNKNOWN_RECONSTRUCTED_SAMPLE_PASS"
+            ),
+            "source_collision_status": source_collision_state,
+            "source_topology_separated": source_collision_diagnostics.get(
+                "source_topology_separated"
+            ),
+            "exact_brep_collision_checked": source_collision_diagnostics.get(
+                "exact_brep_collision_checked"
+            ),
+            "exact_brep_collision_free": source_collision_diagnostics.get(
+                "exact_brep_collision_free"
+            ),
             "collision_fidelity": _COLLISION_FIDELITY,
             "trusted_periodic_partition_digest_sha256": trusted_periodic[
                 "partition_digest_sha256"
@@ -764,7 +789,7 @@ def validate_and_decorate_pattern_reconstruction(
     }
     manifest_payload["manifest_digest_sha256"] = _payload_digest(manifest_payload)
     decorated["v1_1_6_pattern_material"] = {
-        "status": "PASS",
+        "status": manifest_payload["status"],
         "manifest_digest_sha256": manifest_payload["manifest_digest_sha256"],
         "pattern_fidelity": "measured_rigid_cyclic_validation",
         "collision_fidelity": _COLLISION_FIDELITY,
@@ -1805,11 +1830,16 @@ def _validate_populations(
             "collision_diagnostics.tolerance_deg",
         ),
     )
-    declared_collision = _mapping(periodic["collision_diagnostics"], "collision_diagnostics")
-    if (
-        declared_collision.get("collision_free") is not True
-        or _nonnegative_int(declared_collision.get("collision_count"), "collision_count") != 0
-        or recomputed_collision["collision_free"] is not True
+    declared_collision = _mapping(
+        periodic.get(
+            "source_collision_diagnostics",
+            periodic.get("collision_diagnostics"),
+        ),
+        "source_collision_diagnostics",
+    )
+    declared_state = _declared_source_collision_state(declared_collision)
+    if declared_state in {"FAIL", "INVALID"} or not bool(
+        recomputed_collision["collision_free"]
     ):
         raise PatternReconstructionError(
             "v116_pattern_collision",
@@ -1817,6 +1847,34 @@ def _validate_populations(
             details={"recomputed": recomputed_collision},
         )
     return records, bindings, instance_ids
+
+
+def _declared_source_collision_state(diagnostics: Mapping[str, Any]) -> str:
+    count = _nonnegative_int(
+        diagnostics.get("collision_count"), "source collision count"
+    )
+    collision_free = diagnostics.get("collision_free")
+    if collision_free is False or count > 0:
+        return "FAIL"
+    if (
+        collision_free is True
+        and count == 0
+        and diagnostics.get("collision_status") == "PASS"
+        and diagnostics.get("source_topology_separated") is True
+        and diagnostics.get("exact_brep_collision_checked") is True
+        and diagnostics.get("exact_brep_collision_free") is True
+    ):
+        return "PASS"
+    if (
+        collision_free is None
+        and count == 0
+        and diagnostics.get("collision_status") == "UNKNOWN"
+        and diagnostics.get("source_topology_separated") is True
+        and diagnostics.get("exact_brep_collision_checked") is False
+        and diagnostics.get("exact_brep_collision_free") is None
+    ):
+        return "UNKNOWN"
+    return "INVALID"
 
 
 def _validate_population(

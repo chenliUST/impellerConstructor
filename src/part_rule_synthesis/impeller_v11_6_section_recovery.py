@@ -282,6 +282,7 @@ class NurbsCurveFit:
     residual_fit_to_source_max_sq_mm: float
     residual_source_to_fit_max_xyz_mm: float
     residual_fit_to_source_max_xyz_mm: float
+    residual_parameter_matched_max_sq_mm: float
     edge_sag_sq_mm: float
     edge_sag_xyz_mm: float
     source_sample_count: int
@@ -290,6 +291,7 @@ class NurbsCurveFit:
     end_tangent_sq: tuple[float, float]
     start_curvature_per_mm: float
     end_curvature_per_mm: float
+    knot_strategy: str
     measurement_target_only: bool = True
     constructor_direct_curve_mode: bool = False
 
@@ -1756,6 +1758,11 @@ def decompose_section_loop(
         if partial_role_segments is not None:
             raw_segments = partial_role_segments
             method = "partial_source_face_adjacency"
+        elif _is_two_authenticated_side_curve_loop(loop):
+            raw_segments = _segments_from_landmarks_or_geometry(
+                loop, landmark_indices
+            )
+            method = "two_authenticated_side_curves_streamwise_landmarks"
         else:
             authenticated_side_roles = sorted(
                 {
@@ -1825,6 +1832,14 @@ def decompose_section_loop(
     )
 
 
+def _is_two_authenticated_side_curve_loop(loop: SectionLoop) -> bool:
+    return bool(
+        len(loop.edges) == 2
+        and sorted(edge.source_roles for edge in loop.edges)
+        == [("side_a",), ("side_b",)]
+    )
+
+
 def fit_nurbs_measurement_curve(
     points_xyz_mm: Sequence[Sequence[float]],
     points_sq_mm: Sequence[Sequence[float]],
@@ -1849,7 +1864,9 @@ def fit_nurbs_measurement_curve(
     )
     parameters = _chord_parameters(sq)
 
-    def candidate(*, degree: int, interpolate_polyline: bool) -> NurbsCurveFit:
+    def candidate(
+        *, degree: int, interpolate_polyline: bool, knot_strategy: str
+    ) -> NurbsCurveFit:
         if interpolate_polyline:
             control_count = len(sq)
             knots = np.concatenate(
@@ -1860,7 +1877,13 @@ def fit_nurbs_measurement_curve(
         else:
             control_count = min(maximum, len(sq))
             control_count = max(degree + 1, control_count)
-            knots = _clamped_uniform_knots(control_count, degree)
+            knots = (
+                _averaged_approximation_knots(
+                    parameters, control_count=control_count, degree=degree
+                )
+                if knot_strategy == "chord_parameter_averaged_knots"
+                else _clamped_uniform_knots(control_count, degree)
+            )
             basis = _basis_matrix(parameters, control_count, degree, knots)
             controls_sq = _fit_endpoint_constrained_controls(basis, sq)
             controls_xyz = _fit_endpoint_constrained_controls(basis, xyz)
@@ -1875,12 +1898,18 @@ def fit_nurbs_measurement_curve(
         fit_to_source_sq = _points_to_polyline_distances(dense_sq, sq)
         source_to_fit_xyz = _points_to_polyline_distances(xyz, dense_xyz)
         fit_to_source_xyz = _points_to_polyline_distances(dense_xyz, xyz)
+        parameter_matched_sq = np.linalg.norm(
+            dense_sq
+            - _evaluate_polyline_at_parameters(sq, parameters, dense_parameters),
+            axis=1,
+        )
         residuals = np.concatenate(
             [
                 source_to_fit_sq,
                 fit_to_source_sq,
                 source_to_fit_xyz,
                 fit_to_source_xyz,
+                parameter_matched_sq,
             ]
         )
         dense_tangent = np.gradient(dense_sq, dense_parameters, axis=0)
@@ -1911,6 +1940,9 @@ def fit_nurbs_measurement_curve(
             residual_fit_to_source_max_xyz_mm=_round(
                 float(np.max(fit_to_source_xyz))
             ),
+            residual_parameter_matched_max_sq_mm=_round(
+                float(np.max(parameter_matched_sq))
+            ),
             edge_sag_sq_mm=_round(_polyline_sag(sq)),
             edge_sag_xyz_mm=_round(_polyline_sag(xyz)),
             source_sample_count=len(sq),
@@ -1919,9 +1951,32 @@ def fit_nurbs_measurement_curve(
             end_tangent_sq=(float(end_tangent[0]), float(end_tangent[1])),
             start_curvature_per_mm=_round(float(curvature[0])),
             end_curvature_per_mm=_round(float(curvature[-1])),
+            knot_strategy=knot_strategy,
         )
 
-    primary = candidate(degree=min(3, len(sq) - 1), interpolate_polyline=False)
+    degree = min(3, len(sq) - 1)
+    uniform = candidate(
+        degree=degree,
+        interpolate_polyline=False,
+        knot_strategy="clamped_uniform_knots",
+    )
+    primary_candidates = [uniform]
+    control_count = min(maximum, len(sq))
+    if (
+        degree + 1 < control_count < len(sq)
+        and np.all(np.diff(parameters) > 1.0e-12)
+    ):
+        primary_candidates.append(
+            candidate(
+                degree=degree,
+                interpolate_polyline=False,
+                knot_strategy="chord_parameter_averaged_knots",
+            )
+        )
+    primary = min(
+        primary_candidates,
+        key=lambda fit: (fit.residual_max_mm, fit.residual_rms_mm),
+    )
     if (
         tolerance is None
         or primary.residual_max_mm <= tolerance
@@ -1929,10 +1984,63 @@ def fit_nurbs_measurement_curve(
         or not allow_source_polyline_nurbs
     ):
         return primary
-    linear = candidate(degree=1, interpolate_polyline=True)
+    linear = candidate(
+        degree=1,
+        interpolate_polyline=True,
+        knot_strategy="source_polyline_degree_one",
+    )
     return min(
         (primary, linear),
         key=lambda fit: (fit.residual_max_mm, fit.residual_rms_mm, -fit.degree),
+    )
+
+
+def _averaged_approximation_knots(
+    parameters: Sequence[float], *, control_count: int, degree: int
+) -> np.ndarray:
+    values = np.asarray(parameters, dtype=float)
+    if (
+        values.ndim != 1
+        or len(values) < control_count
+        or np.any(np.diff(values) <= 0.0)
+        or not math.isclose(values[0], 0.0, rel_tol=0.0, abs_tol=1.0e-12)
+        or not math.isclose(values[-1], 1.0, rel_tol=0.0, abs_tol=1.0e-12)
+    ):
+        raise ValueError("parameters must be strictly increasing from zero to one")
+    if control_count < degree + 1:
+        raise ValueError("control_count must be at least degree + 1")
+    values = values.copy()
+    values[0] = 0.0
+    values[-1] = 1.0
+    interior_count = control_count - degree - 1
+    knots = np.concatenate(
+        [np.zeros(degree + 1), np.empty(interior_count), np.ones(degree + 1)]
+    )
+    if not interior_count:
+        return knots
+    step = len(values) / (control_count - degree)
+    for offset in range(1, interior_count + 1):
+        location = offset * step
+        index = min(max(1, int(math.floor(location))), len(values) - 1)
+        alpha = location - math.floor(location)
+        knots[degree + offset] = (
+            (1.0 - alpha) * values[index - 1] + alpha * values[index]
+        )
+    return knots
+
+
+def _evaluate_polyline_at_parameters(
+    points: np.ndarray, parameters: np.ndarray, query: np.ndarray
+) -> np.ndarray:
+    unique_parameters, indices = np.unique(parameters, return_index=True)
+    unique_points = points[indices]
+    if len(unique_parameters) < 2:
+        return np.repeat(unique_points[:1], len(query), axis=0)
+    return np.column_stack(
+        [
+            np.interp(query, unique_parameters, unique_points[:, coordinate])
+            for coordinate in range(points.shape[1])
+        ]
     )
 
 
