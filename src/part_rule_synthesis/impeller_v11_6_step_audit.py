@@ -34,6 +34,7 @@ from part_rule_synthesis import impeller_v11_6_periodic_blades as periodic_blade
 from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as axis_first_pipeline
 from part_rule_synthesis import impeller_v11_6_pattern_reconstruction as pattern_reconstruction
 from part_rule_synthesis.impeller_v11_6_deviation import (
+    DEVIATION_CHECKPOINT_REVISION,
     TriangleMesh,
     artifact_record,
     combine_triangle_meshes,
@@ -50,12 +51,14 @@ from part_rule_synthesis.service import RuleSynthesisService
 AUDIT_CONTRACT_ID = "impeller_v1_1_6_step_reconstruction_audit"
 AUDIT_RUNTIME_VERSION = "1.1.6"
 CANONICAL_GEOMETRY_VERSION = "1.1.2"
-AUDIT_IMPLEMENTATION_REVISION = "axis_first_triangle_surface_r13_2"
+AUDIT_IMPLEMENTATION_REVISION = "axis_first_triangle_surface_r14_0"
 SOURCE_REVIEW_LINEAR_TOLERANCE_MM = 0.06
 SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD = 0.08
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_FACE_COUNT = 20_000
 MAX_QUEUE_LENGTH = 4
+DEFAULT_DEVIATION_MAX_WORKERS = 2
+MAX_DEVIATION_MAX_WORKERS = 4
 AUDIT_STAGES = (
     "uploaded",
     "brep_loaded",
@@ -167,11 +170,16 @@ class StepReconstructionAuditService:
     def __init__(self, root: str | Path, *, run_async: bool = True):
         self.root = Path(root) / "step_reconstruction_audits"
         self.root.mkdir(parents=True, exist_ok=True)
+        self.deviation_checkpoint_root = (
+            self.root.parent
+            / "step_reconstruction_cache"
+            / DEVIATION_CHECKPOINT_REVISION
+        )
+        self.instance_id = uuid4().hex
         self.run_async = run_async
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="step-audit") if run_async else None
         self._queued = 0
         self._lock = threading.Lock()
-        self._recover_interrupted_audits()
 
     def begin_upload(self, filename: str) -> UploadHandle:
         safe_filename = sanitize_step_filename(filename)
@@ -243,6 +251,7 @@ class StepReconstructionAuditService:
                         "sha256": sha256,
                         "step_schema": header["step_schema"],
                     },
+                    "worker_owner": self._worker_owner("QUEUED"),
                 }
             )
             self._write_status(handle.audit_id, status)
@@ -321,6 +330,7 @@ class StepReconstructionAuditService:
                     "status": "FAILED",
                     "failure": {"reason": exc.reason, "message": str(exc), "details": exc.details},
                     "finished_at": _now(),
+                    "worker_owner": self._worker_owner("FAILED"),
                 }
             )
             self._write_status(audit_id, status)
@@ -335,6 +345,7 @@ class StepReconstructionAuditService:
                         "details": {"exception_type": type(exc).__name__},
                     },
                     "finished_at": _now(),
+                    "worker_owner": self._worker_owner("FAILED"),
                 }
             )
             self._write_status(audit_id, status)
@@ -346,7 +357,12 @@ class StepReconstructionAuditService:
         audit_dir = self._audit_path(audit_id)
         source_path = audit_dir / "source.step"
         status = self.status(audit_id)
-        status["status"] = "RUNNING"
+        status.update(
+            {
+                "status": "RUNNING",
+                "worker_owner": self._worker_owner("RUNNING"),
+            }
+        )
         self._write_status(audit_id, status)
         stage_records: list[dict[str, Any]] = [{"stage": "uploaded", "status": "PASS", "duration_ms": 0}]
 
@@ -472,7 +488,26 @@ class StepReconstructionAuditService:
                     "in V1.1.6 corresponding-surface phase"
                 ),
             )
-            comparison, heatmap = compare_corresponding_mesh_regions(surface_pairs)
+            deviation_execution: dict[str, Any] = {}
+            deviation_workers = _configured_deviation_max_workers()
+            self._set_deviation_progress(
+                audit_id,
+                {
+                    "completed_surface_count": 0,
+                    "total_surface_count": len(surface_pairs),
+                    "duration_ms": 0.0,
+                },
+            )
+            comparison, heatmap = compare_corresponding_mesh_regions(
+                surface_pairs,
+                execution_stats=deviation_execution,
+                progress_callback=lambda progress: self._set_deviation_progress(
+                    audit_id, progress
+                ),
+                query_workers=1,
+                max_workers=deviation_workers,
+                checkpoint_dir=self.deviation_checkpoint_root,
+            )
             comparison["scope"] = copy.deepcopy(comparison_scope)
             comparison["surface_ledger"] = copy.deepcopy(surface_ledger)
             comparison["alignment_applied_to"] = (
@@ -505,6 +540,7 @@ class StepReconstructionAuditService:
                     "reconstruction_to_corresponding_source"
                 ],
                 "comparison_alignment": comparison_alignment,
+                "execution_diagnostics": deviation_execution,
             },
         )
 
@@ -615,6 +651,14 @@ class StepReconstructionAuditService:
                 "finished_at": _now(),
                 "manifest_available": True,
                 "manifest_sha256": manifest_sha256,
+                "worker_owner": self._worker_owner("COMPLETE"),
+                "progress": {
+                    "phase": "complete",
+                    "completed_surface_count": len(surface_pairs),
+                    "total_surface_count": len(surface_pairs),
+                    "fraction_complete": 1.0,
+                    "updated_at": _now(),
+                },
                 "algorithm_readiness": copy.deepcopy(
                     axis_first_manifest["algorithm_readiness"]
                 ),
@@ -635,6 +679,37 @@ class StepReconstructionAuditService:
         status = self.status(audit_id)
         status["current_stage"] = stage
         self._write_status(audit_id, status)
+
+    def _set_deviation_progress(
+        self, audit_id: str, progress: Mapping[str, Any]
+    ) -> None:
+        completed = int(progress.get("completed_surface_count", 0))
+        total = int(progress.get("total_surface_count", 0))
+        if total <= 0 or completed < 0 or completed > total:
+            raise ValueError("surface deviation progress is outside its bounds")
+        status = self.status(audit_id)
+        status["current_stage"] = "surface_deviation"
+        status["progress"] = {
+            "phase": "surface_deviation",
+            "completed_surface_count": completed,
+            "total_surface_count": total,
+            "fraction_complete": round(completed / total, 6),
+            "last_surface_id": str(progress.get("role", "")),
+            "last_surface_duration_ms": round(
+                float(progress.get("duration_ms", 0.0)), 3
+            ),
+            "updated_at": _now(),
+        }
+        status["worker_owner"] = self._worker_owner("RUNNING")
+        self._write_status(audit_id, status)
+
+    def _worker_owner(self, state: str) -> dict[str, Any]:
+        return {
+            "service_instance_id": self.instance_id,
+            "pid": os.getpid(),
+            "state": str(state),
+            "heartbeat_at": _now(),
+        }
 
     def _complete_reconstruction_stage(
         self,
@@ -717,7 +792,7 @@ class StepReconstructionAuditService:
             and _audit_artifacts_match_manifest(audit_dir, manifest)
         )
 
-    def _recover_interrupted_audits(self) -> None:
+    def recover_interrupted_audits(self) -> None:
         for audit_dir in self.root.glob("step-audit-*"):
             status_path = audit_dir / "status.json"
             if not status_path.is_file():
@@ -728,15 +803,23 @@ class StepReconstructionAuditService:
                 continue
             if status.get("status") not in {"UPLOADING", "QUEUED", "RUNNING"}:
                 continue
+            owner = status.get("worker_owner")
+            owner_pid = owner.get("pid") if isinstance(owner, dict) else None
+            if isinstance(owner_pid, int) and _process_is_alive(owner_pid):
+                continue
             status.update(
                 {
                     "status": "FAILED",
                     "failure": {
                         "reason": "v116_audit_interrupted",
                         "message": "STEP reconstruction was interrupted by a service restart; submit the source again",
-                        "details": {"previous_stage": status.get("current_stage")},
+                        "details": {
+                            "previous_stage": status.get("current_stage"),
+                            "previous_worker_owner": copy.deepcopy(owner),
+                        },
                     },
                     "finished_at": _now(),
+                    "worker_owner": self._worker_owner("RECOVERED_FAILED"),
                 }
             )
             _atomic_json(status_path, status)
@@ -2931,6 +3014,18 @@ def _is_sha256(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
+def _configured_deviation_max_workers() -> int:
+    raw = os.environ.get(
+        "V116_DEVIATION_MAX_WORKERS", str(DEFAULT_DEVIATION_MAX_WORKERS)
+    )
+    try:
+        requested = int(raw)
+    except ValueError:
+        requested = DEFAULT_DEVIATION_MAX_WORKERS
+    available = max(1, int(os.cpu_count() or 1) - 1)
+    return max(1, min(requested, MAX_DEVIATION_MAX_WORKERS, available))
+
+
 def _stage_summary(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -2952,6 +3047,7 @@ def _stage_summary(value: Any) -> dict[str, Any]:
         "generation_id",
         "geometry_validation_status",
         "bidirectional",
+        "execution_diagnostics",
     )
     return {key: value[key] for key in preferred if key in value}
 
@@ -2998,6 +3094,22 @@ def _json_manifest_value(value: Any) -> Any:
     if isinstance(value, np.generic):
         return value.item()
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _process_is_alive(pid: int) -> bool:
+    if int(pid) <= 0:
+        return False
+    if int(pid) == os.getpid():
+        return True
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _now() -> str:

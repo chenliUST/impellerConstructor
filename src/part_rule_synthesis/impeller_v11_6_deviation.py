@@ -3,11 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import struct
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 import numpy as np
 
@@ -34,6 +37,7 @@ _REGIONAL_EVIDENCE_FIELDS = frozenset(
     }
 )
 _DIRECTIONAL_WEIGHT = 0.5
+DEVIATION_CHECKPOINT_REVISION = "exact_triangle_surface_r14_0"
 
 
 @dataclass(frozen=True)
@@ -140,6 +144,206 @@ class TriangleSurfaceIndex:
                     neighbor_count * 2, len(bucket.triangles)
                 )
         return result
+
+
+@dataclass(frozen=True)
+class _SurfaceComparisonResult:
+    role: str
+    source: TriangleMesh
+    reconstruction: TriangleMesh
+    centroid_errors: np.ndarray
+    reverse_centroid_errors: np.ndarray
+    vertex_errors: np.ndarray
+    regional_metric: dict[str, Any]
+    timing: dict[str, Any]
+
+
+def _surface_regional_metric(
+    source: TriangleMesh,
+    reconstruction: TriangleMesh,
+    centroid_errors: np.ndarray,
+    reverse_centroid_errors: np.ndarray,
+) -> dict[str, Any]:
+    return {
+        "reconstruction_to_corresponding_source": _distribution(
+            centroid_errors
+        ),
+        "corresponding_source_to_reconstruction": _distribution(
+            reverse_centroid_errors
+        ),
+        "symmetric_corresponding_sample_distribution": (
+            _equal_weight_bidirectional_distribution(
+                centroid_errors, reverse_centroid_errors
+            )
+        ),
+        "source_triangle_count": int(len(source.triangles)),
+        "reconstruction_triangle_count": int(len(reconstruction.triangles)),
+        "comparison_direction": (
+            "reconstruction_samples_to_corresponding_source_triangle_surfaces"
+        ),
+    }
+
+
+def _mesh_distance_fingerprint(mesh: TriangleMesh) -> str:
+    digest = hashlib.sha256()
+    for array in (mesh.vertices, mesh.triangles):
+        values = np.ascontiguousarray(array)
+        digest.update(str(values.dtype).encode("ascii"))
+        digest.update(struct.pack("<I", values.ndim))
+        digest.update(struct.pack(f"<{values.ndim}Q", *values.shape))
+        digest.update(memoryview(values).cast("B"))
+    return digest.hexdigest()
+
+
+def _surface_pair_checkpoint_key(
+    role: str, source_fingerprint: str, reconstruction_fingerprint: str
+) -> str:
+    payload = "\0".join(
+        (
+            DEVIATION_CHECKPOINT_REVISION,
+            str(role),
+            source_fingerprint,
+            reconstruction_fingerprint,
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _load_surface_checkpoint(
+    path: Path,
+    *,
+    checkpoint_key: str,
+    role: str,
+    source: TriangleMesh,
+    reconstruction: TriangleMesh,
+) -> _SurfaceComparisonResult | None:
+    if not path.is_file():
+        return None
+    started = time.perf_counter()
+    try:
+        with np.load(path, allow_pickle=False) as payload:
+            if str(payload["contract_revision"].item()) != DEVIATION_CHECKPOINT_REVISION:
+                return None
+            if str(payload["checkpoint_key"].item()) != checkpoint_key:
+                return None
+            centroid_errors = np.asarray(payload["centroid_errors"], dtype=float)
+            reverse_centroid_errors = np.asarray(
+                payload["reverse_centroid_errors"], dtype=float
+            )
+            vertex_errors = np.asarray(payload["vertex_errors"], dtype=float)
+    except (OSError, KeyError, ValueError):
+        return None
+    if (
+        len(centroid_errors) != len(reconstruction.triangles)
+        or len(reverse_centroid_errors) != len(source.triangles)
+        or len(vertex_errors) != len(reconstruction.vertices)
+        or not np.all(np.isfinite(centroid_errors))
+        or not np.all(np.isfinite(reverse_centroid_errors))
+        or not np.all(np.isfinite(vertex_errors))
+    ):
+        return None
+    timing = {
+        "role": role,
+        "source_triangle_count": int(len(source.triangles)),
+        "reconstruction_triangle_count": int(len(reconstruction.triangles)),
+        "forward_query_point_count": int(
+            len(reconstruction.triangles) + len(reconstruction.vertices)
+        ),
+        "reverse_query_point_count": int(len(source.triangles)),
+        "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        "checkpoint_hit": True,
+    }
+    return _SurfaceComparisonResult(
+        role=role,
+        source=source,
+        reconstruction=reconstruction,
+        centroid_errors=centroid_errors,
+        reverse_centroid_errors=reverse_centroid_errors,
+        vertex_errors=vertex_errors,
+        regional_metric=_surface_regional_metric(
+            source,
+            reconstruction,
+            centroid_errors,
+            reverse_centroid_errors,
+        ),
+        timing=timing,
+    )
+
+
+def _write_surface_checkpoint(
+    path: Path,
+    *,
+    checkpoint_key: str,
+    result: _SurfaceComparisonResult,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary.open("xb") as stream:
+            np.savez(
+                stream,
+                contract_revision=np.asarray(DEVIATION_CHECKPOINT_REVISION),
+                checkpoint_key=np.asarray(checkpoint_key),
+                centroid_errors=np.asarray(result.centroid_errors, dtype=np.float64),
+                reverse_centroid_errors=np.asarray(
+                    result.reverse_centroid_errors, dtype=np.float64
+                ),
+                vertex_errors=np.asarray(result.vertex_errors, dtype=np.float64),
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _compare_indexed_surface_pair(
+    role: str,
+    source: TriangleMesh,
+    reconstruction: TriangleMesh,
+    source_index: TriangleSurfaceIndex,
+    *,
+    query_workers: int,
+) -> _SurfaceComparisonResult:
+    started = time.perf_counter()
+    reconstruction_index = TriangleSurfaceIndex.build(reconstruction)
+    reconstruction_centroids = _triangle_centroids(reconstruction)
+    forward_points = np.concatenate(
+        (reconstruction_centroids, reconstruction.vertices), axis=0
+    )
+    forward_errors = source_index.distances(
+        forward_points, workers=query_workers
+    )
+    centroid_errors = forward_errors[: len(reconstruction_centroids)]
+    vertex_errors = forward_errors[len(reconstruction_centroids) :]
+    reverse_centroid_errors = reconstruction_index.distances(
+        _triangle_centroids(source), workers=query_workers
+    )
+    regional_metric = _surface_regional_metric(
+        source,
+        reconstruction,
+        centroid_errors,
+        reverse_centroid_errors,
+    )
+    timing = {
+        "role": role,
+        "source_triangle_count": int(len(source.triangles)),
+        "reconstruction_triangle_count": int(len(reconstruction.triangles)),
+        "forward_query_point_count": int(len(forward_points)),
+        "reverse_query_point_count": int(len(source.triangles)),
+        "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        "checkpoint_hit": False,
+    }
+    return _SurfaceComparisonResult(
+        role=role,
+        source=source,
+        reconstruction=reconstruction,
+        centroid_errors=centroid_errors,
+        reverse_centroid_errors=reverse_centroid_errors,
+        vertex_errors=vertex_errors,
+        regional_metric=regional_metric,
+        timing=timing,
+    )
 
 
 def read_stl(path: str | Path) -> TriangleMesh:
@@ -276,11 +480,19 @@ def compare_corresponding_mesh_regions(
     execution_stats: dict[str, Any] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     query_workers: int = 1,
+    max_workers: int = 1,
+    checkpoint_dir: str | Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Measure each reconstruction region against only its source counterpart."""
 
     if not regions:
         raise ValueError("corresponding mesh comparison requires at least one region")
+    if int(max_workers) < 1:
+        raise ValueError("corresponding mesh comparison requires a positive worker count")
+    if int(max_workers) > 1 and int(query_workers) != 1:
+        raise ValueError(
+            "parallel surface comparison requires single-worker tree queries"
+        )
     started = time.perf_counter()
     regional_metrics: dict[str, Any] = {}
     reconstruction_meshes: list[TriangleMesh] = []
@@ -288,22 +500,23 @@ def compare_corresponding_mesh_regions(
     reconstruction_centroid_errors: list[np.ndarray] = []
     source_centroid_errors: list[np.ndarray] = []
     triangle_regions: list[str] = []
-    index_cache: dict[int, TriangleSurfaceIndex] = {}
+    validated_pairs: dict[str, tuple[TriangleMesh, TriangleMesh]] = {}
+    source_indexes: dict[int, TriangleSurfaceIndex] = {}
     source_mesh_ids: set[int] = set()
     reconstruction_mesh_ids: set[int] = set()
-    distance_query_count = 0
-    role_timings = []
-
-    def index_for(mesh: TriangleMesh) -> TriangleSurfaceIndex:
-        mesh_id = id(mesh)
-        index = index_cache.get(mesh_id)
-        if index is None:
-            index = TriangleSurfaceIndex.build(mesh)
-            index_cache[mesh_id] = index
-        return index
-
+    role_results: dict[str, _SurfaceComparisonResult] = {}
+    checkpoint_keys: dict[str, str] = {}
+    checkpoint_paths: dict[str, Path] = {}
+    checkpoint_hit_count = 0
+    checkpoint_write_count = 0
+    checkpoint_write_failure_count = 0
+    checkpoint_root = Path(checkpoint_dir) if checkpoint_dir is not None else None
+    if checkpoint_root is not None:
+        try:
+            checkpoint_root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            checkpoint_root = None
     for role in sorted(regions):
-        role_started = time.perf_counter()
         pair = regions[role]
         if not isinstance(pair, tuple) or len(pair) != 2:
             raise ValueError(f"region {role!r} must contain source and reconstruction meshes")
@@ -312,67 +525,127 @@ def compare_corresponding_mesh_regions(
             raise ValueError(f"region {role!r} contains an empty mesh")
         source_mesh_ids.add(id(source))
         reconstruction_mesh_ids.add(id(reconstruction))
-        source_index = index_for(source)
-        reconstruction_index = index_for(reconstruction)
-        reconstruction_centroids = _triangle_centroids(reconstruction)
-        forward_points = np.concatenate(
-            (reconstruction_centroids, reconstruction.vertices), axis=0
-        )
-        forward_errors = source_index.distances(
-            forward_points, workers=query_workers
-        )
-        distance_query_count += 1
-        centroid_errors = forward_errors[: len(reconstruction_centroids)]
-        vertex_errors = forward_errors[len(reconstruction_centroids) :]
-        reverse_centroid_errors = _nearest_triangle_surface_distances(
-            _triangle_centroids(source),
-            reconstruction,
-            index=reconstruction_index,
-            workers=query_workers,
-        )
-        distance_query_count += 1
-        regional_metrics[role] = {
-            "reconstruction_to_corresponding_source": _distribution(
-                centroid_errors
-            ),
-            "corresponding_source_to_reconstruction": _distribution(
-                reverse_centroid_errors
-            ),
-            "symmetric_corresponding_sample_distribution": (
-                _equal_weight_bidirectional_distribution(
-                    centroid_errors, reverse_centroid_errors
+        validated_pairs[role] = (source, reconstruction)
+
+    roles = sorted(validated_pairs)
+    if checkpoint_root is not None:
+        source_fingerprints: dict[int, str] = {}
+        reconstruction_fingerprints: dict[int, str] = {}
+        for role in roles:
+            source, reconstruction = validated_pairs[role]
+            if id(source) not in source_fingerprints:
+                source_fingerprints[id(source)] = _mesh_distance_fingerprint(source)
+            if id(reconstruction) not in reconstruction_fingerprints:
+                reconstruction_fingerprints[id(reconstruction)] = (
+                    _mesh_distance_fingerprint(reconstruction)
                 )
-            ),
-            "source_triangle_count": int(len(source.triangles)),
-            "reconstruction_triangle_count": int(len(reconstruction.triangles)),
-            "comparison_direction": (
-                "reconstruction_samples_to_corresponding_source_triangle_surfaces"
-            ),
-        }
-        reconstruction_meshes.append(reconstruction)
-        reconstruction_vertex_errors.append(vertex_errors)
-        reconstruction_centroid_errors.append(centroid_errors)
-        source_centroid_errors.append(reverse_centroid_errors)
-        triangle_regions.extend([role] * len(reconstruction.triangles))
-        role_timing = {
-            "role": role,
-            "source_triangle_count": int(len(source.triangles)),
-            "reconstruction_triangle_count": int(len(reconstruction.triangles)),
-            "forward_query_point_count": int(len(forward_points)),
-            "reverse_query_point_count": int(len(source.triangles)),
-            "duration_ms": round(
-                (time.perf_counter() - role_started) * 1000.0, 3
-            ),
-        }
-        role_timings.append(role_timing)
+            source_fingerprint = source_fingerprints[id(source)]
+            reconstruction_fingerprint = reconstruction_fingerprints[
+                id(reconstruction)
+            ]
+            checkpoint_key = _surface_pair_checkpoint_key(
+                role, source_fingerprint, reconstruction_fingerprint
+            )
+            checkpoint_path = checkpoint_root / f"{checkpoint_key}.npz"
+            checkpoint_keys[role] = checkpoint_key
+            checkpoint_paths[role] = checkpoint_path
+            cached = _load_surface_checkpoint(
+                checkpoint_path,
+                checkpoint_key=checkpoint_key,
+                role=role,
+                source=source,
+                reconstruction=reconstruction,
+            )
+            if cached is not None:
+                role_results[role] = cached
+                checkpoint_hit_count += 1
+
+    pending_roles = [role for role in roles if role not in role_results]
+    for role in pending_roles:
+        source, _ = validated_pairs[role]
+        if id(source) not in source_indexes:
+            source_indexes[id(source)] = TriangleSurfaceIndex.build(source)
+
+    def compare_role(role: str) -> _SurfaceComparisonResult:
+        source, reconstruction = validated_pairs[role]
+        return _compare_indexed_surface_pair(
+            role,
+            source,
+            reconstruction,
+            source_indexes[id(source)],
+            query_workers=int(query_workers),
+        )
+
+    completed_surface_count = 0
+    for role in roles:
+        cached = role_results.get(role)
+        if cached is None:
+            continue
+        completed_surface_count += 1
         if progress_callback is not None:
             progress_callback(
                 {
-                    **role_timing,
-                    "completed_surface_count": len(role_timings),
-                    "total_surface_count": len(regions),
+                    **cached.timing,
+                    "completed_surface_count": completed_surface_count,
+                    "total_surface_count": len(roles),
                 }
             )
+
+    def record_computed_result(result: _SurfaceComparisonResult) -> None:
+        nonlocal completed_surface_count
+        nonlocal checkpoint_write_count
+        nonlocal checkpoint_write_failure_count
+        role_results[result.role] = result
+        checkpoint_path = checkpoint_paths.get(result.role)
+        if checkpoint_path is not None:
+            try:
+                _write_surface_checkpoint(
+                    checkpoint_path,
+                    checkpoint_key=checkpoint_keys[result.role],
+                    result=result,
+                )
+                checkpoint_write_count += 1
+            except OSError:
+                checkpoint_write_failure_count += 1
+        completed_surface_count += 1
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    **result.timing,
+                    "completed_surface_count": completed_surface_count,
+                    "total_surface_count": len(roles),
+                }
+            )
+
+    actual_max_workers = min(int(max_workers), len(pending_roles))
+    if actual_max_workers == 1:
+        completed_results = (compare_role(role) for role in pending_roles)
+        for result in completed_results:
+            record_computed_result(result)
+    elif actual_max_workers > 1:
+        with ThreadPoolExecutor(
+            max_workers=actual_max_workers,
+            thread_name_prefix="surface-deviation",
+        ) as executor:
+            futures = {
+                executor.submit(compare_role, role): role for role in pending_roles
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                record_computed_result(result)
+
+    role_timings = []
+    for role in roles:
+        result = role_results[role]
+        regional_metrics[role] = result.regional_metric
+        reconstruction_meshes.append(result.reconstruction)
+        reconstruction_vertex_errors.append(result.vertex_errors)
+        reconstruction_centroid_errors.append(result.centroid_errors)
+        source_centroid_errors.append(result.reverse_centroid_errors)
+        triangle_regions.extend(
+            [role] * len(result.reconstruction.triangles)
+        )
+        role_timings.append(result.timing)
 
     combined_mesh = combine_triangle_meshes(reconstruction_meshes)
     combined_vertex_errors = np.concatenate(reconstruction_vertex_errors)
@@ -415,10 +688,18 @@ def compare_corresponding_mesh_regions(
                 "unique_reconstruction_index_count": len(
                     reconstruction_mesh_ids
                 ),
-                "triangle_index_build_count": len(index_cache),
-                "distance_query_count": distance_query_count,
+                "triangle_index_build_count": len(source_indexes)
+                + len(pending_roles),
+                "distance_query_count": 2 * len(pending_roles),
                 "legacy_distance_query_count": 3 * len(regions),
+                "checkpoint_contract_revision": DEVIATION_CHECKPOINT_REVISION,
+                "checkpoint_enabled": checkpoint_root is not None,
+                "checkpoint_hit_count": checkpoint_hit_count,
+                "checkpoint_write_count": checkpoint_write_count,
+                "checkpoint_write_failure_count": checkpoint_write_failure_count,
+                "pending_surface_count": len(pending_roles),
                 "query_workers": int(query_workers),
+                "max_workers": actual_max_workers,
                 "duration_ms": round(
                     (time.perf_counter() - started) * 1000.0, 3
                 ),

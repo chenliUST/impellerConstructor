@@ -61,6 +61,116 @@ def test_v116_contract_keeps_v112_geometry_authority():
     assert CANONICAL_GEOMETRY_VERSION == "1.1.2"
 
 
+def test_deviation_checkpoints_are_shared_by_exact_contract_revision(tmp_path):
+    first = step_audit_module.StepReconstructionAuditService(
+        tmp_path, run_async=False
+    )
+    second = step_audit_module.StepReconstructionAuditService(
+        tmp_path, run_async=False
+    )
+
+    assert first.deviation_checkpoint_root == second.deviation_checkpoint_root
+    assert first.deviation_checkpoint_root.name == (
+        step_audit_module.DEVIATION_CHECKPOINT_REVISION
+    )
+    assert first.deviation_checkpoint_root.parent.name == (
+        "step_reconstruction_cache"
+    )
+
+
+def test_deviation_progress_is_persisted_without_completing_the_stage(tmp_path):
+    service = step_audit_module.StepReconstructionAuditService(
+        tmp_path, run_async=False
+    )
+    handle = service.begin_upload("progress.step")
+
+    service._set_deviation_progress(
+        handle.audit_id,
+        {
+            "role": "blade_pressure_surface_0001",
+            "completed_surface_count": 3,
+            "total_surface_count": 12,
+            "duration_ms": 1250.0,
+        },
+    )
+
+    status = service.status(handle.audit_id)
+    assert status["status"] == "UPLOADING"
+    assert status["current_stage"] == "surface_deviation"
+    assert status["progress"] == {
+        "phase": "surface_deviation",
+        "completed_surface_count": 3,
+        "total_surface_count": 12,
+        "fraction_complete": 0.25,
+        "last_surface_id": "blade_pressure_surface_0001",
+        "last_surface_duration_ms": 1250.0,
+        "updated_at": status["progress"]["updated_at"],
+    }
+
+
+def test_recovery_does_not_interrupt_audit_owned_by_a_live_worker(tmp_path):
+    owner = step_audit_module.StepReconstructionAuditService(
+        tmp_path, run_async=False
+    )
+    handle = owner.begin_upload("owned.step")
+    status = owner.status(handle.audit_id)
+    status.update(
+        {
+            "status": "RUNNING",
+            "worker_owner": {
+                "service_instance_id": owner.instance_id,
+                "pid": os.getpid(),
+                "state": "RUNNING",
+            },
+        }
+    )
+    owner._write_status(handle.audit_id, status)
+
+    observer = step_audit_module.StepReconstructionAuditService(
+        tmp_path, run_async=False
+    )
+    observer.recover_interrupted_audits()
+
+    recovered = observer.status(handle.audit_id)
+    assert recovered["status"] == "RUNNING"
+    assert "failure" not in recovered
+
+
+def test_recovery_marks_audit_owned_by_dead_worker_as_interrupted(
+    tmp_path, monkeypatch
+):
+    owner = step_audit_module.StepReconstructionAuditService(
+        tmp_path, run_async=False
+    )
+    handle = owner.begin_upload("orphan.step")
+    status = owner.status(handle.audit_id)
+    status.update(
+        {
+            "status": "RUNNING",
+            "current_stage": "surface_deviation",
+            "worker_owner": {
+                "service_instance_id": "dead-instance",
+                "pid": 999_999_999,
+                "state": "RUNNING",
+            },
+        }
+    )
+    owner._write_status(handle.audit_id, status)
+    monkeypatch.setattr(step_audit_module, "_process_is_alive", lambda _pid: False)
+
+    observer = step_audit_module.StepReconstructionAuditService(
+        tmp_path, run_async=False
+    )
+    observer.recover_interrupted_audits()
+
+    recovered = observer.status(handle.audit_id)
+    assert recovered["status"] == "FAILED"
+    assert recovered["failure"]["reason"] == "v116_audit_interrupted"
+    assert recovered["failure"]["details"]["previous_stage"] == (
+        "surface_deviation"
+    )
+
+
 def test_r13_review_sampling_meets_dense_surface_and_source_targets():
     defaults = {
         "side_sample_count": 7,

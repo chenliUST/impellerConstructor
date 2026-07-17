@@ -58,6 +58,9 @@ def create_app(root: Path | None = None) -> FastAPI:
     engineering_drawing_cache: dict[str, dict[str, Any]] = {}
     app = FastAPI(title="Part Rule Synthesis", version="0.1.0")
     app.state.step_reconstruction_audits = step_audits
+    app.router.add_event_handler(
+        "startup", step_audits.recover_interrupted_audits
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[

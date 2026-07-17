@@ -243,6 +243,141 @@ def test_corresponding_comparison_reuses_source_index_and_fuses_forward_queries(
     assert execution_stats["legacy_distance_query_count"] == 6
 
 
+def test_parallel_corresponding_comparison_is_numerically_identical_to_serial():
+    source = _repeated_triangle_mesh(z=0.0, count=18)
+    regions = {
+        f"surface_{index}": (
+            source,
+            _translated_triangle_mesh(x=0.05 * index, z=0.2 + 0.1 * index),
+        )
+        for index in range(6)
+    }
+    serial_stats = {}
+    parallel_stats = {}
+    progress = []
+
+    serial_metrics, serial_heatmap = compare_corresponding_mesh_regions(
+        regions,
+        max_workers=1,
+        execution_stats=serial_stats,
+    )
+    parallel_metrics, parallel_heatmap = compare_corresponding_mesh_regions(
+        regions,
+        max_workers=4,
+        execution_stats=parallel_stats,
+        progress_callback=progress.append,
+    )
+
+    assert parallel_metrics == serial_metrics
+    assert parallel_heatmap == serial_heatmap
+    assert serial_stats["max_workers"] == 1
+    assert parallel_stats["max_workers"] == 4
+    assert parallel_stats["triangle_index_build_count"] == 7
+    assert sorted(item["completed_surface_count"] for item in progress) == list(
+        range(1, 7)
+    )
+    assert all(item["total_surface_count"] == 6 for item in progress)
+
+
+def test_exact_surface_checkpoints_are_reused_without_recomputing_distances(
+    tmp_path,
+):
+    source = _repeated_triangle_mesh(z=0.0, count=15)
+    regions = {
+        "surface_a": (source, _translated_triangle_mesh(x=0.1, z=0.3)),
+        "surface_b": (source, _translated_triangle_mesh(x=0.2, z=0.6)),
+    }
+    first_stats = {}
+    second_stats = {}
+
+    first_metrics, first_heatmap = compare_corresponding_mesh_regions(
+        regions,
+        max_workers=2,
+        checkpoint_dir=tmp_path / "checkpoints",
+        execution_stats=first_stats,
+    )
+    second_metrics, second_heatmap = compare_corresponding_mesh_regions(
+        regions,
+        max_workers=2,
+        checkpoint_dir=tmp_path / "checkpoints",
+        execution_stats=second_stats,
+    )
+
+    assert second_metrics == first_metrics
+    assert second_heatmap == first_heatmap
+    assert first_stats["checkpoint_hit_count"] == 0
+    assert first_stats["checkpoint_write_count"] == 2
+    assert second_stats["checkpoint_hit_count"] == 2
+    assert second_stats["checkpoint_write_count"] == 0
+    assert second_stats["triangle_index_build_count"] == 0
+    assert second_stats["distance_query_count"] == 0
+
+
+def test_surface_checkpoint_invalidates_only_the_changed_geometry(tmp_path):
+    source = _repeated_triangle_mesh(z=0.0, count=15)
+    original_regions = {
+        "surface_a": (source, _translated_triangle_mesh(x=0.1, z=0.3)),
+        "surface_b": (source, _translated_triangle_mesh(x=0.2, z=0.6)),
+    }
+    compare_corresponding_mesh_regions(
+        original_regions,
+        max_workers=2,
+        checkpoint_dir=tmp_path / "checkpoints",
+    )
+    changed_regions = {
+        **original_regions,
+        "surface_b": (source, _translated_triangle_mesh(x=0.2, z=0.7)),
+    }
+    stats = {}
+
+    compare_corresponding_mesh_regions(
+        changed_regions,
+        max_workers=2,
+        checkpoint_dir=tmp_path / "checkpoints",
+        execution_stats=stats,
+    )
+
+    assert stats["checkpoint_hit_count"] == 1
+    assert stats["checkpoint_write_count"] == 1
+    assert stats["pending_surface_count"] == 1
+    assert stats["triangle_index_build_count"] == 2
+    assert stats["distance_query_count"] == 2
+
+
+def test_parallel_partial_checkpoint_submits_only_changed_surfaces(tmp_path):
+    source = _repeated_triangle_mesh(z=0.0, count=15)
+    original_regions = {
+        f"surface_{index}": (
+            source,
+            _translated_triangle_mesh(x=0.1 * index, z=0.2 * index),
+        )
+        for index in range(3)
+    }
+    compare_corresponding_mesh_regions(
+        original_regions,
+        max_workers=2,
+        checkpoint_dir=tmp_path / "checkpoints",
+    )
+    changed_regions = {
+        **original_regions,
+        "surface_1": (source, _translated_triangle_mesh(x=0.1, z=0.25)),
+        "surface_2": (source, _translated_triangle_mesh(x=0.2, z=0.45)),
+    }
+    stats = {}
+
+    compare_corresponding_mesh_regions(
+        changed_regions,
+        max_workers=2,
+        checkpoint_dir=tmp_path / "checkpoints",
+        execution_stats=stats,
+    )
+
+    assert stats["checkpoint_hit_count"] == 1
+    assert stats["pending_surface_count"] == 2
+    assert stats["checkpoint_write_count"] == 2
+    assert stats["max_workers"] == 2
+
+
 def _triangle_mesh(*, z):
     return TriangleMesh(
         vertices=np.asarray([[0.0, 0.0, z], [1.0, 0.0, z], [0.0, 1.0, z]], dtype=float),

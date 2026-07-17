@@ -451,6 +451,25 @@ docs/evidence/2026-07-12-impeller-v1-1-5-verification-evidence.md
 - R13.2 remains `review_only_not_promotable`: exact source PS/SS and LE/TE
   ownership, local unsupported-feature masks, browser pixel evidence and a
   fresh full R13.2 deviation audit remain open.
+- R14.0 keeps V1.1.2 geometry and exact corresponding-surface metrics frozen
+  while reusing triangle indexes, fusing exact queries, and running independent
+  surface pairs with bounded parallel workers.
+- R14.0 adds content-addressed per-surface deviation checkpoints and live-worker
+  ownership heartbeats. A restart resumes only byte-identical source and
+  reconstruction surface pairs; changed surfaces are recomputed.
+- The retained R13.2 audit measured about 89 minutes in deviation versus about
+  10 minutes across the three reconstruction stages. An eight-surface benchmark
+  reduced 7.35 seconds serial to 4.98 seconds cold and 0.42 seconds warm with
+  equal outputs.
+- Fresh R14 audit `step-audit-058a9e65e2d341d3` completed `82/82` exact
+  surface comparisons in about 74.4 minutes total. Its complete deviation and
+  artifact stage took 3651.36 seconds versus 5363.62 seconds for R13.2, a 31.9%
+  reduction, and wrote 82 exact checkpoints totalling 40,455,892 bytes.
+- R14 remains performance evidence only. Its process status is `PASS`, while
+  its axis-first geometry status is `REJECTED`, non-promotable. Visual review
+  found a canonical-axis polarity defect that reverses the V1.1.2 support
+  endpoint semantics and produces an oversized hub outer wall; R15 owns that
+  correction.
 
 Spec, plan and evidence:
 
@@ -462,6 +481,11 @@ docs/evidence/2026-07-16-impeller-v1-1-6-r8-verification-evidence.md
 docs/evidence/2026-07-17-impeller-v1-1-6-r13-semantic-change-log.md
 docs/evidence/2026-07-17-impeller-v1-1-6-r13-insight-log.md
 docs/evidence/2026-07-17-impeller-v1-1-6-r13-verification-evidence.md
+docs/superpowers/plans/2026-07-17-impeller-v1-1-6-r14-deviation-performance-hardening.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r14-semantic-change-log.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r14-insight-log.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r14-verification-evidence.md
+docs/superpowers/plans/2026-07-17-impeller-v1-1-6-r15-axial-semantic-reconstruction-repair.md
 ```
 
 ## How To Run A Specific Version
