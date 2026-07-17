@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import * as THREE from "three";
 
-import { geometricManifestObject, StepComparisonScene } from "./StepComparisonScene.js";
+import { geometricManifestObject, StepComparisonScene, synchronizeComparisonCameras } from "./StepComparisonScene.js";
 import { stepInspectionModel } from "../stepReconstructionModel.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -96,6 +96,29 @@ describe("STEP comparison scene", () => {
       assert.ok(runtime.renderers.every((renderer) => renderer.rendered.length >= 1));
       await act(async () => root.unmount());
     });
+  });
+
+  test("uses the source canonical world camera even when reconstruction bounds are translated", () => {
+    const cameras = {
+      source: new THREE.PerspectiveCamera(),
+      reconstruction: new THREE.PerspectiveCamera(),
+      heatmap: new THREE.PerspectiveCamera(),
+    };
+    cameras.source.position.set(12, -18, 9);
+    cameras.source.near = 0.25;
+    cameras.source.far = 900;
+    const paneBounds = {
+      source: new THREE.Box3(new THREE.Vector3(-5, -5, -5), new THREE.Vector3(5, 5, 5)),
+      reconstruction: new THREE.Box3(new THREE.Vector3(95, -5, -5), new THREE.Vector3(105, 5, 5)),
+      heatmap: new THREE.Box3(new THREE.Vector3(-5, 95, -5), new THREE.Vector3(5, 105, 5)),
+    };
+
+    synchronizeComparisonCameras(THREE, cameras, paneBounds, new THREE.Vector3());
+
+    assert.deepEqual(cameras.reconstruction.position.toArray(), cameras.source.position.toArray());
+    assert.deepEqual(cameras.heatmap.position.toArray(), cameras.source.position.toArray());
+    assert.equal(cameras.reconstruction.near, cameras.source.near);
+    assert.equal(cameras.heatmap.far, cameras.source.far);
   });
 
   test("filters heatmap triangles when membership exists and reports evidence-only otherwise", async () => {

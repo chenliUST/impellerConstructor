@@ -149,6 +149,8 @@ describe("STEP reconstruction model", () => {
   test("separates audit completion from global reconstruction acceptance", () => {
     const manifest = task8Manifest("open");
     manifest.status = "PASS";
+    manifest.process_status = "COMPLETE";
+    manifest.geometry_status = "REJECTED";
     manifest.axis_first_algorithm_status = "REJECTED";
     manifest.reconstruction_disposition = "review_only_not_promotable";
     manifest.promotable = false;
@@ -160,7 +162,8 @@ describe("STEP reconstruction model", () => {
     const rows = Object.fromEntries(
       reportSummaryRows(manifest, stepInspectionModel(manifest)).map((row) => [row.id, row.value]),
     );
-    assert.equal(rows.audit_process, "PASS");
+    assert.equal(rows.audit_process, "COMPLETE");
+    assert.equal(rows.geometry_status, "REJECTED");
     assert.equal(rows.algorithm_status, "REJECTED");
     assert.equal(rows.reconstruction_disposition, "review_only_not_promotable");
     assert.equal(rows.global_promotability, "NOT PROMOTABLE");

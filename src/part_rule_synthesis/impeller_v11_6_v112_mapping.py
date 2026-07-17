@@ -112,6 +112,7 @@ DEFAULT_KEYS = frozenset(
         "blade_hub_angle_contract_deg",
         "minimum_active_blade_height_mm",
         "enforce_support_profile_contract",
+        "v116_support_endpoint_authority",
         "v116_step_reconstruction_extension",
     }
 )
@@ -1538,6 +1539,19 @@ class _MappingContext:
             "hub_solid_axial_sample_count": 25,
             "hub_profile_rz_mm": deepcopy(hub_points),
             "tip_or_shroud_profile_rz_mm": deepcopy(tip_points),
+            "v116_support_endpoint_authority": {
+                "canonical_axial_semantics": (
+                    "large_radius_backplate_to_small_radius_eye_positive_z"
+                ),
+                "hub": deepcopy(
+                    self.bundle["support_fits"]["hub"]["endpoint_roles"]
+                ),
+                "tip_or_shroud": deepcopy(
+                    self.bundle["support_fits"]["tip_or_shroud"][
+                        "endpoint_roles"
+                    ]
+                ),
+            },
             "blade_hub_angle_contract_deg": [0.0, 180.0],
             "minimum_active_blade_height_mm": 1.0,
             "enforce_support_profile_contract": False,
@@ -2504,17 +2518,32 @@ def _validate_task3_axis_consensus(value: Any) -> Mapping[str, Any]:
     direction = _require_mapping(
         consensus["direction_resolution"], f"{path}.direction_resolution"
     )
-    direction_keys = {"method", "normalized_moment"}
+    direction_keys = {
+        "method",
+        "normalized_moment",
+        "signed_normalized_moment",
+        "canonical_positive_z_role",
+    }
     _require_keys(direction, direction_keys, direction_keys, f"{path}.direction_resolution")
     if direction["method"] not in {
-        "radial_weighted_axial_asymmetry",
-        "world_lexicographic_fallback_for_axially_symmetric_source",
+        "small_radius_eye_positive_z_from_radial_weighted_axial_asymmetry",
+        "small_radius_eye_positive_z_from_authenticated_support_endpoint_evidence",
     }:
         _schema_error("frame.axis_consensus.direction_resolution.method is not Task 3 evidence")
     _nonnegative(
         direction["normalized_moment"],
         f"{path}.direction_resolution.normalized_moment",
     )
+    _positive(
+        direction["signed_normalized_moment"],
+        f"{path}.direction_resolution.signed_normalized_moment",
+    )
+    if direction["canonical_positive_z_role"] != (
+        "large_radius_backplate_to_small_radius_eye"
+    ):
+        _schema_error(
+            "frame.axis_consensus.direction_resolution has the wrong canonical axial role"
+        )
     rejected = consensus["rejected_alternatives"]
     if not _is_sequence(rejected):
         _schema_error(f"{path}.rejected_alternatives must be a sequence")
@@ -2718,8 +2747,26 @@ def _validate_support_fits(supports: Any) -> None:
         _require_mapping(fit, path)
         _require_keys(
             fit,
-            {"control_points_rz_mm", "residual_rms_mm", "source_ids", "fit_status", "measurement_authority"},
-            {"control_points_rz_mm", "residual_rms_mm", "source_ids", "fit_status", "measurement_authority"},
+            {
+                "control_points_rz_mm",
+                "residual_rms_mm",
+                "source_ids",
+                "fit_status",
+                "measurement_authority",
+                "endpoint_roles",
+                "streamwise_direction",
+                "canonical_axial_semantics",
+            },
+            {
+                "control_points_rz_mm",
+                "residual_rms_mm",
+                "source_ids",
+                "fit_status",
+                "measurement_authority",
+                "endpoint_roles",
+                "streamwise_direction",
+                "canonical_axial_semantics",
+            },
             path,
         )
         points = fit["control_points_rz_mm"]
@@ -2728,9 +2775,78 @@ def _validate_support_fits(supports: Any) -> None:
         for index, point in enumerate(points):
             _point(point, 2, f"{path}.control_points_rz_mm[{index}]")
         _nonnegative(fit["residual_rms_mm"], f"{path}.residual_rms_mm")
-        _source_ids(fit["source_ids"], f"{path}.source_ids")
+        source_ids = _source_ids(fit["source_ids"], f"{path}.source_ids")
         if fit["fit_status"] != "PASS" or fit["measurement_authority"] != "occt_trimmed_brep_measurement":
             _schema_error(f"{path} lacks promoted source B-Rep measurement authority")
+        if fit["canonical_axial_semantics"] != (
+            "large_radius_backplate_to_small_radius_eye_positive_z"
+        ):
+            raise V112MappingError(
+                "v116_support_profile_orientation_failed",
+                f"{path} does not use the canonical eye-positive axial semantics",
+            )
+        if fit["streamwise_direction"] != (
+            "eye_inlet_small_radius_to_backplate_exit_large_radius"
+        ):
+            raise V112MappingError(
+                "v116_support_profile_streamwise_mismatch",
+                f"{path} uses the opposite semantic streamwise direction",
+            )
+        roles = _require_mapping(fit["endpoint_roles"], f"{path}.endpoint_roles")
+        role_names = {
+            "eye_inlet_small_radius",
+            "backplate_exit_large_radius",
+        }
+        try:
+            _require_keys(roles, role_names, role_names, f"{path}.endpoint_roles")
+        except V112MappingError as exc:
+            raise V112MappingError(
+                "v116_support_profile_endpoint_role_missing",
+                f"{path} does not contain both named support endpoints",
+            ) from exc
+        resolved_endpoints = {}
+        for role_name, expected_index in (
+            ("eye_inlet_small_radius", 0),
+            ("backplate_exit_large_radius", len(points) - 1),
+        ):
+            role_path = f"{path}.endpoint_roles.{role_name}"
+            role = _require_mapping(roles[role_name], role_path)
+            role_keys = {
+                "control_point_index",
+                "canonical_rz_mm",
+                "source_ids",
+                "confidence",
+                "authority",
+            }
+            _require_keys(role, role_keys, role_keys, role_path)
+            if role["control_point_index"] != expected_index:
+                raise V112MappingError(
+                    "v116_support_profile_streamwise_mismatch",
+                    f"{role_path} is not bound to the expected profile endpoint",
+                )
+            endpoint = _point(role["canonical_rz_mm"], 2, f"{role_path}.canonical_rz_mm")
+            if not np.allclose(endpoint, points[expected_index], atol=1.0e-9, rtol=0.0):
+                raise V112MappingError(
+                    "v116_support_profile_endpoint_role_missing",
+                    f"{role_path} does not match its authenticated profile endpoint",
+                )
+            role_source_ids = _source_ids(role["source_ids"], f"{role_path}.source_ids")
+            if not set(role_source_ids).issubset(source_ids):
+                _schema_error(f"{role_path}.source_ids must be owned by {path}.source_ids")
+            confidence = _finite(role["confidence"], f"{role_path}.confidence")
+            if not 0.0 < confidence <= 1.0:
+                _schema_error(f"{role_path}.confidence must be in (0, 1]")
+            if role["authority"] != "authenticated_support_fit_endpoint":
+                _schema_error(f"{role_path}.authority is not authenticated")
+            resolved_endpoints[role_name] = endpoint
+        eye = resolved_endpoints["eye_inlet_small_radius"]
+        backplate = resolved_endpoints["backplate_exit_large_radius"]
+        if not (eye[0] < backplate[0] and eye[1] > backplate[1]):
+            raise V112MappingError(
+                "v116_support_profile_orientation_failed",
+                f"{path} must run from small-radius/high-Z eye to large-radius/low-Z backplate",
+                {"eye_rz_mm": eye, "backplate_rz_mm": backplate},
+            )
 
 
 def _validate_populations(populations: Any) -> None:

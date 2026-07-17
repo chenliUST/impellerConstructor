@@ -470,6 +470,18 @@ docs/evidence/2026-07-12-impeller-v1-1-5-verification-evidence.md
   found a canonical-axis polarity defect that reverses the V1.1.2 support
   endpoint semantics and produces an oversized hub outer wall; R15 owns that
   correction.
+- R15.3 defines canonical positive Z from the large-radius backplate toward the
+  small-radius eye, carries named support endpoints through mapping and hub
+  closure, and limits the outer closure wall to the measured 5.75 mm bottom
+  thickness. Source, reconstruction and heatmap now share one canonical
+  camera, while process completion and geometry acceptance are reported
+  separately.
+- Fresh audit `step-audit-e27b4c0e7c854c88` completed `82/82` exact surface
+  comparisons in about 88.6 minutes. The 82-surface reconstruction visibly
+  retains all 13 blades and no longer collapses behind an oversized cylinder.
+  It remains correctly `REJECTED`, review-only and non-promotable because
+  camber, pose, normal-thickness, edge-curve and periodicity mapping gates fail
+  and exact periodic collision is still unknown.
 
 Spec, plan and evidence:
 
@@ -486,6 +498,9 @@ docs/evidence/2026-07-17-impeller-v1-1-6-r14-semantic-change-log.md
 docs/evidence/2026-07-17-impeller-v1-1-6-r14-insight-log.md
 docs/evidence/2026-07-17-impeller-v1-1-6-r14-verification-evidence.md
 docs/superpowers/plans/2026-07-17-impeller-v1-1-6-r15-axial-semantic-reconstruction-repair.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r15-semantic-change-log.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r15-insight-log.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r15-verification-evidence.md
 ```
 
 ## How To Run A Specific Version

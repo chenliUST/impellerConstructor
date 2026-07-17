@@ -51,7 +51,7 @@ from part_rule_synthesis.service import RuleSynthesisService
 AUDIT_CONTRACT_ID = "impeller_v1_1_6_step_reconstruction_audit"
 AUDIT_RUNTIME_VERSION = "1.1.6"
 CANONICAL_GEOMETRY_VERSION = "1.1.2"
-AUDIT_IMPLEMENTATION_REVISION = "axis_first_triangle_surface_r14_0"
+AUDIT_IMPLEMENTATION_REVISION = "axis_first_triangle_surface_r15_3"
 SOURCE_REVIEW_LINEAR_TOLERANCE_MM = 0.06
 SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD = 0.08
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -93,6 +93,7 @@ FAILURE_REASONS = {
     "v116_audit_interrupted",
     "v116_axis_consensus_failed",
     "v116_axis_consensus_ambiguous",
+    "v116_axis_direction_semantics_ambiguous",
     "v116_source_sampling_budget_exceeded",
     "v116_source_sampling_extrema_not_converged",
     "v116_hub_support_classification_failed",
@@ -121,6 +122,10 @@ FAILURE_REASONS = {
     "v116_v112_topology_failed",
     "v116_v112_mapping_residual_exceeded",
     "v116_false_material_surface_forbidden",
+    "v116_support_profile_orientation_failed",
+    "v116_support_profile_endpoint_role_missing",
+    "v116_support_profile_streamwise_mismatch",
+    "v116_hub_closure_endpoint_semantics_failed",
 }
 
 _FINAL_AXIS_FIRST_SECTIONS = (
@@ -595,6 +600,14 @@ class StepReconstructionAuditService:
             "canonical_geometry_version": CANONICAL_GEOMETRY_VERSION,
             "audit_id": audit_id,
             "status": "PASS",
+            "process_status": "COMPLETE",
+            "geometry_status": (
+                "ACCEPTED"
+                if disposition["promotable"]
+                else "REJECTED"
+                if disposition["axis_first_algorithm_status"] == "REJECTED"
+                else "REVIEW_ONLY"
+            ),
             "status_scope": disposition["status_scope"],
             "legacy_workflow_status": "PASS",
             "axis_first_algorithm_status": disposition[
@@ -740,7 +753,10 @@ class StepReconstructionAuditService:
         return path
 
     def _write_status(self, audit_id: str, payload: dict[str, Any]) -> None:
-        _atomic_json(self._audit_path(audit_id) / "status.json", payload)
+        _atomic_json(
+            self._audit_path(audit_id) / "status.json",
+            _with_status_contract(payload),
+        )
 
     def _find_reusable_audit(self, sha256: str, *, exclude_audit_id: str) -> dict[str, Any] | None:
         candidates = sorted(self.root.glob("step-audit-*"), key=lambda path: path.stat().st_mtime, reverse=True)
@@ -1175,6 +1191,9 @@ def reconstruct_with_current_v11(
         try:
             run = service.instantiate(engine_id, {}, geometry_stage=geometry_stage, review_only=review_only)
         except Exception as exc:  # noqa: BLE001
+            reason = getattr(exc, "reason", None)
+            if reason == "v116_hub_closure_endpoint_semantics_failed":
+                raise StepAuditError(reason, str(exc)) from exc
             raise StepAuditError(
                 "v116_step_reconstruction_validation_failed",
                 f"existing V1.1.2 constructor failed at {geometry_stage}: {exc}",
@@ -3050,6 +3069,27 @@ def _stage_summary(value: Any) -> dict[str, Any]:
         "execution_diagnostics",
     )
     return {key: value[key] for key in preferred if key in value}
+
+
+def _with_status_contract(payload: Mapping[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(dict(payload))
+    legacy_status = result.get("status")
+    if legacy_status == "PASS":
+        process_status = "COMPLETE"
+    elif legacy_status == "FAILED":
+        process_status = "FAILED"
+    else:
+        process_status = "RUNNING"
+    algorithm_status = result.get("axis_first_algorithm_status")
+    if result.get("promotable") is True:
+        geometry_status = "ACCEPTED"
+    elif algorithm_status == "REJECTED":
+        geometry_status = "REJECTED"
+    else:
+        geometry_status = "REVIEW_ONLY"
+    result["process_status"] = process_status
+    result["geometry_status"] = geometry_status
+    return result
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:

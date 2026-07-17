@@ -122,7 +122,15 @@ def test_analytic_axis_consensus_ignores_auxiliary_holes_and_is_deterministic(tm
     assert frame["method"] == "deterministic_analytic_axis_consensus_r3"
     assert frame["scale"] == 1.0
     assert frame["primary_icp_applied"] is False
-    assert np.dot(frame["source_axis_direction"], [0.0, 0.0, -1.0]) > 0.999999
+    assert np.dot(frame["source_axis_direction"], [0.0, 0.0, 1.0]) > 0.999999
+    direction_evidence = frame["axis_consensus"]["direction_resolution"]
+    assert direction_evidence["method"] == (
+        "small_radius_eye_positive_z_from_radial_weighted_axial_asymmetry"
+    )
+    assert direction_evidence["canonical_positive_z_role"] == (
+        "large_radius_backplate_to_small_radius_eye"
+    )
+    assert direction_evidence["signed_normalized_moment"] > 0.0
     assert (
         _axis_line_distance(
             frame["source_axis_origin_mm"], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]
@@ -1019,19 +1027,12 @@ def test_task2_fixture_contract_covers_splitter_shroud_measurements_and_open_loo
     )
     matrix = np.asarray(frame["source_to_canonical_matrix"], dtype=float)
     assert matrix == pytest.approx(
-        np.asarray(
-            [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, -1.0, 0.0, 0.0],
-                [0.0, 0.0, -1.0, 8.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
-        ),
+        np.eye(4),
         abs=1.0e-12,
     )
     assert np.linalg.det(matrix[:3, :3]) == pytest.approx(1.0, abs=1.0e-12)
     assert matrix @ np.asarray([10.0, 2.0, 8.0, 1.0]) == pytest.approx(
-        [10.0, -2.0, 0.0, 1.0], abs=1.0e-12
+        [10.0, 2.0, 8.0, 1.0], abs=1.0e-12
     )
 
     source_splitter_phase = expected["splitter_phase_deg"]
@@ -1061,7 +1062,7 @@ def test_task2_fixture_contract_covers_splitter_shroud_measurements_and_open_loo
     ] == pytest.approx(canonical_phase_oracle, abs=2.0e-5)
     assert relative_evidence["handedness"] == "right_handed"
     assert relative_evidence["source_axis_direction"] == pytest.approx(
-        [0.0, 0.0, -1.0], abs=1.0e-12
+        [0.0, 0.0, 1.0], abs=1.0e-12
     )
     assert any(
         face.geomType() == "CYLINDER"

@@ -167,7 +167,8 @@ export function reportSummaryRows(manifest, inspection) {
   const acceptance = asRecord(manifest?.acceptance_evaluation);
   const globalPromotable = manifest?.promotable;
   return [
-    { id: "audit_process", label: "Audit process (not acceptance)", value: display(manifest?.status) },
+    { id: "audit_process", label: "Audit process (not acceptance)", value: display(manifest?.process_status || manifest?.status) },
+    { id: "geometry_status", label: "Geometry status", value: display(manifest?.geometry_status) },
     { id: "algorithm_status", label: "Axis-first algorithm", value: display(manifest?.axis_first_algorithm_status) },
     { id: "reconstruction_disposition", label: "Reconstruction disposition", value: display(manifest?.reconstruction_disposition) },
     { id: "global_promotability", label: "Global promotability", value: globalPromotable === true ? "PROMOTABLE" : globalPromotable === false ? "NOT PROMOTABLE" : "Unavailable" },

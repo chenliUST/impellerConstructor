@@ -26,7 +26,6 @@ from part_rule_synthesis.impeller_v11_6_v112_mapping import (
     MEASUREMENT_SCHEMA_VERSION,
     V112MappingError,
     V112MappingTolerances,
-    map_measurements_to_v112,
     map_measurements_to_v112_review,
 )
 from step_fixtures import (
@@ -1275,9 +1274,9 @@ def test_support_bound_material_planes_ignore_connected_bolt_hole_end_faces(monk
         },
     }
     planes = [
-        {"face_id": "hub_top", "axis_parameter_mm": 11.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 0.0},
-        {"face_id": "bolt_hole_end", "axis_parameter_mm": 12.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 20.0},
-        {"face_id": "hub_bottom", "axis_parameter_mm": 13.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 0.0},
+        {"face_id": "hub_top", "axis_parameter_mm": -1.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 0.0},
+        {"face_id": "bolt_hole_end", "axis_parameter_mm": -2.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 20.0},
+        {"face_id": "hub_bottom", "axis_parameter_mm": -3.0, "minimum_radius_mm": 8.0, "maximum_radius_mm": 14.0, "centroid_axis_offset_mm": 0.0},
     ]
     monkeypatch.setattr(
         pipeline, "_axis_perpendicular_material_planes", lambda *_args: planes
@@ -1294,6 +1293,18 @@ def test_support_bound_material_planes_ignore_connected_bolt_hole_end_faces(monk
                     [14.0, 0.0],
                 ],
                 "source_ids": ["hub_support"],
+                "endpoint_roles": {
+                    "eye_inlet_small_radius": {
+                        "canonical_rz_mm": [10.0, 10.0],
+                        "control_point_index": 0,
+                        "authority": "authenticated_support_fit_endpoint",
+                    },
+                    "backplate_exit_large_radius": {
+                        "canonical_rz_mm": [14.0, 0.0],
+                        "control_point_index": 5,
+                        "authority": "authenticated_support_fit_endpoint",
+                    },
+                },
             }
         }
     }
@@ -1463,16 +1474,11 @@ def test_representable_step_passes_actual_default_axis_first_mapping(tmp_path):
     root = measurements["attachments"]["root"]
     assert float(np.median(root["lift_samples_mm"])) == pytest.approx(1.0, abs=0.15)
 
-    with pytest.raises(V112MappingError) as exc_info:
-        map_measurements_to_v112(
-            measurements, tolerances=V112MappingTolerances()
-        )
-    assert getattr(exc_info.value, "reason", None) == "v116_v112_mapping_residual_exceeded"
-
     mapped = map_measurements_to_v112_review(
         measurements, tolerances=V112MappingTolerances()
     )
     assert mapped["mapping_status"] == "REJECTED_REVIEW_CANDIDATE"
+    assert mapped["rejection"]["reason"] == "v116_v112_mapping_residual_exceeded"
     assert mapped["promotion"]["promotable"] is False
     assert "periodicity" in mapped["failed_terms"]
     assert mapped["geometry_patch_version"] == "1.1.2"

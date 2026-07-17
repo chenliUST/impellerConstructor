@@ -11,7 +11,10 @@ from typing import Any
 
 
 _POPULATION_METHOD = "periodic_connected_face_components_v1_1_6"
-_MEDOID_METHOD = (
+_BLADE_SIDE_MEDOID_METHOD = (
+    "minimum_total_symmetric_blade_side_surface_sample_residual_after_cyclic_alignment"
+)
+_GENERIC_MEDOID_METHOD = (
     "minimum_total_symmetric_surface_sample_residual_after_cyclic_alignment"
 )
 _COLLISION_METHOD = "source_topology_separation_with_angular_envelope_warning"
@@ -251,6 +254,8 @@ def estimate_periodic_population(
     medoid = select_population_medoid(
         ordered_components,
         sample_limit_per_component=sample_limit_per_component,
+        sample_field="representative_surface_samples_mm",
+        selection_method=_BLADE_SIDE_MEDOID_METHOD,
     )
     representative_id = medoid["source_component_id"]
     representative = next(
@@ -304,6 +309,10 @@ def estimate_periodic_population(
                 "residual_to_representative_mm": medoid["residuals_to_instances_mm"][
                     component["source_component_id"]
                 ],
+                "representative_fit_basis": "authenticated_blade_side_pair",
+                "representative_fit_sample_count": int(
+                    component["representative_surface_sample_count"]
+                ),
                 "aligned_surface_sample_count": int(component["surface_sample_count"]),
                 "angular_span_deg": _round(float(component["angular_span_deg"]), 9),
                 "angular_envelope_deg": dict(component["angular_envelope_deg"]),
@@ -363,7 +372,11 @@ def estimate_periodic_population(
             "component_completeness": dict(
                 representative["component_completeness"]
             ),
-            "selection_method": _MEDOID_METHOD,
+            "selection_method": medoid["selection_method"],
+            "selection_surface_role": "authenticated_blade_side_pair",
+            "selection_surface_sample_count": int(
+                representative["representative_surface_sample_count"]
+            ),
             "total_medoid_residual_mm": medoid["total_residual_mm"],
             "pairwise_residuals_mm": medoid["pairwise_residuals_mm"],
             "aligned_surface_sample_count": int(representative["surface_sample_count"]),
@@ -383,6 +396,8 @@ def select_population_medoid(
     components: Sequence[Mapping[str, Any]],
     *,
     sample_limit_per_component: int = 256,
+    sample_field: str = "surface_samples_mm",
+    selection_method: str = _GENERIC_MEDOID_METHOD,
 ) -> dict[str, Any]:
     """Select the cyclically aligned surface-sample medoid deterministically."""
 
@@ -400,11 +415,14 @@ def select_population_medoid(
                 "v116_representative_blade_selection_failed",
                 f"duplicate periodic component id: {component_id}",
             )
-        samples = component.get("surface_samples_mm")
+        samples = component.get(sample_field)
         if not isinstance(samples, Sequence) or not samples:
             raise PeriodicBladeRecoveryError(
                 "v116_representative_blade_selection_failed",
-                f"periodic component {component_id} has no canonical surface samples",
+                (
+                    f"periodic component {component_id} has no canonical "
+                    f"{sample_field} samples"
+                ),
             )
         normalized_samples = [
             _point(sample, f"surface sample for {component_id}") for sample in samples
@@ -483,7 +501,7 @@ def select_population_medoid(
         )
     return {
         "source_component_id": representative_id,
-        "selection_method": _MEDOID_METHOD,
+        "selection_method": selection_method,
         "total_residual_mm": _round(totals[representative_id], 6),
         "pairwise_residuals_mm": pairwise_residuals,
         "residuals_to_instances_mm": residuals_to_instances,
@@ -732,6 +750,11 @@ def _component_record(
         ordered, key=lambda face: (-face.area_mm2, face.face_id)
     )
     side_face_ids = sorted(face.face_id for face in ordered_by_area[:2])
+    representative_samples = sorted(
+        sample
+        for face in ordered_by_area[:2]
+        for sample in face.samples_mm
+    )
     # The two largest authenticated faces are the pressure/suction material
     # sides.  Root and edge transition patches can cross a periodic seam in
     # their parameterization, so their circular sample envelope is not a valid
@@ -821,6 +844,10 @@ def _component_record(
         "phase_frame_evidence": dict(ordered[0].phase_frame_evidence),
         "surface_samples_mm": [list(point) for point in samples],
         "surface_sample_count": len(samples),
+        "representative_surface_samples_mm": [
+            list(point) for point in representative_samples
+        ],
+        "representative_surface_sample_count": len(representative_samples),
         "streamwise_extent_mm": _round(
             max(face.streamwise_bounds_mm[1] for face in ordered)
             - min(face.streamwise_bounds_mm[0] for face in ordered),
@@ -1680,15 +1707,48 @@ def _bounded_samples(
     samples: Sequence[tuple[float, float, float]],
     limit: int,
 ) -> list[tuple[float, float, float]]:
-    ordered = sorted(samples)
-    if len(ordered) <= limit:
-        return ordered
-    if limit == 1:
-        return [ordered[len(ordered) // 2]]
-    indices = [
-        round(index * (len(ordered) - 1) / (limit - 1)) for index in range(limit)
+    points = list(samples)
+    if len(points) <= limit:
+        return points
+
+    centroid = tuple(
+        math.fsum(point[axis] for point in points) / len(points)
+        for axis in range(3)
+    )
+    centroid_distances = [
+        _squared_distance(point, centroid) for point in points
     ]
-    return [ordered[index] for index in indices]
+    seed = min(
+        range(len(points)), key=lambda index: (centroid_distances[index], index)
+    )
+    selected = [seed]
+    selected_set = {seed}
+    nearest_selected = [
+        _squared_distance(point, points[seed]) for point in points
+    ]
+    while len(selected) < limit:
+        candidate = max(
+            (index for index in range(len(points)) if index not in selected_set),
+            key=lambda index: (
+                nearest_selected[index],
+                centroid_distances[index],
+                -index,
+            ),
+        )
+        selected.append(candidate)
+        selected_set.add(candidate)
+        for index, point in enumerate(points):
+            nearest_selected[index] = min(
+                nearest_selected[index],
+                _squared_distance(point, points[candidate]),
+            )
+    return [points[index] for index in selected]
+
+
+def _squared_distance(
+    first: tuple[float, float, float], second: tuple[float, float, float]
+) -> float:
+    return sum((first[axis] - second[axis]) ** 2 for axis in range(3))
 
 
 def _symmetric_sample_rms(

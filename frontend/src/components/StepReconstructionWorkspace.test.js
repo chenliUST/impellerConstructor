@@ -128,6 +128,26 @@ describe("STEP reconstruction workspace", () => {
       await act(async () => root.unmount());
     });
   });
+
+  test("shows a persistent review-only banner for completed rejected geometry", async () => {
+    await withDom(async (container) => {
+      const rejected = {
+        ...manifest(),
+        process_status: "COMPLETE",
+        geometry_status: "REJECTED",
+        axis_first_algorithm_status: "REJECTED",
+        promotable: false,
+      };
+      const root = createRoot(container);
+      await act(async () => root.render(React.createElement(StepReconstructionWorkspace, {
+        apiBase: "http://example.test",
+        initialManifest: rejected,
+        SceneComponent: () => React.createElement("div", null, "rejected scene"),
+      })));
+      assert.match(container.querySelector(".geometry-rejected-banner").textContent, /GEOMETRY REJECTED - REVIEW ONLY/);
+      await act(async () => root.unmount());
+    });
+  });
 });
 
 async function withDom(run) {

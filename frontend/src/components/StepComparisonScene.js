@@ -670,23 +670,19 @@ function frameComparisonCamera(Three, camera, controls, bounds) {
   }
 }
 
-function synchronizeComparisonCameras(Three, cameras, paneBounds, sourceTarget) {
+export function synchronizeComparisonCameras(Three, cameras, paneBounds, sourceTarget) {
   const sourceSphere = new Three.Sphere();
   paneBounds.source.getBoundingSphere(sourceSphere);
   if (!Number.isFinite(sourceSphere.radius) || sourceSphere.radius <= 0) return;
-  const direction = cameras.source.position.clone().sub(sourceTarget);
-  const sourceDistance = direction.length();
-  if (!Number.isFinite(sourceDistance) || sourceDistance <= 0) return;
-  direction.normalize();
-  const distanceRatio = sourceDistance / sourceSphere.radius;
   for (const sceneId of ["reconstruction", "heatmap"]) {
-    const sphere = new Three.Sphere();
-    paneBounds[sceneId].getBoundingSphere(sphere);
-    if (!Number.isFinite(sphere.radius) || sphere.radius <= 0) continue;
     const camera = cameras[sceneId];
-    camera.position.copy(sphere.center).addScaledVector(direction, sphere.radius * distanceRatio);
+    camera.position.copy(cameras.source.position);
     camera.up.copy(cameras.source.up);
-    camera.lookAt(sphere.center);
+    camera.near = cameras.source.near;
+    camera.far = cameras.source.far;
+    camera.zoom = cameras.source.zoom;
+    camera.lookAt(sourceTarget);
+    camera.updateProjectionMatrix();
   }
 }
 

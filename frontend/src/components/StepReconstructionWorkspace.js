@@ -140,6 +140,9 @@ export function StepReconstructionWorkspace({ apiBase, initialAuditId = "", init
     ),
     error ? h("div", { className: "error-banner", role: "alert" }, error) : null,
     status?.failure ? h("div", { className: "error-banner", role: "alert" }, `${status.failure.reason}: ${status.failure.message}`) : null,
+    manifest && (manifest.geometry_status === "REJECTED" || manifest.axis_first_algorithm_status === "REJECTED")
+      ? h("div", { className: "geometry-rejected-banner", role: "alert" }, "GEOMETRY REJECTED - REVIEW ONLY")
+      : null,
     h("ol", { className: "step-stage-rail", "aria-label": "STEP reconstruction stages" },
       auditStageRows(status).map((row) => h("li", { key: row.id, className: row.state }, h("span", null), row.label)),
     ),

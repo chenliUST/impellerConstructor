@@ -1616,12 +1616,37 @@ def serialize_support_fit_for_v112_mapping(record: Mapping[str, Any]) -> dict[st
             "only promoted OCCT trimmed B-Rep support fits can enter V1.1.2 mapping",
         )
     source_ids = provenance.get("source_face_ids", fit.get("source_entity_ids"))
+    source_ids = _identifier_sequence(source_ids, "source_ids", require_unique=True)
+    controls = deepcopy(fit["control_points_rz_mm"])
+    endpoint_roles = {
+        "eye_inlet_small_radius": {
+            "control_point_index": 0,
+            "canonical_rz_mm": deepcopy(controls[0]),
+            "source_ids": deepcopy(source_ids),
+            "confidence": 1.0,
+            "authority": "authenticated_support_fit_endpoint",
+        },
+        "backplate_exit_large_radius": {
+            "control_point_index": len(controls) - 1,
+            "canonical_rz_mm": deepcopy(controls[-1]),
+            "source_ids": deepcopy(source_ids),
+            "confidence": 1.0,
+            "authority": "authenticated_support_fit_endpoint",
+        },
+    }
     return {
-        "control_points_rz_mm": deepcopy(fit["control_points_rz_mm"]),
+        "control_points_rz_mm": controls,
         "residual_rms_mm": float(residuals["orthogonal_rms_mm"]),
-        "source_ids": _identifier_sequence(source_ids, "source_ids", require_unique=True),
+        "source_ids": source_ids,
         "fit_status": "PASS",
         "measurement_authority": "occt_trimmed_brep_measurement",
+        "endpoint_roles": endpoint_roles,
+        "streamwise_direction": (
+            "eye_inlet_small_radius_to_backplate_exit_large_radius"
+        ),
+        "canonical_axial_semantics": (
+            "large_radius_backplate_to_small_radius_eye_positive_z"
+        ),
     }
 
 

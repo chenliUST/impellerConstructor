@@ -18,6 +18,13 @@ from part_rule_synthesis.impeller_v11_loop_validation import validate_v11_loop_f
 
 
 Point3 = list[float]
+
+
+class V116HubClosureEndpointError(ValueError):
+    reason = "v116_hub_closure_endpoint_semantics_failed"
+
+    def __init__(self, message: str):
+        super().__init__(f"{self.reason}: {message}")
 Point2 = list[float]
 
 _FACE_SPECS = {
@@ -753,17 +760,53 @@ def _hub_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> li
     bottom_radius, hub_bottom_z = min(profile, key=lambda point: point[1])
     adaptive_endpoint_closure = _uses_v116_adaptive_support_authority(defaults)
     if adaptive_endpoint_closure:
-        inner_radius, inner_z = min(profile, key=lambda point: point[0])
-        outer_radius, outer_z = max(profile, key=lambda point: point[0])
-        solid_bottom_z = min(point[1] for point in profile) - max(
-            bottom_thickness, 0.0
-        )
-        top_annulus_outer_radius = inner_radius
-        top_annulus_z = inner_z
-        bottom_annulus_outer_radius = outer_radius
-        outer_wall_radius = outer_radius
-        outer_wall_top_z = outer_z
-        bore_wall_top_z = inner_z
+        authority = defaults.get("v116_support_endpoint_authority")
+        if not isinstance(authority, dict) or authority.get(
+            "canonical_axial_semantics"
+        ) != "large_radius_backplate_to_small_radius_eye_positive_z":
+            raise V116HubClosureEndpointError(
+                "missing canonical support endpoint authority"
+            )
+        hub_endpoints = authority.get("hub")
+        if not isinstance(hub_endpoints, dict):
+            raise V116HubClosureEndpointError(
+                "missing hub endpoint records"
+            )
+        eye_record = hub_endpoints.get("eye_inlet_small_radius")
+        backplate_record = hub_endpoints.get("backplate_exit_large_radius")
+        if not isinstance(eye_record, dict) or not isinstance(backplate_record, dict):
+            raise V116HubClosureEndpointError(
+                "named hub endpoints are incomplete"
+            )
+        try:
+            eye_radius, eye_z = [float(value) for value in eye_record["canonical_rz_mm"]]
+            backplate_radius, backplate_z = [
+                float(value) for value in backplate_record["canonical_rz_mm"]
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise V116HubClosureEndpointError(
+                "hub endpoint coordinates are invalid"
+            ) from exc
+        if not (
+            math.isfinite(eye_radius)
+            and math.isfinite(eye_z)
+            and math.isfinite(backplate_radius)
+            and math.isfinite(backplate_z)
+            and eye_radius < backplate_radius
+            and eye_z > backplate_z
+            and math.dist(profile[0], [eye_radius, eye_z]) <= 1.0e-6
+            and math.dist(profile[-1], [backplate_radius, backplate_z]) <= 1.0e-6
+        ):
+            raise V116HubClosureEndpointError(
+                "hub profile is not small-radius/high-Z to large-radius/low-Z"
+            )
+        solid_bottom_z = backplate_z - max(bottom_thickness, 0.0)
+        top_annulus_outer_radius = eye_radius
+        top_annulus_z = eye_z
+        bottom_annulus_outer_radius = backplate_radius
+        outer_wall_radius = backplate_radius
+        outer_wall_top_z = backplate_z
+        bore_wall_top_z = eye_z
         closure_topology = "v116_profile_endpoint_closed_hub_solid"
     else:
         solid_bottom_z = hub_bottom_z - max(bottom_thickness, 0.0)
@@ -793,7 +836,16 @@ def _hub_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> li
             bottom_annulus_outer_radius
         ),
         "outer_wall_radius_mm": _round(outer_wall_radius),
+        "outer_wall_axial_height_mm": _round(
+            outer_wall_top_z - solid_bottom_z
+        ),
     }
+    if adaptive_endpoint_closure and abs(
+        quality["outer_wall_axial_height_mm"] - max(bottom_thickness, 0.0)
+    ) > 0.01:
+        raise V116HubClosureEndpointError(
+            "outer wall exceeds the measured bottom thickness"
+        )
     faces = [
         _annulus_surface(
             surface_id="hub_top_annulus_surface",

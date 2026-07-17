@@ -17,6 +17,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from part_rule_synthesis.impeller_v11_6_periodic_blades import (
     PeriodicBladeRecoveryError,
+    _bounded_samples,
     recover_periodic_blade_populations,
     select_population_medoid,
 )
@@ -458,8 +459,51 @@ def test_medoid_and_complete_result_are_invariant_to_face_enumeration_order():
         for role in ("leading_edge", "side_a", "side_b", "trailing_edge")
     ]
     assert forward["main"]["representative"]["selection_method"] == (
-        "minimum_total_symmetric_surface_sample_residual_after_cyclic_alignment"
+        "minimum_total_symmetric_blade_side_surface_sample_residual_after_cyclic_alignment"
     )
+
+
+def test_bounded_surface_samples_are_invariant_to_right_handed_axis_reversal():
+    samples = [
+        (
+            float(index % 5),
+            2.0 * math.sin(index * 0.31) - 0.03 * index,
+            0.05 * index * index - 0.7 * index,
+        )
+        for index in range(37)
+    ]
+
+    selected = _bounded_samples(samples, 9)
+    reversed_frame_samples = [(x, -y, -z) for x, y, z in samples]
+    selected_in_reversed_frame = _bounded_samples(reversed_frame_samples, 9)
+
+    assert selected_in_reversed_frame == [(x, -y, -z) for x, y, z in selected]
+
+
+def test_representative_fit_uses_blade_sides_not_split_root_edge_sampling():
+    records, adjacency = _periodic_fixture(
+        main_count=5,
+        main_phase_deg=7.0,
+        shape_variation=False,
+    )
+    split_edge = next(
+        record
+        for record in records
+        if record["source_face_id"] == "main_00_leading_edge"
+    )
+    split_edge["canonical_surface_samples_mm"].extend(
+        [[44.0 + 0.1 * index, -12.0, 18.0] for index in range(40)]
+    )
+
+    result = recover_periodic_blade_populations(records, adjacency)
+
+    assert result["main"]["representative"]["selection_method"] == (
+        "minimum_total_symmetric_blade_side_surface_sample_residual_after_cyclic_alignment"
+    )
+    assert max(
+        instance["residual_to_representative_mm"]
+        for instance in result["main"]["instances"]
+    ) == pytest.approx(0.0, abs=1.0e-6)
 
 
 def test_medoid_tie_break_uses_canonical_lattice_position_after_id_relabeling():

@@ -1350,6 +1350,10 @@ def test_support_mutation_without_rederived_active_span_contract_is_schema_inval
     bundle["support_fits"]["tip_or_shroud"]["control_points_rz_mm"] = [
         [point[0] + 2.0, point[1]] for point in hub
     ]
+    tip_support = bundle["support_fits"]["tip_or_shroud"]
+    tip_support["endpoint_roles"] = _support_endpoint_roles(
+        tip_support["control_points_rz_mm"], tip_support["source_ids"]
+    )
 
     with pytest.raises(V112MappingError) as captured:
         map_measurements_to_v112(bundle, tolerances={})
@@ -1358,10 +1362,43 @@ def test_support_mutation_without_rederived_active_span_contract_is_schema_inval
     assert "active_span_contract" in str(captured.value)
 
 
+@pytest.mark.parametrize("support_name", ("hub", "tip_or_shroud"))
+def test_reversed_support_profile_is_rejected_before_surface_construction(
+    support_name,
+):
+    bundle = _measurement_bundle(station_count=5)
+    support = bundle["support_fits"][support_name]
+    support["control_points_rz_mm"].reverse()
+    support["endpoint_roles"] = _support_endpoint_roles(
+        support["control_points_rz_mm"], support["source_ids"]
+    )
+
+    with pytest.raises(V112MappingError) as captured:
+        map_measurements_to_v112(bundle, tolerances={})
+
+    assert captured.value.reason == "v116_support_profile_orientation_failed"
+
+
+def test_support_profiles_must_share_the_same_semantic_streamwise_direction():
+    bundle = _measurement_bundle(station_count=5)
+    bundle["support_fits"]["tip_or_shroud"]["streamwise_direction"] = (
+        "backplate_exit_large_radius_to_eye_inlet_small_radius"
+    )
+
+    with pytest.raises(V112MappingError) as captured:
+        map_measurements_to_v112(bundle, tolerances={})
+
+    assert captured.value.reason == "v116_support_profile_streamwise_mismatch"
+
+
 @pytest.mark.parametrize("mapper", (map_measurements_to_v112, map_measurements_to_v112_review))
 def test_active_span_contract_cannot_lower_threshold_with_tampered_support(mapper):
     bundle = _measurement_bundle(station_count=5)
     bundle["support_fits"]["tip_or_shroud"]["control_points_rz_mm"][0][0] += 0.05
+    tip_support = bundle["support_fits"]["tip_or_shroud"]
+    tip_support["endpoint_roles"] = _support_endpoint_roles(
+        tip_support["control_points_rz_mm"], tip_support["source_ids"]
+    )
     _synchronize_fixture_active_span_contracts(bundle)
     support_span = bundle["section_families"]["main"]["active_span_contract"][
         "minimum_support_separation_mm"
@@ -1419,6 +1456,25 @@ def test_initial_guess_rejects_non_v112_fields():
             },
         )
     assert captured.value.reason == "v116_v112_forbidden_parameter"
+
+
+def _support_endpoint_roles(points, source_ids):
+    return {
+        "eye_inlet_small_radius": {
+            "control_point_index": 0,
+            "canonical_rz_mm": copy.deepcopy(points[0]),
+            "source_ids": copy.deepcopy(source_ids),
+            "confidence": 1.0,
+            "authority": "authenticated_support_fit_endpoint",
+        },
+        "backplate_exit_large_radius": {
+            "control_point_index": len(points) - 1,
+            "canonical_rz_mm": copy.deepcopy(points[-1]),
+            "source_ids": copy.deepcopy(source_ids),
+            "confidence": 1.0,
+            "authority": "authenticated_support_fit_endpoint",
+        },
+    }
 
 
 def _measurement_bundle(
@@ -1545,8 +1601,14 @@ def _measurement_bundle(
                     "angular_spread_deg": 0.001,
                 },
                 "direction_resolution": {
-                    "method": "radial_weighted_axial_asymmetry",
+                    "method": (
+                        "small_radius_eye_positive_z_from_radial_weighted_axial_asymmetry"
+                    ),
                     "normalized_moment": 0.1,
+                    "signed_normalized_moment": 0.1,
+                    "canonical_positive_z_role": (
+                        "large_radius_backplate_to_small_radius_eye"
+                    ),
                 },
                 "rejected_alternatives": [],
             },
@@ -1576,6 +1638,15 @@ def _measurement_bundle(
                 "source_ids": ["face-hub"],
                 "fit_status": "PASS",
                 "measurement_authority": "occt_trimmed_brep_measurement",
+                "endpoint_roles": _support_endpoint_roles(
+                    defaults["hub_profile_rz_mm"], ["face-hub"]
+                ),
+                "streamwise_direction": (
+                    "eye_inlet_small_radius_to_backplate_exit_large_radius"
+                ),
+                "canonical_axial_semantics": (
+                    "large_radius_backplate_to_small_radius_eye_positive_z"
+                ),
             },
             "tip_or_shroud": {
                 "control_points_rz_mm": copy.deepcopy(defaults["tip_or_shroud_profile_rz_mm"]),
@@ -1583,6 +1654,15 @@ def _measurement_bundle(
                 "source_ids": ["face-tip"],
                 "fit_status": "PASS",
                 "measurement_authority": "occt_trimmed_brep_measurement",
+                "endpoint_roles": _support_endpoint_roles(
+                    defaults["tip_or_shroud_profile_rz_mm"], ["face-tip"]
+                ),
+                "streamwise_direction": (
+                    "eye_inlet_small_radius_to_backplate_exit_large_radius"
+                ),
+                "canonical_axial_semantics": (
+                    "large_radius_backplate_to_small_radius_eye_positive_z"
+                ),
             },
         },
         "populations": {

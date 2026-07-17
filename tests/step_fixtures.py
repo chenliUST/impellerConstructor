@@ -356,8 +356,8 @@ def axis_first_fixture_expectations(
 ) -> dict:
     return {
         "axis": {
-            "origin_mm": [0.0, 0.0, 8.0 if closed_shroud else 7.8],
-            "direction": [0.0, 0.0, -1.0],
+            "origin_mm": [0.0, 0.0, 0.0],
+            "direction": [0.0, 0.0, 1.0],
         },
         "hub_profile_rz_mm": [[4.0, 0.0], [32.0, 0.0], [32.0, 0.8]],
         "tip_profile_rz_mm": [[31.0, 0.6], [31.0, 7.8]],

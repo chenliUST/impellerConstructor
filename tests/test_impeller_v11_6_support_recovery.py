@@ -306,7 +306,10 @@ def test_open_tip_reference_requires_fitted_edges_from_every_periodic_instance()
 
 def test_open_tip_promotes_only_when_every_typed_population_loop_is_fitted():
     cq = pytest.importorskip("cadquery")
-    from part_rule_synthesis.impeller_v11_6_v112_mapping import _validate_support_fits
+    from part_rule_synthesis.impeller_v11_6_v112_mapping import (
+        V112MappingError,
+        _validate_support_fits,
+    )
     blades = [
         cq.Workplane("XY").box(10.0, 1.0, 2.0).translate((15.0, y, 1.0)).val()
         for y in (-3.0, 3.0)
@@ -377,7 +380,11 @@ def test_open_tip_promotes_only_when_every_typed_population_loop_is_fitted():
     assert tip["profile_fit"]["acceptance"]["promoted_pass_eligible"] is True
     assert tip["source_tip_caps"]["covers_every_expected_shared_loop"] is True
     mapped_tip = serialize_support_fit_for_v112_mapping(tip)
-    _validate_support_fits({"hub": mapped_tip, "tip_or_shroud": mapped_tip})
+    with pytest.raises(
+        V112MappingError,
+        match="small-radius/high-Z eye",
+    ):
+        _validate_support_fits({"hub": mapped_tip, "tip_or_shroud": mapped_tip})
 
     with pytest.raises(SupportRecoveryError, match="every periodic blade instance"):
         recover_open_tip_reference(
@@ -867,6 +874,9 @@ def test_support_mapping_serializer_emits_only_task8_schema_fields():
         "source_ids",
         "fit_status",
         "measurement_authority",
+        "endpoint_roles",
+        "streamwise_direction",
+        "canonical_axial_semantics",
     }
     _validate_support_fits({"hub": mapped, "tip_or_shroud": mapped})
     serialized = json.dumps(rich, sort_keys=True)

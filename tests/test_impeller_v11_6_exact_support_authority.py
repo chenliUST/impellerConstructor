@@ -42,6 +42,21 @@ def _adaptive_values():
             "adaptive_reconstruction_extension": {"status": "PASS"},
             "support_profiles": {"hub_profile": curve},
         },
+        "v116_support_endpoint_authority": {
+            "canonical_axial_semantics": (
+                "large_radius_backplate_to_small_radius_eye_positive_z"
+            ),
+            "hub": {
+                "eye_inlet_small_radius": {
+                    "control_point_index": 0,
+                    "canonical_rz_mm": list(curve["control_points"][0]),
+                },
+                "backplate_exit_large_radius": {
+                    "control_point_index": 2,
+                    "canonical_rz_mm": list(curve["control_points"][-1]),
+                },
+            },
+        },
     }
 
 
@@ -112,7 +127,7 @@ def test_adaptive_hub_solid_closes_around_profile_endpoints_without_false_top_di
     curve = {
         "kind": "nurbs_curve",
         "degree": 2,
-        "control_points": [[1.0, 0.0], [1.5, 2.0], [3.0, 4.0]],
+        "control_points": [[1.0, 4.0], [1.5, 2.0], [3.0, 0.0]],
         "weights": [1.0, 1.0, 1.0],
         "knots": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
     }
@@ -121,6 +136,16 @@ def test_adaptive_hub_solid_closes_around_profile_endpoints_without_false_top_di
     values["canonical_nurbs_parameterization"]["support_profiles"][
         "hub_profile"
     ] = curve
+    values["v116_support_endpoint_authority"]["hub"] = {
+        "eye_inlet_small_radius": {
+            "control_point_index": 0,
+            "canonical_rz_mm": [1.0, 4.0],
+        },
+        "backplate_exit_large_radius": {
+            "control_point_index": 2,
+            "canonical_rz_mm": [3.0, 0.0],
+        },
+    }
     values.update(
         {
             "theta_sample_count": 9,
@@ -150,7 +175,7 @@ def test_adaptive_hub_solid_closes_around_profile_endpoints_without_false_top_di
         "v116_profile_endpoint_closed_hub_solid"
     )
     assert top["edge_samples"]["outer_circle"][0] == pytest.approx(
-        [1.0, 0.0, 0.0]
+        [1.0, 0.0, 4.0]
     )
     assert bottom["edge_samples"]["outer_circle"][0] == pytest.approx(
         [3.0, 0.0, -0.5]
@@ -164,5 +189,36 @@ def test_adaptive_hub_solid_closes_around_profile_endpoints_without_false_top_di
         -0.5
     )
     assert max(point[2] for row in bore["uv_grid"] for point in row) == pytest.approx(
-        0.0
+        4.0
     )
+    assert outer["v1_1_hub_solid_quality"]["outer_wall_axial_height_mm"] == (
+        pytest.approx(0.5)
+    )
+
+
+def test_adaptive_hub_solid_rejects_reversed_endpoint_semantics():
+    values = _adaptive_values()
+    values["hub_profile_rz_mm"] = [[1.0, 0.0], [1.5, 2.0], [3.0, 4.0]]
+    values["canonical_nurbs_parameterization"]["support_profiles"]["hub_profile"] = {
+        **_quadratic_profile(),
+        "control_points": values["hub_profile_rz_mm"],
+    }
+    values["v116_support_endpoint_authority"]["hub"] = {
+        "eye_inlet_small_radius": {
+            "control_point_index": 0,
+            "canonical_rz_mm": [1.0, 0.0],
+        },
+        "backplate_exit_large_radius": {
+            "control_point_index": 2,
+            "canonical_rz_mm": [3.0, 4.0],
+        },
+    }
+
+    with pytest.raises(ValueError, match="v116_hub_closure_endpoint_semantics_failed"):
+        _hub_solid_faces(
+            values,
+            {
+                "mounting_bore_radius_mm": {"default": 0.25},
+                "hub_bottom_thickness_mm": {"default": 0.5},
+            },
+        )

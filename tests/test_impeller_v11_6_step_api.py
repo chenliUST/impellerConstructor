@@ -59,6 +59,8 @@ def test_step_upload_returns_202_and_persists_recoverable_status(tmp_path):
     assert status.json()["canonical_geometry_version"] == "1.1.2"
     assert status.json()["legacy_workflow_status"] == "PENDING"
     assert status.json()["axis_first_algorithm_status"] == "INCOMPLETE"
+    assert status.json()["process_status"] == "RUNNING"
+    assert status.json()["geometry_status"] == "REVIEW_ONLY"
     assert status.json()["promotable"] is False
     assert status.json()["algorithm_readiness"]["algorithm_ready"] is False
     assert status.json()["algorithm_readiness"]["cache_reusable"] is False

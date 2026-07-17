@@ -1595,6 +1595,16 @@ circle.engineering-feature {
   font-size: 11px;
 }
 
+.geometry-rejected-banner {
+  padding: 7px 12px;
+  border-bottom: 1px solid #8d1f1f;
+  background: #8d1f1f;
+  color: #ffffff;
+  font: 800 12px/1.2 Arial, sans-serif;
+  letter-spacing: 0;
+  text-align: center;
+}
+
 .step-stage-rail {
   display: grid;
   min-height: 38px;

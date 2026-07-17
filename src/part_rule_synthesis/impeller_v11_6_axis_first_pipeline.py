@@ -55,6 +55,10 @@ _STABLE_REASONS = {
     "v116_v112_topology_failed",
     "v116_v112_mapping_residual_exceeded",
     "v116_false_material_surface_forbidden",
+    "v116_support_profile_orientation_failed",
+    "v116_support_profile_endpoint_role_missing",
+    "v116_support_profile_streamwise_mismatch",
+    "v116_hub_closure_endpoint_semantics_failed",
 }
 _TASK8_RECONSTRUCTION_EVIDENCE_BASIS = (
     "v116_axis_first_periodic_material_evidence_v1"
@@ -4235,7 +4239,56 @@ def _measure_support_bound_hub_material(
         )
     minimum_hub_radius = float(np.min(hub_controls[:, 0]))
     maximum_hub_radius = float(np.max(hub_controls[:, 0]))
-    hub_terminal_axis = float(np.max(hub_controls[:, 1]))
+    endpoint_roles = hub_fit.get("endpoint_roles")
+    if not isinstance(endpoint_roles, Mapping):
+        _material_failure(
+            "hub_bottom_thickness_mm",
+            "support-bound material reduction requires named hub endpoints",
+            {"endpoint_roles": endpoint_roles},
+        )
+    eye_role = endpoint_roles.get("eye_inlet_small_radius")
+    backplate_role = endpoint_roles.get("backplate_exit_large_radius")
+    if not isinstance(eye_role, Mapping) or not isinstance(backplate_role, Mapping):
+        _material_failure(
+            "hub_bottom_thickness_mm",
+            "support-bound material reduction lacks eye/backplate endpoint roles",
+            {"endpoint_roles": endpoint_roles},
+        )
+    eye_endpoint = np.asarray(eye_role.get("canonical_rz_mm"), dtype=float)
+    backplate_endpoint = np.asarray(
+        backplate_role.get("canonical_rz_mm"), dtype=float
+    )
+    endpoint_authority_valid = (
+        eye_endpoint.shape == (2,)
+        and backplate_endpoint.shape == (2,)
+        and np.all(np.isfinite(eye_endpoint))
+        and np.all(np.isfinite(backplate_endpoint))
+        and eye_role.get("authority") == "authenticated_support_fit_endpoint"
+        and backplate_role.get("authority")
+        == "authenticated_support_fit_endpoint"
+        and int(eye_role.get("control_point_index", -1)) == 0
+        and int(backplate_role.get("control_point_index", -1))
+        == len(hub_controls) - 1
+        and np.allclose(eye_endpoint, hub_controls[0], atol=1.0e-9, rtol=0.0)
+        and np.allclose(
+            backplate_endpoint, hub_controls[-1], atol=1.0e-9, rtol=0.0
+        )
+        and eye_endpoint[0] < backplate_endpoint[0]
+        and eye_endpoint[1] > backplate_endpoint[1]
+    )
+    if not endpoint_authority_valid:
+        _material_failure(
+            "hub_bottom_thickness_mm",
+            "support-bound hub endpoint authority is inconsistent with eye-positive Z",
+            {
+                "endpoint_roles": endpoint_roles,
+                "control_endpoints_rz_mm": [
+                    hub_controls[0].tolist(),
+                    hub_controls[-1].tolist(),
+                ],
+            },
+        )
+    hub_terminal_axis = float(backplate_endpoint[1])
     wall = minimum_hub_radius - float(bore["radius_mm"])
     if wall <= tolerance:
         _material_failure(
@@ -4264,7 +4317,7 @@ def _measure_support_bound_hub_material(
         for record in _axis_perpendicular_material_planes(inventory, axis)
         if record["face_id"] in material_component
         and record["centroid_axis_offset_mm"] <= tolerance
-        and record["axis_parameter_mm"] > hub_terminal_axis + tolerance
+        and record["axis_parameter_mm"] < hub_terminal_axis - tolerance
         and record["maximum_radius_mm"] > float(bore["radius_mm"]) + tolerance
     ]
     if len(planes) < 2:
@@ -4298,10 +4351,10 @@ def _measure_support_bound_hub_material(
                 "maximum_hub_support_radius_mm": maximum_hub_radius,
             },
         )
-    first = min(top_candidates, key=lambda item: item["axis_parameter_mm"])
-    last = max(bottom_candidates, key=lambda item: item["axis_parameter_mm"])
-    top = float(first["axis_parameter_mm"] - hub_terminal_axis)
-    bottom = float(last["axis_parameter_mm"] - first["axis_parameter_mm"])
+    first = max(top_candidates, key=lambda item: item["axis_parameter_mm"])
+    last = min(bottom_candidates, key=lambda item: item["axis_parameter_mm"])
+    top = float(hub_terminal_axis - first["axis_parameter_mm"])
+    bottom = float(first["axis_parameter_mm"] - last["axis_parameter_mm"])
     if bottom <= tolerance:
         _material_failure(
             "hub_bottom_thickness_mm",
@@ -4315,6 +4368,7 @@ def _measure_support_bound_hub_material(
         top,
         {
             "method": "support_bound_axisymmetric_material_envelope",
+            "axis_semantics": "large_radius_backplate_to_small_radius_eye_positive_z",
             "bore_radius_mm": float(bore["radius_mm"]),
             "minimum_hub_support_radius_mm": minimum_hub_radius,
             "maximum_hub_support_radius_mm": maximum_hub_radius,
@@ -4324,7 +4378,9 @@ def _measure_support_bound_hub_material(
             "intermediate_material_planes": [
                 item
                 for item in sorted(
-                    planes, key=lambda record: record["axis_parameter_mm"]
+                    planes,
+                    key=lambda record: record["axis_parameter_mm"],
+                    reverse=True,
                 )
                 if item["face_id"] not in {first["face_id"], last["face_id"]}
             ],

@@ -737,6 +737,19 @@ def _clusters_are_equivalent(first: dict[str, Any], second: dict[str, Any]) -> b
 def _resolve_axis_direction(
     shape, line_origin: np.ndarray, direction: np.ndarray
 ) -> tuple[np.ndarray, dict[str, Any]]:
+    support_score = _analytic_support_endpoint_axis_score(
+        shape, line_origin, direction
+    )
+    if support_score is not None:
+        resolved = direction if support_score > 0.0 else -direction
+        return resolved, {
+            "method": (
+                "small_radius_eye_positive_z_from_authenticated_support_endpoint_evidence"
+            ),
+            "normalized_moment": round(abs(support_score), 12),
+            "signed_normalized_moment": round(abs(support_score), 12),
+            "canonical_positive_z_role": "large_radius_backplate_to_small_radius_eye",
+        }
     vertices = np.asarray(
         [vertex.Center().toTuple() for vertex in shape.Vertices()], dtype=float
     )
@@ -744,20 +757,76 @@ def _resolve_axis_direction(
     axial = relative @ direction
     radial = np.linalg.norm(relative - np.outer(axial, direction), axis=1)
     midpoint = 0.5 * (float(np.min(axial)) + float(np.max(axial)))
-    moment = float(np.sum((axial - midpoint) * np.square(radial)))
-    scale = max(float(np.ptp(axial)) * float(np.max(radial) ** 2) * len(vertices), 1.0)
-    normalized_moment = moment / scale
-    if abs(normalized_moment) > 1.0e-10:
-        resolved = direction if normalized_moment > 0.0 else -direction
-        return resolved, {
-            "method": "radial_weighted_axial_asymmetry",
-            "normalized_moment": round(abs(normalized_moment), 12),
-        }
-    resolved = _canonical_line_direction(direction)
+    axial_span = float(np.ptp(axial))
+    weights = np.square(radial)
+    if axial_span <= 1.0e-12 or float(np.sum(weights)) <= 1.0e-12:
+        raise AxisConsensusError(
+            "v116_axis_direction_semantics_ambiguous",
+            "source geometry does not contain enough radial/axial asymmetry to orient canonical +Z",
+            {"canonical_positive_z_role": "large_radius_backplate_to_small_radius_eye"},
+        )
+
+    order = np.argsort(axial, kind="stable")
+    ordered_weights = weights[order]
+    cumulative = np.cumsum(ordered_weights)
+    weighted_median = float(
+        axial[order][np.searchsorted(cumulative, 0.5 * float(cumulative[-1]))]
+    )
+    signed_asymmetry = (midpoint - weighted_median) / axial_span
+    if abs(signed_asymmetry) <= 1.0e-10:
+        raise AxisConsensusError(
+            "v116_axis_direction_semantics_ambiguous",
+            "radial-weighted source evidence cannot distinguish the eye from the backplate",
+            {
+                "normalized_moment": round(abs(signed_asymmetry), 12),
+                "canonical_positive_z_role": (
+                    "large_radius_backplate_to_small_radius_eye"
+                ),
+            },
+        )
+    resolved = direction if signed_asymmetry > 0.0 else -direction
     return resolved, {
-        "method": "world_lexicographic_fallback_for_axially_symmetric_source",
-        "normalized_moment": round(abs(normalized_moment), 12),
+        "method": (
+            "small_radius_eye_positive_z_from_radial_weighted_axial_asymmetry"
+        ),
+        "normalized_moment": round(abs(signed_asymmetry), 12),
+        "signed_normalized_moment": round(abs(signed_asymmetry), 12),
+        "canonical_positive_z_role": "large_radius_backplate_to_small_radius_eye",
     }
+
+
+def _analytic_support_endpoint_axis_score(
+    shape, line_origin: np.ndarray, direction: np.ndarray
+) -> float | None:
+    candidates = []
+    for face in shape.Faces():
+        if face.geomType() != "CONE":
+            continue
+        vertices = np.asarray(
+            [vertex.Center().toTuple() for vertex in face.Vertices()], dtype=float
+        )
+        if len(vertices) < 2:
+            continue
+        relative = vertices - line_origin
+        axial = relative @ direction
+        radial = np.linalg.norm(relative - np.outer(axial, direction), axis=1)
+        radial_span = float(np.ptp(radial))
+        axial_span = float(np.ptp(axial))
+        if radial_span <= 1.0e-8 or axial_span <= 1.0e-8:
+            continue
+        threshold = max(1.0e-8, 0.1 * radial_span)
+        small = axial[radial <= float(np.min(radial)) + threshold]
+        large = axial[radial >= float(np.max(radial)) - threshold]
+        if not len(small) or not len(large):
+            continue
+        score = (float(np.median(small)) - float(np.median(large))) / axial_span
+        if abs(score) <= 1.0e-10:
+            continue
+        candidates.append((float(face.Area()) * radial_span, score))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: -item[0])
+    return float(candidates[0][1])
 
 
 def _cluster_residual(cluster: dict[str, Any]) -> dict[str, float]:
