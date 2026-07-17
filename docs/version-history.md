@@ -409,6 +409,48 @@ docs/evidence/2026-07-12-impeller-v1-1-5-verification-evidence.md
 - Marks restart-orphaned work explicitly and loads a reused PASS manifest
   immediately instead of leaving the reconstruction panes empty.
 - Keeps customer STEP and generated heavy geometry outside source control.
+- R8 adds a separately labeled `v1.1.6_adaptive_review_extension_r1` that uses
+  5 to 9 source-driven stations without changing the frozen V1.1.2 preset path.
+- R8 replaces global nearest-mesh comparison with explicit role-corresponding
+  directional distributions and excludes unsupported keyway, auxiliary-hole,
+  bottom-boss and unresolved-closure geometry from metric contribution.
+- R8 emits a generation-bound Geometric Manifest with translucent sampled
+  surfaces, true UV curves and an explicitly millimetric directional heatmap.
+- Post-review R9 evidence corrects the numerical primitive from nearest
+  centroid/vertex samples to exact point-to-triangle distances on the retained
+  tessellation, requires topology and periodic-role scope coverage, and keeps
+  completed rejected audits reusable without making them promotable.
+- Post-review R10 fixes symmetric metrics to use equal independent directional
+  weights, binds blade comparisons per periodic instance, reports unresolved
+  LE/TE ownership as `PARTIAL_REVIEW`, rejects main-field reuse for splitters,
+  and binds audit cache reuse to the completed manifest digest.
+- Post-review R11 moves periodic instance assignment after global phase
+  alignment, keeps main/splitter lattice identity independent, closes the
+  status/manifest/source cache-identity chain, and makes all comparison-pane
+  artifact requests and status polling abortable.
+- Post-review R12 binds the assignment to authenticated population lattice
+  indexes, requires exact per-population count/membership/index sets, and
+  excludes partially owned LE/TE evidence only from the incomplete population
+  instead of applying a complete-family shift modulo a smaller subset.
+- Final audit `step-audit-7ba8024c586d41fc` completed all workflow stages in
+  `740.961 s` with V1.1.2 geometry validation `PASS`. Comparison scope remains
+  `PARTIAL_REVIEW` because LE/TE ownership is unresolved; mapping remains a
+  rejected review candidate, so the result is review-only, non-promotable and
+  acceptance remains unevaluated.
+- R13.2 keeps V1.1.2 frozen while correcting adaptive root endpoint collapse by
+  intersecting the metric S-Q footprint with the authenticated support domain
+  and reparameterizing LE/TE root caps by arc length.
+- R13.2 requires complete periodic hub-passage ownership across singleton area
+  groups and inventories every reconstructed material surface in a per-surface
+  comparison ledger. The spline-affected mounting bore remains explicitly
+  `NOT_EVALUATED`.
+- A geometry-only KS007G23B probe passes with `84` surfaces, all `13` root
+  patches passing, no foldovers and zero triangle below `1e-8 mm^2`. Backend
+  verification totals `339 passed, 1 skipped`; frontend totals `251 passed` and
+  the production build check passes.
+- R13.2 remains `review_only_not_promotable`: exact source PS/SS and LE/TE
+  ownership, local unsupported-feature masks, browser pixel evidence and a
+  fresh full R13.2 deviation audit remain open.
 
 Spec, plan and evidence:
 
@@ -416,6 +458,10 @@ Spec, plan and evidence:
 docs/superpowers/specs/2026-07-13-impeller-v1-1-6-step-reconstruction-audit-spec.md
 docs/superpowers/plans/2026-07-13-impeller-v1-1-6-step-reconstruction-audit-implementation.md
 docs/evidence/2026-07-13-impeller-v1-1-6-step-reconstruction-audit/README.md
+docs/evidence/2026-07-16-impeller-v1-1-6-r8-verification-evidence.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r13-semantic-change-log.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r13-insight-log.md
+docs/evidence/2026-07-17-impeller-v1-1-6-r13-verification-evidence.md
 ```
 
 ## How To Run A Specific Version

@@ -681,6 +681,116 @@ Promotion requires:
 5. `feat: recover periodic blade populations and medoids`
 6. `feat: intersect adaptive STEP blade section lattice`
 7. `feat: measure STEP loop thickness and blade attachments`
+
+## R8 Execution Addendum (2026-07-16)
+
+This addendum supersedes only the comparison and review-extension details that
+were found insufficient during KS007G23B visual inspection. It does not reopen
+the V1.1.2 base constructor.
+
+### R8.1 Adaptive review extension
+
+- [x] Select 5 to 9 source section stations from measured camber, twist,
+  thickness, curvature, and correspondence residuals.
+- [x] Fit thickness, root width, and root lift as explicit rational NURBS scalar
+  fields with source-derived control coefficients.
+- [x] Prove positivity from the positive-weight control hull; downgrade the field
+  degree or reject when the proof cannot be made.
+- [x] Keep legacy V1.1.2 defaults byte-compatible and label the adaptive result
+  `v1.1.6_adaptive_review_extension_r1`.
+
+### R8.2 Meridional orientation and support domain
+
+- [x] Pair hub and tip/shroud profiles with an ordered meridional
+  correspondence solver.
+- [x] Project representative side-face evidence into the resulting support
+  strip and reject mirrored/out-of-domain geometry.
+- [x] Recover open-tip evidence from both authenticated blade-side shared edge
+  chains rather than one longest edge.
+- [x] Split one tolerance-qualified radial nose turn into provenance-bearing
+  monotone branches; reject multiple turns.
+- [x] Prevent an authenticated pressure/suction side from being overwritten by
+  the root-attachment role merely because it touches the hub.
+
+### R8.3 Corresponding-surface deviation
+
+- [x] Partition source faces into supported and excluded semantic roles.
+- [x] Exclude the keyway, three auxiliary holes, unsupported bottom/boss
+  geometry, and unresolved closures from metric contribution.
+- [x] Bind each reconstruction family only to its corresponding source family.
+- [x] Report reconstruction-to-source, source-to-reconstruction, and symmetric
+  combined sample distributions without a false bidirectional alias.
+- [x] Emit a reconstruction-vertex heatmap in millimetres with region evidence.
+- [x] Mark the previous global baseline non-comparable and reset acceptance to
+  `NOT_EVALUATED`.
+
+### R8.4 Review artifacts and UI
+
+- [x] Emit a generation-bound `geometric-manifest.json` containing translucent
+  surfaces and actual UV curves.
+- [x] Render the declared Geometric Manifest without silently falling back to
+  STL when the declared artifact is missing.
+- [x] Add a millimetre color bar and directional metric labels to the heatmap
+  and report panes.
+- [x] Keep unsupported-region filters evidence-only instead of producing an
+  unexplained blank viewport.
+
+### R8.5 Completion gate
+
+- [x] Complete one uninterrupted KS007G23B audit with R8 artifacts retained in
+  a named local evidence directory.
+- [x] Record the corresponding-surface metrics and adaptive station count.
+- [x] Complete geometry/math and comparison/frontend independent reviews.
+- [x] Run backend suites, frontend tests/build, `git diff --check`, and record
+  the exact results in milestone evidence.
+
+### R10 review corrections
+
+- [x] Replace concatenated symmetric samples with fixed-weight directional
+  aggregation and version the deviation contract.
+- [x] Bind periodic comparison regions to individual blade instances.
+- [x] Downgrade unresolved LE/TE closure ownership to `PARTIAL_REVIEW` while
+  retaining explicit exclusions and review-only heatmap evidence.
+- [x] Reject adaptive main-field reuse when a splitter population is present.
+- [x] Bind reusable audit status to the completed manifest SHA-256.
+- [x] Remove duplicate overlay phase rotation; use unlit color-correct heatmap
+  rendering, one fixed index buffer, request cancellation, and sticky pane
+  errors.
+- [x] Supersede the pre-review R10 candidate without promoting its metrics or
+  artifact hashes after R11/R12 review exposed instance-identity gaps.
+- [x] Complete independent backend and frontend reviews and resolve findings.
+
+### R11 independent-review corrections
+
+- [x] Recompute periodic source-instance to reconstruction-blade assignment
+  after global phase alignment, independently per population.
+- [x] Bind cache reuse to audit id and source SHA identity across status,
+  manifest, and audit directory.
+- [x] Reject an explicitly declared empty splitter family instead of treating
+  it as main-only.
+- [x] Strengthen unequal-direction deviation tests so concatenated weighting
+  cannot pass accidentally.
+- [x] Abort STL and JSON artifact requests, use serial abortable audit polling,
+  reset loading state immediately, and mark dynamic heatmap index updates.
+- [x] Distinguish triangle-centroid report statistics from the vertex heatmap
+  legend and cursor.
+- [x] Stop the R11 candidate before evidence promotion after review showed the
+  authenticated population payload was read from the wrong nesting level;
+  supersede it with R12.
+
+### R12 population-authority correction
+
+- [x] Feed authenticated pattern-population lattice records into comparison
+  scope instead of reading the empty top-level population location.
+- [x] Exclude partially covered LE/TE roles from instance metrics and forbid
+  applying a full-family cyclic shift modulo a smaller role subset.
+- [x] Add independent main/splitter shifts, authenticated lattice ordering, and
+  partial-edge exclusion tests.
+- [x] Require exact authenticated instance membership, per-population declared
+  counts, contiguous lattice indexes, and population-specific LE/TE coverage.
+- [x] Complete independent backend/frontend reviews and resolve all findings.
+- [x] Complete one uninterrupted R12 KS007G23B audit and supersede R9-R11
+  candidate metrics in the verification evidence.
 8. `feat: fit measured STEP sections to canonical v1.1.2 payload`
 9. `fix: reconstruct measured periodic blades without false shroud`
 10. `feat: report feature-aware STEP reconstruction deviation`

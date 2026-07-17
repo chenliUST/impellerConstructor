@@ -658,3 +658,136 @@ The milestone evidence must record:
 
 Visual similarity is supporting evidence only. Promotion requires the numeric,
 topological and provenance gates above.
+
+## R8 Semantic Clarification (2026-07-16)
+
+The R8 implementation keeps V1.1.2 as the frozen base geometry contract and
+adds a separately identified V1.1.6 review reconstruction variant. The variant
+may use the measured 5 to 9 station lattice and measured NURBS scalar fields;
+it must never relabel that extension as unchanged V1.1.2 output.
+
+### Meridional material domain
+
+- Hub and tip/shroud profile correspondence defines an ordered support strip in
+  canonical `(R,Z)` space.
+- An open tip reference is fitted from the complete shared edge chains of both
+  authenticated blade sides. Selecting only the longest side edge is forbidden.
+- A source edge with one tolerance-qualified radial turning point is split into
+  ordered branches with provenance retained. More than one turning point fails
+  closed.
+- Representative blade evidence must project into the corresponded support
+  strip. Mirroring, sign reversal, or an opposite-side fallback is forbidden.
+- The compressed six-control mapping fit is a parameterization target, not the
+  sole authority for source topology ownership.
+
+### Adaptive fields
+
+- Thickness, root attachment width, and root lift are measured positive scalar
+  fields. Their lower-bound proof is derived from positive rational NURBS
+  weights and positive control coefficients.
+- A nonpositive cubic coefficient causes an explicit lower-degree downgrade or
+  rejection. No fixed minimum thickness or fixed root width/lift may be injected
+  into the adaptive reconstruction variant.
+- Sampling density may change display resolution but must not change the field
+  authority hash or its positivity proof.
+
+### Supported comparison scope
+
+Deviation is measured only between explicitly corresponding supported roles:
+hub support, mounting bore, pressure/suction blade sides, root attachment, open
+tip cap or closed shroud attachment, and supported leading/trailing closures.
+Keyways, auxiliary holes, a nonplanar bottom, an unmodeled bottom boss, balancing
+features, and unresolved closure faces are excluded with source ids and reasons.
+
+The primary contract reports two directional distributions and a symmetric
+combined sample distribution. It does not call either directional heatmap
+"bidirectional". The heatmap maps reconstruction vertices to their corresponding
+source role and reports millimetres with an explicit color bar.
+
+The legacy global nearest-mesh baseline included unsupported source features and
+is not numerically comparable with R8 corresponding-surface results. R8 therefore
+starts with acceptance status `NOT_EVALUATED` until a corresponding-surface
+baseline is reviewed.
+
+### Review rendering
+
+The reconstruction pane uses the generation-bound Geometric Manifest: translucent
+surface shading plus actual per-surface UV curves. A declared but missing
+manifest is an error; only legacy audits that never declared the artifact may
+fall back to STL display.
+
+### Post-review R9 evidence correction
+
+- `corresponding surface` means point-to-triangle interior/edge distance on the
+  retained tessellation. Nearest centroid or nearest vertex distance may not be
+  labeled as source-face distance.
+- Scope status is `PASS` only when the source partition is complete, every
+  topology-required reconstruction role exists, and blade roles cover the
+  expected periodic instance count.
+- Color saturation at P95 is a display transform only. The color maximum and
+  unclipped data maximum must be labeled separately.
+- A completed rejected review audit is reusable only with the same algorithm
+  revision and matching artifact hashes. Reuse cannot change mapping,
+  acceptance, or promotability status.
+- Frontend overlay and region-filter changes must reuse the existing WebGL
+  contexts and geometry attributes; only lightweight overlay groups or heatmap
+  index buffers may change.
+
+### Post-review R10 contract correction
+
+- Symmetric deviation is not a concatenated sample population. Each direction
+  is summarized independently and receives a fixed weight of `0.5`; RMS uses
+  the correspondingly weighted sum of directional mean squares.
+- Periodic blade comparisons are bounded by semantic role and periodic instance.
+  A reconstruction surface from one blade instance may not satisfy another
+  source instance merely because it is spatially nearby.
+- Unresolved source LE/TE closure ownership prevents complete comparison
+  coverage. Such an audit may retain a `PARTIAL_REVIEW` diagnostic heatmap, but
+  it may not report comparison-scope `PASS` or become promotable.
+- The adaptive main-population field may not be silently applied to a splitter
+  population. Until population-specific splitter fields exist, the adaptive
+  extension rejects that case and the caller retains the explicitly labeled
+  frozen review baseline.
+- Reusable completed-audit status binds the canonical manifest byte digest in
+  addition to all declared artifact hashes and the implementation revision.
+- Source-derived overlays are already in the canonical comparison frame and
+  must not receive the reconstruction phase rotation a second time. Heatmap
+  colors are unlit sRGB evidence, and filtering mutates one fixed-capacity index
+  buffer rather than replacing geometry or WebGL contexts.
+
+### Post-review R11 identity and instance correction
+
+- Periodic phase alignment and periodic instance correspondence are separate
+  operations. After the global one-pitch phase is resolved, each authenticated
+  population receives one cyclic lattice-index assignment based on aligned
+  angular centroids. Source instance labels may not be paired to generated
+  blade indexes before this post-phase assignment.
+- Main and splitter populations have independent lattice indexes and cyclic
+  assignments. A global index spanning both populations is forbidden.
+- Reusable audit evidence binds the audit directory id, status audit id,
+  manifest audit id, status source SHA-256, manifest source SHA-256, manifest
+  digest, implementation revision, and every declared artifact digest.
+- A declared splitter section family, including an empty placeholder family,
+  requires population-specific adaptive fields. It cannot enter the main-only
+  adaptive path.
+- Side-panel statistics are explicitly triangle-centroid directional metrics;
+  the colored heatmap and cursor remain reconstruction-vertex evidence.
+  Source/reconstruction STL fetches and serial status polling are abortable
+  when an audit is changed or the workspace is unmounted.
+
+### Post-review R12 authenticated lattice correction
+
+- Comparison scope consumes the authenticated
+  `pattern_population_evidence.populations` records, including each measured
+  `classification` and `lattice_index`. Instance-name sorting is only a legacy
+  test fallback and is not production authority.
+- Each authenticated population declares a positive count equal to its instance
+  inventory. Instance ids are globally unique, lattice indexes cover exactly
+  `0..count-1`, and the sum of population counts equals the recovered blade
+  count. Aggregate count equality alone is insufficient.
+- A periodic role may enter instance-level metrics only when it covers the full
+  authenticated population. Leading/trailing completeness is evaluated per
+  population, so an incomplete splitter closure cannot discard complete main
+  closure evidence. Only the incomplete group is moved to explicit
+  `unresolved_blade_closure_correspondence` exclusions; the audit stays
+  `PARTIAL_REVIEW` and does not apply a full-population shift modulo a subset.
