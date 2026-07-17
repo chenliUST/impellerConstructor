@@ -36,6 +36,28 @@ from step_fixtures import (
 from part_rule_synthesis import impeller_v11_6_step_audit as step_audit
 
 
+def test_representative_meridional_points_sample_curve_interiors():
+    edge = cq.Edge.makeLine(cq.Vector(10.0, 0.0, 0.0), cq.Vector(20.0, 0.0, 10.0))
+
+    class Face:
+        def Vertices(self):
+            return edge.Vertices()
+
+        def Edges(self):
+            return [edge]
+
+    points = pipeline._representative_meridional_points(
+        {"faces_by_id": {"blade": Face()}},
+        {"source_to_canonical_matrix": np.eye(4).tolist()},
+        {"source_face_ids": ["blade"]},
+    )
+
+    assert len(points) > 2
+    assert any(
+        14.0 < radius < 16.0 and 4.0 < z < 6.0 for radius, z in points
+    )
+
+
 def test_exact_incidence_ignores_unreferenced_degenerate_occt_edges():
     shape = cq.Solid.makeCone(10.0, 0.0, 20.0)
     faces_by_id = {
@@ -87,6 +109,192 @@ def test_open_tip_candidate_prefers_balanced_two_side_contact_length():
     ) == "main_cap"
 
 
+def test_open_tip_profile_uses_shared_edge_chains_from_both_blade_sides():
+    class Edge:
+        def __init__(self, length):
+            self._length = length
+
+        def Length(self):
+            return self._length
+
+    inventory = {
+        "face_edge_ids": {
+            "pressure": ("pressure_a", "pressure_b", "pressure_root"),
+            "suction": ("suction_a", "suction_root"),
+            "tip_cap": ("pressure_a", "pressure_b", "suction_a", "cap_outer"),
+        },
+        "edges_by_id": {
+            "pressure_a": Edge(12.0),
+            "pressure_b": Edge(8.0),
+            "pressure_root": Edge(20.0),
+            "suction_a": Edge(21.0),
+            "suction_root": Edge(19.0),
+            "cap_outer": Edge(3.0),
+        },
+    }
+
+    groups = pipeline._cap_shared_side_edge_groups(
+        inventory,
+        "tip_cap",
+        {"pressure", "suction"},
+    )
+
+    assert groups == [
+        ("pressure", ("pressure_a", "pressure_b")),
+        ("suction", ("suction_a",)),
+    ]
+
+
+def test_authenticated_blade_side_role_is_not_overwritten_by_hub_adjacency():
+    class Face:
+        def geomType(self):
+            return "BSPLINE"
+
+    instance = {
+        "instance_id": "main_instance_0000",
+        "source_face_ids": ["side", "root", "closure"],
+        "component_completeness": {"blade_side_face_ids": ["side"]},
+    }
+    inventory = {
+        "instance_by_face": {
+            "side": "main_instance_0000",
+            "root": "main_instance_0000",
+            "closure": "main_instance_0000",
+        },
+        "faces_by_id": {
+            "hub": Face(),
+            "side": Face(),
+            "root": Face(),
+            "closure": Face(),
+        },
+        "records_by_id": {},
+        "source_manifest": {
+            "adjacency": {
+                "hub": ["side", "root"],
+                "side": ["hub"],
+                "root": ["hub"],
+                "closure": [],
+            }
+        },
+    }
+    semantics = {
+        "periodic_population_recovery": {
+            "populations": [{"instances": [instance]}]
+        },
+        "face_roles": {},
+    }
+    topology = {
+        "mode": "open",
+        "hub_face_id": "hub",
+        "hub_support_face_ids": ["hub"],
+        "open_tip_caps": {},
+    }
+
+    assignments = pipeline._semantic_assignments(inventory, semantics, topology)
+
+    assert assignments["side"]["role"] == "periodic_blade_side"
+    assert assignments["root"]["role"] == "periodic_blade_root_attachment"
+
+
+def test_periodic_closure_faces_are_split_by_exact_streamwise_position(monkeypatch):
+    class Face:
+        def geomType(self):
+            return "BSPLINE"
+
+    instance = {
+        "instance_id": "main_instance_0000",
+        "source_face_ids": [
+            "side_a",
+            "side_b",
+            "root_a",
+            "root_b",
+            "leading",
+            "trailing_a",
+            "trailing_b",
+            "tip",
+        ],
+        "component_completeness": {
+            "blade_side_face_ids": ["side_a", "side_b"]
+        },
+    }
+    face_ids = ["hub", *instance["source_face_ids"]]
+    inventory = {
+        "instance_by_face": {
+            face_id: "main_instance_0000"
+            for face_id in instance["source_face_ids"]
+        },
+        "faces_by_id": {face_id: Face() for face_id in face_ids},
+        "records_by_id": {},
+        "source_manifest": {
+            "adjacency": {
+                "hub": ["root_a", "root_b", "leading"],
+                "side_a": [
+                    "root_a",
+                    "root_b",
+                    "leading",
+                    "trailing_a",
+                    "tip",
+                ],
+                "side_b": [
+                    "root_a",
+                    "root_b",
+                    "trailing_b",
+                    "tip",
+                ],
+                "root_a": ["hub", "side_a", "side_b"],
+                "root_b": ["hub", "side_a", "side_b"],
+                "leading": ["hub", "side_a"],
+                "trailing_a": ["side_a"],
+                "trailing_b": ["side_b"],
+                "tip": ["side_a", "side_b"],
+            }
+        },
+    }
+    semantics = {
+        "periodic_population_recovery": {
+            "populations": [{"instances": [instance]}]
+        },
+        "face_roles": {},
+    }
+    topology = {
+        "mode": "open",
+        "hub_face_id": "hub",
+        "hub_support_face_ids": ["hub"],
+        "open_tip_caps": {"main_instance_0000": "tip"},
+    }
+    assignments = pipeline._semantic_assignments(inventory, semantics, topology)
+    streamwise = {"leading": 1.0, "trailing_a": 9.0, "trailing_b": 10.0}
+    monkeypatch.setattr(
+        pipeline,
+        "_closure_meridional_s",
+        lambda _inventory, face_id, _sides, _matrix, _profile: streamwise[
+            face_id
+        ],
+    )
+
+    evidence = pipeline._refine_periodic_closure_assignments(
+        assignments,
+        inventory,
+        semantics,
+        topology,
+        matrix=[[1.0, 0.0, 0.0, 0.0]] * 4,
+        hub_profile_rz_mm=[[1.0, 0.0], [2.0, 1.0]],
+    )
+
+    assert assignments["root_a"]["role"] == "periodic_blade_root_attachment"
+    assert assignments["root_b"]["role"] == "periodic_blade_root_attachment"
+    assert assignments["leading"]["role"] == "periodic_blade_leading_edge"
+    assert assignments["trailing_a"]["role"] == "periodic_blade_trailing_edge"
+    assert assignments["trailing_b"]["role"] == "periodic_blade_trailing_edge"
+    assert evidence["main_instance_0000"]["leading_edge_source_face_ids"] == [
+        "leading"
+    ]
+    assert evidence["main_instance_0000"]["trailing_edge_source_face_ids"] == [
+        "trailing_a",
+        "trailing_b",
+    ]
+
+
 def test_hub_group_prefers_contact_and_adds_only_missing_same_type_patches():
     all_instances = {f"blade_{index:02d}" for index in range(13)}
     groups = [
@@ -124,6 +332,164 @@ def test_hub_group_prefers_contact_and_adds_only_missing_same_type_patches():
     assert selected["member_face_ids"] == ["hub_gap", "hub_main"]
     assert selected["periodic_instance_ids"] == all_instances
     assert selected["shared_contact_length_mm"] == pytest.approx(1166.0)
+
+
+def test_hub_passage_patch_family_does_not_stop_at_adjacency_only_coverage():
+    all_instances = {f"main_instance_{index:04d}" for index in range(13)}
+    seed_instances = all_instances - {"main_instance_0006"}
+    groups = [
+        {
+            "geometry_type": "BSPLINE",
+            "member_face_ids": [f"hub_{index:02d}" for index in range(10)],
+            "periodic_instance_ids": set(seed_instances),
+            "member_periodic_instance_ids": {
+                f"hub_{index:02d}": [
+                    f"main_instance_{owner:04d}"
+                ]
+                for index, owner in enumerate(
+                    [0, 1, 2, 3, 4, 5, 7, 8, 9, 10]
+                )
+            },
+            "member_contact_length_mm": {
+                f"hub_{index:02d}": 106.19 for index in range(10)
+            },
+            "member_area_mm2": {
+                f"hub_{index:02d}": 464.77 for index in range(10)
+            },
+            "adjacent_periodic_face_ids": {"seed-contacts"},
+            "shared_contact_length_mm": 1061.9,
+            "total_area_mm2": 4647.7,
+            "mean_area_mm2": 464.77,
+        },
+        {
+            "geometry_type": "BSPLINE",
+            "member_face_ids": ["hub_gap"],
+            "periodic_instance_ids": {"main_instance_0005", "main_instance_0006"},
+            "member_periodic_instance_ids": {
+                "hub_gap": ["main_instance_0005", "main_instance_0006"]
+            },
+            "adjacent_periodic_face_ids": {"gap-contacts"},
+            "shared_contact_length_mm": 105.7,
+            "total_area_mm2": 264.4,
+            "mean_area_mm2": 264.4,
+        },
+        {
+            "geometry_type": "BSPLINE",
+            "member_face_ids": ["hub_seam_a"],
+            "periodic_instance_ids": {"main_instance_0010", "main_instance_0011"},
+            "member_periodic_instance_ids": {
+                "hub_seam_a": ["main_instance_0010", "main_instance_0011"]
+            },
+            "adjacent_periodic_face_ids": {"seam-a-contacts"},
+            "shared_contact_length_mm": 100.1,
+            "total_area_mm2": 463.6,
+            "mean_area_mm2": 463.6,
+        },
+        {
+            "geometry_type": "BSPLINE",
+            "member_face_ids": ["hub_seam_b"],
+            "periodic_instance_ids": {"main_instance_0000", "main_instance_0012"},
+            "member_periodic_instance_ids": {
+                "hub_seam_b": ["main_instance_0000", "main_instance_0012"]
+            },
+            "adjacent_periodic_face_ids": {"seam-b-contacts"},
+            "shared_contact_length_mm": 86.5,
+            "total_area_mm2": 457.6,
+            "mean_area_mm2": 457.6,
+        },
+        {
+            "geometry_type": "BSPLINE",
+            "member_face_ids": ["collar"],
+            "periodic_instance_ids": set(all_instances),
+            "member_periodic_instance_ids": {
+                "collar": sorted(all_instances)
+            },
+            "adjacent_periodic_face_ids": {"collar-contacts"},
+            "shared_contact_length_mm": 40.0,
+            "total_area_mm2": 160.0,
+            "mean_area_mm2": 160.0,
+        },
+    ]
+
+    selected = pipeline._select_complete_hub_group(groups, all_instances)
+
+    assert len(selected["member_face_ids"]) == 13
+    assert {"hub_gap", "hub_seam_a", "hub_seam_b"} <= set(
+        selected["member_face_ids"]
+    )
+    assert "collar" not in selected["member_face_ids"]
+    assert selected["periodic_passage_face_coverage"]["complete"] is True
+    assert selected["periodic_passage_face_coverage"]["observed_count"] == 13
+
+
+def test_hub_shared_support_split_into_fewer_faces_is_not_forced_to_pitch_count():
+    all_instances = {f"main_instance_{index:04d}" for index in range(13)}
+    faces = [f"trimmed_support_{index}" for index in range(7)]
+    groups = [
+        {
+            "geometry_type": "BSPLINE",
+            "member_face_ids": faces,
+            "periodic_instance_ids": set(all_instances),
+            "member_periodic_instance_ids": {
+                face_id: sorted(all_instances) for face_id in faces
+            },
+            "adjacent_periodic_face_ids": {"all-contacts"},
+            "shared_contact_length_mm": 700.0,
+            "total_area_mm2": 3500.0,
+            "mean_area_mm2": 500.0,
+        }
+    ]
+
+    selected = pipeline._select_complete_hub_group(groups, all_instances)
+
+    assert selected["member_face_ids"] == faces
+    assert selected["periodic_passage_face_coverage"]["mode"] == (
+        "shared_support_patch"
+    )
+    assert selected["periodic_passage_face_coverage"]["complete"] is True
+
+
+def test_hub_singleton_area_groups_still_require_one_passage_face_per_pitch():
+    all_instances = {f"main_instance_{index:04d}" for index in range(13)}
+    groups = []
+    for index in range(13):
+        face_id = f"hub_passage_{index:02d}"
+        groups.append(
+            {
+                "geometry_type": "BSPLINE",
+                "member_face_ids": [face_id],
+                "periodic_instance_ids": {
+                    f"main_instance_{index:04d}",
+                    f"main_instance_{(index + 1) % 13:04d}",
+                },
+                "member_periodic_instance_ids": {
+                    face_id: [
+                        f"main_instance_{index:04d}",
+                        f"main_instance_{(index + 1) % 13:04d}",
+                    ]
+                },
+                "member_contact_length_mm": {face_id: 80.0 + index},
+                "member_area_mm2": {face_id: 450.0 + index},
+                "adjacent_periodic_face_ids": {f"contact_{index:02d}"},
+                "shared_contact_length_mm": 80.0 + index,
+                "total_area_mm2": 450.0 + index,
+                "mean_area_mm2": 450.0 + index,
+            }
+        )
+
+    selected = pipeline._select_complete_hub_group(groups, all_instances)
+
+    assert len(selected["member_face_ids"]) == 13
+    assert selected["periodic_passage_face_coverage"] == {
+        "mode": "periodic_passage_patches",
+        "ownership_authority": "one_face_per_periodic_instance_bipartite_match",
+        "expected_count": 13,
+        "observed_count": 13,
+        "instance_to_face_id": selected["periodic_passage_face_coverage"][
+            "instance_to_face_id"
+        ],
+        "complete": True,
+    }
 
 
 def _source_inputs(tmp_path: Path, **fixture_options):
@@ -244,6 +610,11 @@ def test_task9_mapping_retains_full_periodic_and_material_partitions(
     assert periodic["source_linear_tolerance_mm"] <= periodic[
         "measurement_tolerance_mm"
     ]
+    assert periodic["main"]["streamwise_interval_evidence"]["method"] == (
+        "nearest_projection_to_corresponded_hub_tip_support_strip"
+    )
+    assert 0.0 <= periodic["main"]["streamwise_interval_s"][0]
+    assert periodic["main"]["streamwise_interval_s"][1] <= 1.0
     material = support["pattern_material_partition"]
     assert material["mode"] == ("closed" if closed_shroud else "open")
     assert sorted(material["hub_attachment_face_ids_by_instance"]) == sorted(
@@ -416,7 +787,11 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
     monkeypatch.setattr(
         pipeline, "_assert_section_segment_fit_quality", lambda *_args: None
     )
-    monkeypatch.setattr(pipeline, "_station_for_mapping", lambda h, *_args: {"h": h, "source_ids": ["side-a"]})
+    monkeypatch.setattr(
+        pipeline,
+        "_station_for_mapping",
+        lambda h, *_args, **_kwargs: {"h": h, "source_ids": ["side-a"]},
+    )
     monkeypatch.setattr(pipeline, "_decomposition_summary", lambda _value: {"segments": {}})
     def section_probe(source_shape, surface, **kwargs):
         assert source_shape is inventory["shape"]
@@ -564,6 +939,8 @@ def test_source_sha_is_provenance_only_for_mapping_input(monkeypatch):
     assert captured[1]["provenance"]["source_sha256"] == "2" * 64
     assert first["constructor_input_hash_sha256"] == second["constructor_input_hash_sha256"]
     assert first["unsupported_source_feature_audit"]["complete"] is False
+    assert first["comparison_scope"]["status"] == "REJECTED"
+    assert first["comparison_scope"]["failure_reason"] == "empty_source_face_inventory"
 
 
 def test_review_extraction_preserves_measurement_and_task8_authority(monkeypatch):

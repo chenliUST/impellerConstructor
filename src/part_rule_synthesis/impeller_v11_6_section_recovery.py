@@ -365,6 +365,8 @@ class AttachmentMeasurement:
     local_span_direction_xyz: tuple[float, float, float]
     material_side: int
     lift_samples_mm: tuple[float, ...]
+    width_samples_mm: tuple[float, ...]
+    streamwise_samples_s: tuple[float, ...]
     source_face_ids: tuple[str, ...]
     footprint_source_edge_ids: tuple[str, ...]
     retained_source_edge_ids: tuple[str, ...]
@@ -2435,6 +2437,8 @@ def measure_attachment(
     local_span_direction_xyz: Sequence[float] | None = None,
     local_span_directions_xyz: Sequence[Sequence[float]] | None = None,
     paired_footprint_points_xyz_mm: Sequence[Sequence[float]] | None = None,
+    support_normal_directions_xyz: Sequence[Sequence[float]] | None = None,
+    streamwise_parameters_s: Sequence[float] | None = None,
     material_side: int = 1,
     attachment_kind: str = "root",
     width_direction_xyz: Sequence[float] | None = None,
@@ -2461,6 +2465,16 @@ def measure_attachment(
         if paired_footprint_points_xyz_mm is None
         else np.asarray(paired_footprint_points_xyz_mm, dtype=float)
     )
+    support_normals = (
+        None
+        if support_normal_directions_xyz is None
+        else np.asarray(support_normal_directions_xyz, dtype=float)
+    )
+    streamwise_parameters = (
+        None
+        if streamwise_parameters_s is None
+        else np.asarray(streamwise_parameters_s, dtype=float)
+    )
     _validate_points(footprint, 3, "footprint_boundary_xyz_mm", minimum=3)
     _validate_points(retained, 3, "retained_blade_boundary_xyz_mm", minimum=3)
     if paired_footprint is not None:
@@ -2474,6 +2488,29 @@ def measure_attachment(
             raise ValueError(
                 "paired_footprint_points_xyz_mm must match retained boundary samples"
             )
+    if support_normals is not None:
+        if paired_footprint is None:
+            raise ValueError(
+                "support_normal_directions_xyz requires paired footprint points"
+            )
+        if support_normals.shape != retained.shape:
+            raise ValueError(
+                "support_normal_directions_xyz must match retained boundary samples"
+            )
+        support_normals = np.asarray(
+            [_unit(value, "support_normal_directions_xyz") for value in support_normals]
+        )
+    if streamwise_parameters is not None:
+        if streamwise_parameters.shape != (len(retained),):
+            raise ValueError(
+                "streamwise_parameters_s must match retained boundary samples"
+            )
+        if (
+            not np.all(np.isfinite(streamwise_parameters))
+            or np.any(streamwise_parameters < 0.0)
+            or np.any(streamwise_parameters > 1.0)
+        ):
+            raise ValueError("streamwise_parameters_s must be finite in [0, 1]")
     if material_side not in (-1, 1):
         raise ValueError("material_side must be -1 or 1")
     tolerance = _positive(tolerance_mm, "tolerance_mm")
@@ -2682,6 +2719,7 @@ def measure_attachment(
     promotable_evidence = topology_evidence and bool(span_direction_evidence)
     mean_span = _unit(np.mean(spans, axis=0), "mean_local_span_direction_xyz")
     lift_samples = []
+    local_width_samples = []
     for index, (point_xyz, span) in enumerate(zip(retained, spans)):
         if paired_footprint is not None:
             source_point = paired_footprint[index]
@@ -2697,7 +2735,17 @@ def measure_attachment(
             source_point = _nearest_point_on_projected_polyline(
                 point_uv, footprint_uv_closed, footprint_xyz_closed
             )
-        lift_samples.append(float(np.dot(point_xyz - source_point, span)))
+        delta = point_xyz - source_point
+        if support_normals is not None:
+            normal = support_normals[index]
+            if float(np.dot(delta, normal)) < 0.0:
+                normal = -normal
+            lift = float(np.dot(delta, normal))
+            tangent = delta - lift * normal
+            local_width_samples.append(float(np.linalg.norm(tangent)))
+        else:
+            lift = float(np.dot(delta, span))
+        lift_samples.append(lift)
     lifts = np.asarray(lift_samples, dtype=float)
     if not np.all(np.isfinite(lifts)) or float(np.median(lifts)) <= tolerance or np.any(lifts < -tolerance):
         raise SectionRecoveryError(
@@ -2705,7 +2753,21 @@ def measure_attachment(
             f"{attachment_kind} retained blade boundary is not above its source attachment blend",
             {"lift_samples_mm": lifts.tolist(), "material_side": material_side},
         )
-    if width_direction_xyz is not None:
+    if support_normals is not None:
+        widths = np.asarray(local_width_samples, dtype=float)
+        if (
+            not np.all(np.isfinite(widths))
+            or float(np.median(widths)) <= tolerance
+            or np.any(widths < -tolerance)
+        ):
+            raise SectionRecoveryError(
+                "v116_root_attachment_measurement_failed",
+                f"{attachment_kind} local attachment width is not positive",
+                {"width_samples_mm": widths.tolist()},
+            )
+        width = float(np.median(widths))
+        width_method = "paired_boundary_support_normal_decomposition"
+    elif width_direction_xyz is not None:
         width_axis = np.asarray(_point(width_direction_xyz, 3, "width_direction_xyz"), dtype=float)
         width_axis -= float(np.dot(width_axis, mean_span)) * mean_span
         width_axis = _unit(width_axis, "width_direction_xyz")
@@ -2717,6 +2779,10 @@ def measure_attachment(
         footprint_uv = np.column_stack([footprint @ plane_u, footprint @ plane_v])
         width = _minimum_caliper_width(footprint_uv)
         width_method = "support_tangent_plane_minimum_caliper"
+    if support_normals is None:
+        widths = np.repeat(float(width), len(retained))
+    if streamwise_parameters is None:
+        streamwise_parameters = np.linspace(0.0, 1.0, len(retained))
     if not math.isfinite(width) or width <= tolerance:
         raise SectionRecoveryError(
             "v116_root_attachment_measurement_failed",
@@ -2730,6 +2796,10 @@ def measure_attachment(
         local_span_direction_xyz=tuple(float(value) for value in mean_span),
         material_side=material_side,
         lift_samples_mm=tuple(_round(value) for value in lifts),
+        width_samples_mm=tuple(_round(value) for value in widths),
+        streamwise_samples_s=tuple(
+            _round(value) for value in streamwise_parameters
+        ),
         source_face_ids=face_ids,
         footprint_source_edge_ids=footprint_edge_ids,
         retained_source_edge_ids=retained_edge_ids,

@@ -5,7 +5,10 @@ import math
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from part_rule_synthesis.impeller_v11_2_canonical import evaluate_nurbs_surface
+from part_rule_synthesis.impeller_v11_2_canonical import (
+    evaluate_nurbs_curve,
+    evaluate_nurbs_surface,
+)
 from part_rule_synthesis.impeller_v11_constants import (
     COORDINATE_SYSTEM,
     CURVATURE_PROXY_MISMATCH_TOLERANCE,
@@ -119,17 +122,34 @@ def _support_profile_contract_metrics(values: Mapping[str, Any]) -> dict[str, An
     interval = values["main_streamwise_interval_s"]
     lower, upper = [float(value) for value in values["blade_hub_angle_contract_deg"]]
     minimum_height = float(values["minimum_active_blade_height_mm"])
-    root_offset, tip_offset = _resolved_active_span_offsets(values)
     angles: list[float] = []
     active_heights: list[float] = []
+    hub_profile = _resolved_support_profile(
+        values,
+        canonical_name="hub_profile",
+        legacy_name="hub_profile_rz_mm",
+    )
+    tip_profile = _resolved_support_profile(
+        values,
+        canonical_name="tip_or_shroud_profile",
+        legacy_name="tip_or_shroud_profile_rz_mm",
+    )
     for index in range(17):
         s = _lerp(float(interval[0]), float(interval[1]), index / 16.0)
-        hub = _profile_sample(values["hub_profile_rz_mm"], s)
-        tip = _profile_sample(values["tip_or_shroud_profile_rz_mm"], s)
-        before = _profile_sample(values["hub_profile_rz_mm"], max(0.0, s - 1.0e-4))
-        after = _profile_sample(values["hub_profile_rz_mm"], min(1.0, s + 1.0e-4))
+        hub = _profile_sample(hub_profile, s)
+        tip = _profile_sample(tip_profile, s)
+        before = _profile_sample(hub_profile, max(0.0, s - 1.0e-4))
+        after = _profile_sample(hub_profile, min(1.0, s + 1.0e-4))
         tangent = _point_diff(after, before)
         span = _point_diff(tip, hub)
+        support_span = _distance_2d(hub, tip)
+        measured_root_h = _resolved_measured_support_span_h(values, 0.0)
+        measured_tip_h = _resolved_measured_support_span_h(values, 1.0)
+        if measured_root_h is not None and measured_tip_h is not None:
+            root_offset = measured_root_h * support_span
+            tip_offset = (1.0 - measured_tip_h) * support_span
+        else:
+            root_offset, tip_offset = _resolved_active_span_offsets_at_s(values, s)
         denominator = _distance_2d([0.0, 0.0], tangent) * _distance_2d([0.0, 0.0], span)
         cosine = sum(left * right for left, right in zip(tangent, span)) / max(denominator, 1.0e-12)
         angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
@@ -254,7 +274,13 @@ def _validated_defaults(
     )
     if len(values["hub_profile_rz_mm"]) < 2 or len(values["tip_or_shroud_profile_rz_mm"]) < 2:
         raise ValueError("V1.1 loop-family defaults require hub and tip/shroud profiles")
-    values["streamwise_metric_scale_mm"] = _profile_polyline_length(values["hub_profile_rz_mm"])
+    values["streamwise_metric_scale_mm"] = _profile_length(
+        _resolved_support_profile(
+            values,
+            canonical_name="hub_profile",
+            legacy_name="hub_profile_rz_mm",
+        )
+    )
     if values["blade_count"] < 2:
         raise ValueError("blade_count must be at least 2")
     if values["main_blade_count"] <= 0:
@@ -286,9 +312,16 @@ def _validated_defaults(
 
 def _domain_mapper(values: Mapping[str, Any]) -> Callable[[dict[str, float]], Point3]:
     blade_pitch_rad = 2.0 * math.pi / max(int(values["main_blade_count"]), 1)
-    hub_profile = values["hub_profile_rz_mm"]
-    tip_profile = values["tip_or_shroud_profile_rz_mm"]
-    root_offset, tip_offset = _resolved_active_span_offsets(values)
+    hub_profile = _resolved_support_profile(
+        values,
+        canonical_name="hub_profile",
+        legacy_name="hub_profile_rz_mm",
+    )
+    tip_profile = _resolved_support_profile(
+        values,
+        canonical_name="tip_or_shroud_profile",
+        legacy_name="tip_or_shroud_profile_rz_mm",
+    )
 
     def mapper(sample: dict[str, float]) -> Point3:
         s = float(sample["s"])
@@ -298,6 +331,21 @@ def _domain_mapper(values: Mapping[str, Any]) -> Callable[[dict[str, float]], Po
 
         hub_r, hub_z = _profile_sample(hub_profile, s)
         tip_r, tip_z = _profile_sample(tip_profile, s)
+        measured_support_h = _resolved_measured_support_span_h(values, h)
+        if measured_support_h is not None:
+            radius_mm = _lerp(hub_r, tip_r, measured_support_h)
+            z_mm = _lerp(hub_z, tip_z, measured_support_h)
+            theta_rad = phase_offset_pitch * blade_pitch_rad + (
+                q / max(radius_mm, 1.0e-9)
+            )
+            return _round_point(
+                [
+                    radius_mm * math.cos(theta_rad),
+                    radius_mm * math.sin(theta_rad),
+                    z_mm,
+                ]
+            )
+        root_offset, tip_offset = _resolved_active_span_offsets_at_s(values, s)
         span_length_mm = math.hypot(tip_r - hub_r, tip_z - hub_z)
         root_fraction = 0.0
         if span_length_mm > 1.0e-9:
@@ -405,7 +453,15 @@ def _build_loop(
         name: {
             "points_s_q": copy.deepcopy(data["points_s_q"]),
             "points_xyz": [
-                mapper({"s": point[0], "q": point[1], "h": h, "phase_offset_pitch": phase_offset_pitch})
+                mapper(
+                    {
+                        "s": point[0],
+                        "q": point[1],
+                        "h": h,
+                        "phase_offset_pitch": phase_offset_pitch,
+                        "blade_class": blade_class,
+                    }
+                )
                 for point in data["points_s_q"]
             ],
             "control_points_s_q": copy.deepcopy(data["control_points_s_q"]),
@@ -419,9 +475,15 @@ def _build_loop(
     )
     join_status = "PASS" if all(metric["status"] == "PASS" for metric in join_metrics.values()) else "FAIL"
     minimum_span_length = _minimum_span_length(values)
-    root_offset, tip_offset = _resolved_active_span_offsets(values)
-    active_span_fraction = 0.0
-    if minimum_span_length > 1.0e-9:
+    root_offset, tip_offset = _resolved_active_span_offsets_at_s(
+        values,
+        0.5 * (float(streamwise_interval[0]) + float(streamwise_interval[1])),
+    )
+    measured_support_h = _resolved_measured_support_span_h(values, h)
+    active_span_fraction = (
+        measured_support_h if measured_support_h is not None else 0.0
+    )
+    if measured_support_h is None and minimum_span_length > 1.0e-9:
         root_fraction = max(0.0, min(0.45, root_offset / minimum_span_length))
         tip_fraction = max(0.0, min(0.45, tip_offset / minimum_span_length))
         tip_fraction = min(tip_fraction, max(0.0, 0.9 - root_fraction))
@@ -498,6 +560,11 @@ def _loop_segments_s_q(
         end_second_diff=_second_diff(suction_points[0], suction_points[1], suction_points[2]),
         roundness=float(values["leading_edge_cap_roundness"]),
     )
+    leading_points, leading_target_evidence = _blend_measured_cap_target(
+        leading_points,
+        _measured_cap_target(values, "leading_edge_cap", h),
+        streamwise_metric_scale_mm=float(values["streamwise_metric_scale_mm"]),
+    )
     trailing_points = _cap_points(
         suction_points[-1],
         pressure_points[-1],
@@ -511,6 +578,11 @@ def _loop_segments_s_q(
         end_diff=_point_scale(_point_diff(pressure_points[-1], pressure_points[-2]), -1.0),
         end_second_diff=_second_diff(pressure_points[-3], pressure_points[-2], pressure_points[-1]),
         roundness=float(values["trailing_edge_cap_roundness"]),
+    )
+    trailing_points, trailing_target_evidence = _blend_measured_cap_target(
+        trailing_points,
+        _measured_cap_target(values, "trailing_edge_cap", h),
+        streamwise_metric_scale_mm=float(values["streamwise_metric_scale_mm"]),
     )
     leading_target_sagitta = _cap_target_sagitta_mm(pressure_points[0], suction_points[0], ratio=0.5)
     trailing_target_sagitta = _cap_target_sagitta_mm(suction_points[-1], pressure_points[-1], ratio=0.5)
@@ -539,6 +611,7 @@ def _loop_segments_s_q(
                 "target_sagitta_mm": _round(leading_target_sagitta),
                 "resolved_sagitta_mm": _round(leading_sagitta),
                 "continuity_goal": "C2",
+                "measured_target_application": leading_target_evidence,
             },
         },
         "suction_side": {
@@ -555,6 +628,7 @@ def _loop_segments_s_q(
                 "target_sagitta_mm": _round(trailing_target_sagitta),
                 "resolved_sagitta_mm": _round(trailing_sagitta),
                 "continuity_goal": "C2",
+                "measured_target_application": trailing_target_evidence,
             },
         },
     }
@@ -700,6 +774,154 @@ def _cap_points(
     return points
 
 
+def _measured_cap_target(
+    values: Mapping[str, Any],
+    segment_name: str,
+    h: float,
+) -> Mapping[str, Any] | None:
+    canonical = values.get("canonical_nurbs_parameterization")
+    if not isinstance(canonical, Mapping):
+        return None
+    if (
+        canonical.get("canonical_input_source")
+        != "v116_adaptive_step_reconstruction_extension"
+    ):
+        return None
+    extension = canonical.get("adaptive_reconstruction_extension")
+    if not isinstance(extension, Mapping) or extension.get("status") != "PASS":
+        return None
+    loop_family = canonical.get("section_loop_family")
+    segments = loop_family.get("segments") if isinstance(loop_family, Mapping) else None
+    segment = segments.get(segment_name) if isinstance(segments, Mapping) else None
+    targets = segment.get("measurement_targets") if isinstance(segment, Mapping) else None
+    if not isinstance(targets, list) or not targets:
+        return None
+    candidates = [
+        target
+        for target in targets
+        if isinstance(target, Mapping)
+        and isinstance(target.get("nurbs_target"), Mapping)
+    ]
+    if not candidates:
+        return None
+    selected = min(candidates, key=lambda target: abs(float(target.get("h", 0.0)) - float(h)))
+    return selected["nurbs_target"]
+
+
+def _blend_measured_cap_target(
+    scaffold: list[Point2],
+    target: Mapping[str, Any] | None,
+    *,
+    streamwise_metric_scale_mm: float,
+) -> tuple[list[Point2], dict[str, Any]]:
+    if target is None:
+        return copy.deepcopy(scaffold), {
+            "status": "NOT_AVAILABLE",
+            "authority": "c2_boundary_scaffold",
+        }
+    controls = target.get("control_points_local_mm")
+    degree = target.get("degree")
+    knots = target.get("knots")
+    weights = target.get("weights")
+    if (
+        len(scaffold) < 7
+        or not isinstance(controls, list)
+        or len(controls) < 2
+        or not isinstance(degree, int)
+        or not isinstance(knots, list)
+        or not isinstance(weights, list)
+        or len(weights) != len(controls)
+    ):
+        return copy.deepcopy(scaffold), {
+            "status": "FALLBACK",
+            "reason": "v116_measured_cap_target_invalid",
+            "authority": "c2_boundary_scaffold",
+        }
+    curve = {
+        "degree": degree,
+        "knots": knots,
+        "weights": weights,
+        "control_points": controls,
+    }
+    try:
+        source = [
+            evaluate_nurbs_curve(curve, index / max(len(scaffold) - 1, 1))[:2]
+            for index in range(len(scaffold))
+        ]
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return copy.deepcopy(scaffold), {
+            "status": "FALLBACK",
+            "reason": "v116_measured_cap_target_invalid",
+            "authority": "c2_boundary_scaffold",
+        }
+
+    metric_scale = max(float(streamwise_metric_scale_mm), 1.0e-9)
+    scaffold_metric = [[point[0] * metric_scale, point[1]] for point in scaffold]
+    source_start = source[0]
+    source_chord = _point_diff(source[-1], source_start)
+    target_start = scaffold_metric[0]
+    target_chord = _point_diff(scaffold_metric[-1], target_start)
+    source_length = _distance_2d([0.0, 0.0], source_chord)
+    target_length = _distance_2d([0.0, 0.0], target_chord)
+    if source_length <= 1.0e-9 or target_length <= 1.0e-9:
+        return copy.deepcopy(scaffold), {
+            "status": "FALLBACK",
+            "reason": "v116_measured_cap_target_degenerate_chord",
+            "authority": "c2_boundary_scaffold",
+        }
+    source_angle = math.atan2(source_chord[1], source_chord[0])
+    target_angle = math.atan2(target_chord[1], target_chord[0])
+    rotation = target_angle - source_angle
+    cosine = math.cos(rotation)
+    sine = math.sin(rotation)
+    similarity_scale = target_length / source_length
+    aligned: list[Point2] = []
+    for point in source:
+        local = _point_diff(point, source_start)
+        rotated = [
+            similarity_scale * (cosine * local[0] - sine * local[1]),
+            similarity_scale * (sine * local[0] + cosine * local[1]),
+        ]
+        aligned.append(_point_add(target_start, rotated))
+
+    maximum_adjustment_mm = 0.0
+    adjustment_limit_mm = 1.5 * target_length
+    resolved_metric: list[Point2] = []
+    last_index = len(scaffold) - 1
+    for index, (base, measured) in enumerate(zip(scaffold_metric, aligned)):
+        if index <= 2 or index >= last_index - 2:
+            weight = 0.0
+        else:
+            boundary_distance = min(index - 2, last_index - 2 - index)
+            weight = _smootherstep(min(1.0, boundary_distance / 3.0))
+        adjustment = _point_diff(measured, base)
+        adjustment_length = _distance_2d([0.0, 0.0], adjustment)
+        if adjustment_length > adjustment_limit_mm:
+            adjustment = _point_scale(
+                adjustment,
+                adjustment_limit_mm / adjustment_length,
+            )
+            adjustment_length = adjustment_limit_mm
+        maximum_adjustment_mm = max(
+            maximum_adjustment_mm,
+            weight * adjustment_length,
+        )
+        resolved_metric.append(_point_add(base, _point_scale(adjustment, weight)))
+    resolved = [
+        _round_point_2d([point[0] / metric_scale, point[1]])
+        for point in resolved_metric
+    ]
+    resolved[:3] = copy.deepcopy(scaffold[:3])
+    resolved[-3:] = copy.deepcopy(scaffold[-3:])
+    return resolved, {
+        "status": "APPLIED",
+        "authority": "measured_nurbs_interior_with_c2_boundary_scaffold",
+        "source_degree": degree,
+        "source_control_point_count": len(controls),
+        "maximum_interior_adjustment_mm": _round(maximum_adjustment_mm),
+    }
+
+
 def _camber_q(
     s_norm: float,
     h: float,
@@ -758,23 +980,72 @@ def _resolved_active_span_offsets(values: Mapping[str, Any]) -> tuple[float, flo
     return root_offset, tip_offset
 
 
+def _resolved_active_span_offsets_at_s(
+    values: Mapping[str, Any],
+    streamwise_s: float,
+) -> tuple[float, float]:
+    root_offset, tip_offset = _resolved_active_span_offsets(values)
+    canonical = values.get("canonical_nurbs_parameterization") or {}
+    active_policy = canonical.get("active_span_policy") or {}
+    root_offset = _local_span_offset(
+        values,
+        active_policy.get("root_offset", {}),
+        streamwise_s,
+        fallback=root_offset,
+    )
+    tip_offset = _local_span_offset(
+        values,
+        active_policy.get("tip_offset", {}),
+        streamwise_s,
+        fallback=tip_offset,
+    )
+    return root_offset, tip_offset
+
+
+def _local_span_offset(
+    values: Mapping[str, Any],
+    policy: Any,
+    streamwise_s: float,
+    *,
+    fallback: float,
+) -> float:
+    if (
+        not _uses_v116_adaptive_parameterization(values)
+        or not isinstance(policy, Mapping)
+        or policy.get("mode") != "v116_measured_streamwise_field"
+    ):
+        return fallback
+    field = policy.get("local_size_field")
+    if not isinstance(field, Mapping):
+        return fallback
+    main_s0, main_s1 = [float(value) for value in values["main_streamwise_interval_s"]]
+    u = (float(streamwise_s) - main_s0) / max(main_s1 - main_s0, 1.0e-12)
+    try:
+        sample = evaluate_nurbs_curve(dict(field), max(0.0, min(1.0, u)))
+        offset = float(sample[2])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return fallback
+    return offset if math.isfinite(offset) and offset >= 0.0 else fallback
+
+
 def _minimum_span_length(values: Mapping[str, Any]) -> float:
     return float(_pointwise_span_metrics(values)["pointwise_support_span_min_mm"])
 
 
 def _active_span_policy_metrics(values: Mapping[str, Any]) -> dict[str, Any]:
-    root_offset, tip_offset = _resolved_active_span_offsets(values)
     pointwise = _pointwise_span_metrics(values)
     status = (
         "PASS"
-        if root_offset >= 0.0 and tip_offset >= 0.0 and pointwise["pointwise_usable_span_min_mm"] > 0.0
+        if pointwise["resolved_root_offset_min_mm"] >= 0.0
+        and pointwise["resolved_tip_offset_min_mm"] >= 0.0
+        and pointwise["pointwise_usable_span_min_mm"] > 0.0
         else "FAIL"
     )
     return {
-        "resolved_root_offset_min_mm": _round(root_offset),
-        "resolved_root_offset_max_mm": _round(root_offset),
-        "resolved_tip_offset_min_mm": _round(tip_offset),
-        "resolved_tip_offset_max_mm": _round(tip_offset),
+        "resolved_root_offset_min_mm": _round(pointwise["resolved_root_offset_min_mm"]),
+        "resolved_root_offset_max_mm": _round(pointwise["resolved_root_offset_max_mm"]),
+        "resolved_tip_offset_min_mm": _round(pointwise["resolved_tip_offset_min_mm"]),
+        "resolved_tip_offset_max_mm": _round(pointwise["resolved_tip_offset_max_mm"]),
         "pointwise_support_span_min_mm": _round(pointwise["pointwise_support_span_min_mm"]),
         "pointwise_support_span_max_mm": _round(pointwise["pointwise_support_span_max_mm"]),
         "pointwise_usable_span_min_mm": _round(pointwise["pointwise_usable_span_min_mm"]),
@@ -784,14 +1055,23 @@ def _active_span_policy_metrics(values: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _pointwise_span_metrics(values: Mapping[str, Any]) -> dict[str, float]:
-    hub_profile = values["hub_profile_rz_mm"]
-    tip_profile = values["tip_or_shroud_profile_rz_mm"]
-    root_offset, tip_offset = _resolved_active_span_offsets(values)
+    hub_profile = _resolved_support_profile(
+        values,
+        canonical_name="hub_profile",
+        legacy_name="hub_profile_rz_mm",
+    )
+    tip_profile = _resolved_support_profile(
+        values,
+        canonical_name="tip_or_shroud_profile",
+        legacy_name="tip_or_shroud_profile_rz_mm",
+    )
     intervals = [values["main_streamwise_interval_s"]]
     if int(values.get("splitter_blade_count", 0)) > 0:
         intervals.append(values["splitter_streamwise_interval_s"])
     support_spans: list[float] = []
     usable_spans: list[float] = []
+    root_offsets: list[float] = []
+    tip_offsets: list[float] = []
     sample_count = 65
     for interval in intervals:
         s0, s1 = interval
@@ -800,20 +1080,40 @@ def _pointwise_span_metrics(values: Mapping[str, Any]) -> dict[str, float]:
             hub_r, hub_z = _profile_sample(hub_profile, s)
             tip_r, tip_z = _profile_sample(tip_profile, s)
             support_span = math.hypot(tip_r - hub_r, tip_z - hub_z)
+            measured_root_h = _resolved_measured_support_span_h(values, 0.0)
+            measured_tip_h = _resolved_measured_support_span_h(values, 1.0)
+            if measured_root_h is not None and measured_tip_h is not None:
+                root_offset = measured_root_h * support_span
+                tip_offset = (1.0 - measured_tip_h) * support_span
+            else:
+                root_offset, tip_offset = _resolved_active_span_offsets_at_s(
+                    values, s
+                )
             support_spans.append(support_span)
             usable_spans.append(support_span - root_offset - tip_offset)
+            root_offsets.append(root_offset)
+            tip_offsets.append(tip_offset)
     if not support_spans:
+        root_offset, tip_offset = _resolved_active_span_offsets(values)
         return {
             "pointwise_support_span_min_mm": 0.0,
             "pointwise_support_span_max_mm": 0.0,
             "pointwise_usable_span_min_mm": -(root_offset + tip_offset),
             "pointwise_usable_span_max_mm": -(root_offset + tip_offset),
+            "resolved_root_offset_min_mm": root_offset,
+            "resolved_root_offset_max_mm": root_offset,
+            "resolved_tip_offset_min_mm": tip_offset,
+            "resolved_tip_offset_max_mm": tip_offset,
         }
     return {
         "pointwise_support_span_min_mm": min(support_spans),
         "pointwise_support_span_max_mm": max(support_spans),
         "pointwise_usable_span_min_mm": min(usable_spans),
         "pointwise_usable_span_max_mm": max(usable_spans),
+        "resolved_root_offset_min_mm": min(root_offsets),
+        "resolved_root_offset_max_mm": max(root_offsets),
+        "resolved_tip_offset_min_mm": min(tip_offsets),
+        "resolved_tip_offset_max_mm": max(tip_offsets),
     }
 
 
@@ -981,10 +1281,38 @@ def _interpolated_centerline_q(points: list[Point2], s_value: float) -> float:
 
 
 def _effective_radius_mm(values: Mapping[str, Any], s_value: float, h: float) -> float:
-    hub_r, hub_z = _profile_sample(values["hub_profile_rz_mm"], s_value)
-    tip_r, tip_z = _profile_sample(values["tip_or_shroud_profile_rz_mm"], s_value)
+    hub_r, hub_z = _profile_sample(
+        _resolved_support_profile(
+            values,
+            canonical_name="hub_profile",
+            legacy_name="hub_profile_rz_mm",
+        ),
+        s_value,
+    )
+    tip_r, tip_z = _profile_sample(
+        _resolved_support_profile(
+            values,
+            canonical_name="tip_or_shroud_profile",
+            legacy_name="tip_or_shroud_profile_rz_mm",
+        ),
+        s_value,
+    )
+    measured_support_h = _resolved_measured_support_span_h(values, h)
+    if measured_support_h is not None:
+        return _lerp(hub_r, tip_r, measured_support_h)
     span_length_mm = math.hypot(tip_r - hub_r, tip_z - hub_z)
     root_fraction = 0.0
+    if span_length_mm > 1.0e-9 and _uses_v116_adaptive_parameterization(values):
+        root_offset_mm, tip_offset_mm = _resolved_active_span_offsets_at_s(
+            values,
+            s_value,
+        )
+        root_fraction = max(0.0, min(0.45, root_offset_mm / span_length_mm))
+        tip_fraction = max(0.0, min(0.45, tip_offset_mm / span_length_mm))
+        tip_fraction = min(tip_fraction, max(0.0, 0.9 - root_fraction))
+        blade_span_fraction = max(0.0, 1.0 - root_fraction - tip_fraction)
+        effective_h = root_fraction + max(0.0, min(1.0, h)) * blade_span_fraction
+        return _lerp(hub_r, tip_r, effective_h)
     if span_length_mm > 1.0e-9:
         root_fraction = max(
             0.0,
@@ -1161,7 +1489,79 @@ def _profile_polyline_length(profile: list[Point2]) -> float:
     )
 
 
-def _profile_sample(profile: list[Point2], s: float) -> Point2:
+def _profile_length(profile: Any) -> float:
+    if isinstance(profile, Mapping):
+        points = [_profile_sample(profile, index / 128.0) for index in range(129)]
+        return _profile_polyline_length(points)
+    return _profile_polyline_length(profile)
+
+
+def _resolved_support_profile(
+    values: Mapping[str, Any],
+    *,
+    canonical_name: str,
+    legacy_name: str,
+) -> Any:
+    canonical = values.get("canonical_nurbs_parameterization")
+    if not isinstance(canonical, Mapping):
+        return values[legacy_name]
+    extension = canonical.get("adaptive_reconstruction_extension")
+    if (
+        canonical.get("canonical_input_source")
+        != "v116_adaptive_step_reconstruction_extension"
+        or not isinstance(extension, Mapping)
+        or extension.get("status") != "PASS"
+    ):
+        return values[legacy_name]
+    support_profiles = canonical.get("support_profiles")
+    if not isinstance(support_profiles, Mapping):
+        return values[legacy_name]
+    profile = support_profiles.get(canonical_name)
+    if not isinstance(profile, Mapping) or not profile.get("control_points"):
+        return values[legacy_name]
+    return profile
+
+
+def _uses_v116_adaptive_parameterization(values: Mapping[str, Any]) -> bool:
+    canonical = values.get("canonical_nurbs_parameterization")
+    if not isinstance(canonical, Mapping):
+        return False
+    extension = canonical.get("adaptive_reconstruction_extension")
+    return (
+        canonical.get("canonical_input_source")
+        == "v116_adaptive_step_reconstruction_extension"
+        and isinstance(extension, Mapping)
+        and extension.get("status") == "PASS"
+    )
+
+
+def _resolved_measured_support_span_h(
+    values: Mapping[str, Any], h: float
+) -> float | None:
+    if not _uses_v116_adaptive_parameterization(values):
+        return None
+    canonical = values.get("canonical_nurbs_parameterization")
+    extension = canonical.get("adaptive_reconstruction_extension")
+    mapping = extension.get("source_support_span_mapping")
+    if not isinstance(mapping, Mapping) or mapping.get("kind") != "nurbs_curve":
+        return None
+    if mapping.get("construction_usage") != "constructor_span_authority":
+        return None
+    evaluated = evaluate_nurbs_curve(dict(mapping), max(0.0, min(1.0, float(h))))
+    if len(evaluated) < 2 or not math.isfinite(float(evaluated[1])):
+        raise ValueError("v116 measured support-span mapping is invalid")
+    support_h = float(evaluated[1])
+    if not -1.0e-9 <= support_h <= 1.0 + 1.0e-9:
+        raise ValueError("v116 measured support-span mapping leaves [0, 1]")
+    return max(0.0, min(1.0, support_h))
+
+
+def _profile_sample(profile: Any, s: float) -> Point2:
+    if isinstance(profile, Mapping):
+        return [
+            float(value)
+            for value in evaluate_nurbs_curve(dict(profile), float(s))[:2]
+        ]
     clamped_s = max(0.0, min(1.0, float(s)))
     scaled = clamped_s * (len(profile) - 1)
     left_index = min(int(math.floor(scaled)), len(profile) - 1)

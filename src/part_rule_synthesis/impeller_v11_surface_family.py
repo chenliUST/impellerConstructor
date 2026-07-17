@@ -5,6 +5,7 @@ import math
 from typing import Any
 
 from part_rule_synthesis.impeller_v10_topology_graph import build_v10_topology_graph
+from part_rule_synthesis.impeller_v11_2_canonical import evaluate_nurbs_curve
 from part_rule_synthesis.impeller_v11_blade_to_blade_loop import build_v11_blade_to_blade_loop_family
 from part_rule_synthesis.impeller_v11_constants import (
     GEOMETRY_PATCH_VERSION,
@@ -83,7 +84,13 @@ def build_v11_surface_graph(
         graph_failures = [*copy.deepcopy(failures), tip_mode_failure]
     else:
         surfaces = (
-            _surfaces_from_loop_family(loop_family, facets, defaults, parameters, tip_mode=tip_mode)
+            _surfaces_from_loop_family(
+                loop_family,
+                facets,
+                resolved_defaults,
+                parameters,
+                tip_mode=tip_mode,
+            )
             if not failures
             else []
         )
@@ -139,6 +146,11 @@ def build_v11_surface_graph(
 
 
 def _merge_v11_profile_overrides(defaults: dict[str, Any], profile_overrides: dict[str, Any]) -> dict[str, Any]:
+    if profile_overrides and _uses_v116_adaptive_support_authority(defaults):
+        raise ValueError(
+            "v116 adaptive support profiles are authoritative; profile overrides "
+            "must regenerate the canonical NURBS descriptor"
+        )
     merged = copy.deepcopy(defaults)
     hub_points = _profile_override_control_points(profile_overrides, "hub_profile")
     tip_points = _profile_override_control_points(profile_overrides, "tip_or_shroud_profile")
@@ -291,9 +303,21 @@ def _closed_span_domain_quality(
 
 def _root_attachment_surface(blade: dict[str, Any], blade_index: int, defaults: dict[str, Any]) -> dict[str, Any]:
     width_mm = float(defaults.get("root_attachment_width_mm", 20.0))
-    lift_mm = float(defaults.get("root_attachment_lift_mm", 20.0))
-    root_loop_s_q = _closed_boundary_loop_s_q(blade["loops"][0])
-    outer_loop_s_q, offset_quality = _offset_root_loop_outward_s_q(root_loop_s_q, width_mm, defaults)
+    root_loop_s_q, root_segment_ranges = _closed_boundary_loop_s_q_with_ranges(
+        blade["loops"][0]
+    )
+    requested_widths, width_field_mode = _attachment_widths(
+        defaults,
+        "root_to_hub",
+        root_loop_s_q,
+        fallback=width_mm,
+    )
+    outer_loop_s_q, offset_quality = _offset_root_loop_outward_s_q(
+        root_loop_s_q,
+        requested_widths,
+        defaults,
+        segment_ranges=root_segment_ranges,
+    )
     phase_pitch = float(blade.get("blade_pair_index", 0)) + float(blade.get("phase_offset_pitch", 0.0))
     root_loop = _closed_boundary_loop(blade["loops"][0])
     hub_inner_loop = [_map_root_s_q_to_xyz(point, defaults, phase_pitch) for point in root_loop_s_q]
@@ -328,16 +352,33 @@ def _root_attachment_surface(blade: dict[str, Any], blade_index: int, defaults: 
         "blade_inner_loop_s_q": copy.deepcopy(root_loop_s_q),
     }
     surface["v1_1_root_quality"] = {
-        "status": "PASS",
+        "status": offset_quality.get("status", "PASS"),
         "construction": "curved_support_footprint_to_blade_root_attachment",
-        "root_width_min_mm": _round(width_mm),
-        "root_width_max_mm": _round(width_mm),
-        "root_lift_min_mm": _round(lift_mm),
-        "root_lift_max_mm": _round(lift_mm),
+        "support_profile_endpoint_mapping_policy": (
+            "v116_support_boundary_intersection_with_tangent_safety_fallback"
+            if _uses_v116_adaptive_support_authority(defaults)
+            else "historical_clamped_profile_parameter"
+        ),
+        "root_width_field_mode": width_field_mode,
+        "root_width_requested_min_mm": _round(min(requested_widths)),
+        "root_width_requested_max_mm": _round(max(requested_widths)),
+        "root_width_min_mm": offset_quality.get(
+            "root_effective_width_min_mm",
+            _round(min(requested_widths)),
+        ),
+        "root_width_max_mm": offset_quality.get(
+            "root_effective_width_max_mm",
+            _round(max(requested_widths)),
+        ),
+        "root_lift_min_mm": _round(min(blade_lifts) if blade_lifts else 0.0),
+        "root_lift_max_mm": _round(max(blade_lifts) if blade_lifts else 0.0),
         "root_blade_lift_min_mm": _round(min(blade_lifts) if blade_lifts else 0.0),
         "root_blade_lift_max_mm": _round(max(blade_lifts) if blade_lifts else 0.0),
-        "foldover_count": 0,
-        "material_side_status": "PASS",
+        "foldover_count": offset_quality.get("foldover_count", 0),
+        "material_side_status": offset_quality.get(
+            "material_side_status",
+            "PASS",
+        ),
         **attachment_quality,
         **offset_quality,
     }
@@ -435,7 +476,17 @@ def _closed_shroud_attachment_surface(
     )
     tip_loop_s_q = _closed_boundary_loop_s_q(blade["loops"][-1])
     tip_loop = _closed_boundary_loop(blade["loops"][-1])
-    shroud_attachment_loop_s_q, offset_quality = _offset_root_loop_outward_s_q(tip_loop_s_q, width_mm, defaults)
+    requested_widths, _ = _attachment_widths(
+        defaults,
+        "tip_to_shroud",
+        tip_loop_s_q,
+        fallback=width_mm,
+    )
+    shroud_attachment_loop_s_q, offset_quality = _offset_root_loop_outward_s_q(
+        tip_loop_s_q,
+        requested_widths,
+        defaults,
+    )
     phase_pitch = float(blade.get("blade_pair_index", 0)) + float(blade.get("phase_offset_pitch", 0.0))
     shroud_reference_loop = [_map_tip_s_q_to_xyz(point, defaults, phase_pitch) for point in tip_loop_s_q]
     if shroud_reference_loop:
@@ -564,7 +615,11 @@ def _support_surfaces(
         surface_id="hub_support_surface",
         face_family="hub_support",
         role="hub_support",
-        profile_points=defaults.get("hub_profile_rz_mm", []),
+        profile_points=_resolved_support_profile(
+            defaults,
+            canonical_name="hub_profile",
+            legacy_name="hub_profile_rz_mm",
+        ),
         profile_name="hub_profile_rz_mm",
         profile_sample_count=_int_default(defaults, "profile_revolve_sample_count", 49, minimum=2),
         theta_sample_count=_int_default(defaults, "theta_sample_count", 73, minimum=3),
@@ -576,7 +631,11 @@ def _support_surfaces(
         surface_id="tip_reference_surface",
         face_family="tip_reference_support",
         role="open_tip_reference",
-        profile_points=defaults.get("tip_or_shroud_profile_rz_mm", []),
+        profile_points=_resolved_support_profile(
+            defaults,
+            canonical_name="tip_or_shroud_profile",
+            legacy_name="tip_or_shroud_profile_rz_mm",
+        ),
         profile_name="tip_or_shroud_profile_rz_mm",
         profile_sample_count=_int_default(defaults, "profile_revolve_sample_count", 49, minimum=2),
         theta_sample_count=_int_default(defaults, "theta_sample_count", 73, minimum=3),
@@ -593,8 +652,22 @@ def _support_surfaces(
 def _shroud_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> list[dict[str, Any]]:
     profile_sample_count = _int_default(defaults, "profile_revolve_sample_count", 49, minimum=2)
     theta_sample_count = _int_default(defaults, "theta_sample_count", 73, minimum=3)
-    inner_profile = _sample_profile_rz(defaults.get("tip_or_shroud_profile_rz_mm", []), sample_count=profile_sample_count)
-    hub_profile = _sample_profile_rz(defaults.get("hub_profile_rz_mm", []), sample_count=profile_sample_count)
+    inner_profile = _sample_profile_rz(
+        _resolved_support_profile(
+            defaults,
+            canonical_name="tip_or_shroud_profile",
+            legacy_name="tip_or_shroud_profile_rz_mm",
+        ),
+        sample_count=profile_sample_count,
+    )
+    hub_profile = _sample_profile_rz(
+        _resolved_support_profile(
+            defaults,
+            canonical_name="hub_profile",
+            legacy_name="hub_profile_rz_mm",
+        ),
+        sample_count=profile_sample_count,
+    )
     if not inner_profile:
         return []
     wall_thickness = max(_parameter_default(parameters, "hood_wall_thickness_mm", 24.0), 0.0)
@@ -665,7 +738,11 @@ def _shroud_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) ->
 def _hub_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> list[dict[str, Any]]:
     theta_sample_count = _int_default(defaults, "theta_sample_count", 73, minimum=3)
     profile = _sample_profile_rz(
-        defaults.get("hub_profile_rz_mm", []),
+        _resolved_support_profile(
+            defaults,
+            canonical_name="hub_profile",
+            legacy_name="hub_profile_rz_mm",
+        ),
         sample_count=_int_default(defaults, "profile_revolve_sample_count", 49, minimum=2),
     )
     if not profile:
@@ -674,8 +751,33 @@ def _hub_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> li
     bottom_thickness = _parameter_default(parameters, "hub_bottom_thickness_mm", 24.0)
     top_radius, top_z = max(profile, key=lambda point: point[1])
     bottom_radius, hub_bottom_z = min(profile, key=lambda point: point[1])
-    solid_bottom_z = hub_bottom_z - max(bottom_thickness, 0.0)
-    bore_radius = min(max(bore_radius, 1.0), max(min(top_radius, bottom_radius) - 1.0, 1.0))
+    adaptive_endpoint_closure = _uses_v116_adaptive_support_authority(defaults)
+    if adaptive_endpoint_closure:
+        inner_radius, inner_z = min(profile, key=lambda point: point[0])
+        outer_radius, outer_z = max(profile, key=lambda point: point[0])
+        solid_bottom_z = min(point[1] for point in profile) - max(
+            bottom_thickness, 0.0
+        )
+        top_annulus_outer_radius = inner_radius
+        top_annulus_z = inner_z
+        bottom_annulus_outer_radius = outer_radius
+        outer_wall_radius = outer_radius
+        outer_wall_top_z = outer_z
+        bore_wall_top_z = inner_z
+        closure_topology = "v116_profile_endpoint_closed_hub_solid"
+    else:
+        solid_bottom_z = hub_bottom_z - max(bottom_thickness, 0.0)
+        top_annulus_outer_radius = top_radius
+        top_annulus_z = top_z
+        bottom_annulus_outer_radius = bottom_radius
+        outer_wall_radius = bottom_radius
+        outer_wall_top_z = hub_bottom_z
+        bore_wall_top_z = top_z
+        closure_topology = "legacy_v1_1_axial_extrema_closed_hub_solid"
+    bore_radius = min(
+        max(bore_radius, 1.0),
+        max(min(top_annulus_outer_radius, bottom_annulus_outer_radius) - 1.0, 1.0),
+    )
     quality = {
         "status": "PASS",
         "construction": "v1_1_explicit_capped_revolved_hub_solid_with_bore",
@@ -684,14 +786,21 @@ def _hub_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> li
         "hub_profile_bottom_z_mm": _round(hub_bottom_z),
         "solid_bottom_z_mm": _round(solid_bottom_z),
         "hub_top_z_mm": _round(top_z),
+        "closure_topology": closure_topology,
+        "top_annulus_outer_radius_mm": _round(top_annulus_outer_radius),
+        "top_annulus_z_mm": _round(top_annulus_z),
+        "bottom_annulus_outer_radius_mm": _round(
+            bottom_annulus_outer_radius
+        ),
+        "outer_wall_radius_mm": _round(outer_wall_radius),
     }
     faces = [
         _annulus_surface(
             surface_id="hub_top_annulus_surface",
             role="hub_support",
             inner_radius=bore_radius,
-            outer_radius=top_radius,
-            z_mm=top_z,
+            outer_radius=top_annulus_outer_radius,
+            z_mm=top_annulus_z,
             quality=quality,
             radial_sample_count=_int_default(defaults, "hub_solid_radial_sample_count", 9, minimum=3),
             theta_sample_count=theta_sample_count,
@@ -700,7 +809,7 @@ def _hub_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> li
             surface_id="hub_bottom_annulus_surface",
             role="hub_support",
             inner_radius=bore_radius,
-            outer_radius=bottom_radius,
+            outer_radius=bottom_annulus_outer_radius,
             z_mm=solid_bottom_z,
             quality=quality,
             radial_sample_count=_int_default(defaults, "hub_solid_radial_sample_count", 9, minimum=3),
@@ -709,9 +818,9 @@ def _hub_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> li
         _cylindrical_surface(
             surface_id="hub_bottom_outer_wall_surface",
             role="hub_support",
-            radius_mm=bottom_radius,
+            radius_mm=outer_wall_radius,
             z0_mm=solid_bottom_z,
-            z1_mm=hub_bottom_z,
+            z1_mm=outer_wall_top_z,
             quality=quality,
             z_sample_count=_int_default(defaults, "hub_solid_axial_sample_count", 17, minimum=3),
             theta_sample_count=theta_sample_count,
@@ -721,7 +830,7 @@ def _hub_solid_faces(defaults: dict[str, Any], parameters: dict[str, Any]) -> li
             role="mounting_bore",
             radius_mm=bore_radius,
             z0_mm=solid_bottom_z,
-            z1_mm=top_z,
+            z1_mm=bore_wall_top_z,
             quality=quality,
             z_sample_count=_int_default(defaults, "hub_solid_axial_sample_count", 17, minimum=3),
             theta_sample_count=theta_sample_count,
@@ -824,7 +933,7 @@ def _profile_revolve_surface(
     surface_id: str,
     face_family: str,
     role: str,
-    profile_points: list[list[float]],
+    profile_points: Any,
     profile_name: str,
     profile_sample_count: int = 49,
     theta_sample_count: int = 73,
@@ -854,6 +963,11 @@ def _profile_revolve_surface(
     surface["source"] = {
         "profile": profile_name,
         "surface": "axisymmetric_profile_revolve",
+        "evaluation_authority": (
+            "exact_nurbs_curve"
+            if isinstance(profile_points, dict)
+            else "legacy_control_polygon"
+        ),
         "profile_sample_count": len(profile),
         "theta_sample_count": theta_count,
     }
@@ -871,6 +985,11 @@ def _profile_revolve_surface(
 
 
 def _sample_profile_rz(profile_points: Any, *, sample_count: int) -> list[list[float]]:
+    if isinstance(profile_points, dict):
+        return [
+            [float(value) for value in evaluate_nurbs_curve(profile_points, index / max(sample_count - 1, 1))[:2]]
+            for index in range(max(sample_count, 2))
+        ]
     points = [
         [float(point[0]), float(point[1])]
         for point in profile_points
@@ -1044,25 +1163,45 @@ def _closed_boundary_loop(loop: dict[str, Any]) -> list[Point3]:
 
 
 def _closed_boundary_loop_s_q(loop: dict[str, Any]) -> list[Point2]:
+    records, _ranges = _closed_boundary_loop_s_q_with_ranges(loop)
+    return records
+
+
+def _closed_boundary_loop_s_q_with_ranges(
+    loop: dict[str, Any],
+) -> tuple[list[Point2], dict[str, tuple[int, int]]]:
     records: list[Point2] = []
+    ranges: dict[str, tuple[int, int]] = {}
     for segment_name, reverse in _BOUNDARY_SEGMENTS:
         points = loop["segments"][segment_name]["points_s_q"]
         segment = list(reversed(points)) if reverse else list(points)
+        start_index = len(records)
         if records and _points_close_2d(records[-1], segment[0]):
             segment = segment[1:]
+            start_index -= 1
         records.extend(copy.deepcopy(segment))
+        ranges[segment_name] = (start_index, len(records) - 1)
     if records and not _points_close_2d(records[0], records[-1]):
         records.append(copy.deepcopy(records[0]))
     elif records:
         records[-1] = copy.deepcopy(records[0])
-    return records
+    return records, ranges
 
 
 def _offset_root_loop_outward_s_q(
     root_loop_s_q: list[Point2],
-    width_mm: float,
+    width_mm: float | list[float],
     defaults: dict[str, Any],
+    *,
+    segment_ranges: dict[str, tuple[int, int]] | None = None,
 ) -> tuple[list[Point2], dict[str, Any]]:
+    if _uses_v116_adaptive_support_authority(defaults):
+        return _offset_v116_root_loop_outward_s_q(
+            root_loop_s_q,
+            width_mm,
+            defaults,
+            segment_ranges=segment_ranges,
+        )
     if len(root_loop_s_q) < 4:
         return copy.deepcopy(root_loop_s_q), {
             "root_offset_method": "closed_loop_metric_outward_normal_offset",
@@ -1072,6 +1211,15 @@ def _offset_root_loop_outward_s_q(
         }
     streamwise_scale_mm = _root_streamwise_metric_scale(defaults)
     source_points = root_loop_s_q[:-1] if _points_close_2d(root_loop_s_q[0], root_loop_s_q[-1]) else root_loop_s_q
+    if isinstance(width_mm, list):
+        source_widths = width_mm[:-1] if len(width_mm) == len(root_loop_s_q) and len(width_mm) > len(source_points) else width_mm
+        if len(source_widths) != len(source_points):
+            raise ValueError("root attachment width field must match the closed boundary loop")
+        widths = [float(value) for value in source_widths]
+    else:
+        widths = [float(width_mm) for _ in source_points]
+    if not widths or any(not math.isfinite(value) or value <= 0.0 for value in widths):
+        raise ValueError("root attachment widths must be positive finite values")
     metric_points = [[point[0] * streamwise_scale_mm, point[1]] for point in source_points]
     signed_area = _signed_area_2d(metric_points)
     offset_metric_points: list[Point2] = []
@@ -1081,12 +1229,13 @@ def _offset_root_loop_outward_s_q(
     domain_clipped_count = 0
     count = len(metric_points)
     for index, point in enumerate(metric_points):
+        local_width_mm = widths[index]
         previous_point = metric_points[(index - 1) % count]
         next_point = metric_points[(index + 1) % count]
         previous_normal = _edge_outward_normal(_subtract_2d(point, previous_point), signed_area)
         next_normal = _edge_outward_normal(_subtract_2d(next_point, point), signed_area)
         outward = _normalized_2d(_add_2d(previous_normal, next_normal)) or next_normal or previous_normal
-        offset_point = _add_2d(point, _scale_2d(outward, width_mm))
+        offset_point = _add_2d(point, _scale_2d(outward, local_width_mm))
         unclipped_s = offset_point[0] / streamwise_scale_mm
         domain_clipped = not 0.0 <= unclipped_s <= 1.0
         if domain_clipped:
@@ -1100,7 +1249,7 @@ def _offset_root_loop_outward_s_q(
             offset_s_q[1] - point[1],
         ]
         actual_width = _norm_2d(actual_metric_offset)
-        width_ratio = actual_width / max(width_mm, 1.0e-9)
+        width_ratio = actual_width / max(local_width_mm, 1.0e-9)
         width_ratios.append(width_ratio)
         if not domain_clipped:
             unclipped_width_ratios.append(width_ratio)
@@ -1118,15 +1267,389 @@ def _offset_root_loop_outward_s_q(
     }
 
 
+def _offset_v116_root_loop_outward_s_q(
+    root_loop_s_q: list[Point2],
+    width_mm: float | list[float],
+    defaults: dict[str, Any],
+    *,
+    segment_ranges: dict[str, tuple[int, int]] | None = None,
+) -> tuple[list[Point2], dict[str, Any]]:
+    if len(root_loop_s_q) < 4:
+        return copy.deepcopy(root_loop_s_q), {
+            "status": "FAIL",
+            "material_side_status": "FAIL",
+            "root_offset_method": "v116_unclamped_metric_normal_offset",
+            "root_outer_offset_side_failures": 1,
+            "root_offset_domain_clipped_count": 0,
+            "root_offset_feasibility_taper_count": 0,
+            "root_effective_width_min_mm": 0.0,
+            "root_effective_width_max_mm": 0.0,
+            "foldover_count": 1,
+        }
+    streamwise_scale_mm = _root_streamwise_metric_scale(defaults)
+    source_points = (
+        root_loop_s_q[:-1]
+        if _points_close_2d(root_loop_s_q[0], root_loop_s_q[-1])
+        else root_loop_s_q
+    )
+    if isinstance(width_mm, list):
+        source_widths = (
+            width_mm[:-1]
+            if len(width_mm) == len(root_loop_s_q)
+            and len(width_mm) > len(source_points)
+            else width_mm
+        )
+        if len(source_widths) != len(source_points):
+            raise ValueError(
+                "root attachment width field must match the closed boundary loop"
+            )
+        requested_widths = [float(value) for value in source_widths]
+    else:
+        requested_widths = [float(width_mm) for _ in source_points]
+    if not requested_widths or any(
+        not math.isfinite(value) or value <= 0.0
+        for value in requested_widths
+    ):
+        raise ValueError("root attachment widths must be positive finite values")
+
+    metric_points = [
+        [point[0] * streamwise_scale_mm, point[1]] for point in source_points
+    ]
+    signed_area = _signed_area_2d(metric_points)
+    count = len(metric_points)
+    outward_normals: list[Point2] = []
+    for index, point in enumerate(metric_points):
+        previous_point = metric_points[(index - 1) % count]
+        next_point = metric_points[(index + 1) % count]
+        previous_normal = _edge_outward_normal(
+            _subtract_2d(point, previous_point), signed_area
+        )
+        next_normal = _edge_outward_normal(
+            _subtract_2d(next_point, point), signed_area
+        )
+        outward = (
+            _normalized_2d(_add_2d(previous_normal, next_normal))
+            or next_normal
+            or previous_normal
+        )
+        outward_normals.append(outward)
+    def build_offset(scale_factor: float):
+        points = [
+            _add_2d(
+                point,
+                _scale_2d(outward, requested_width * scale_factor),
+            )
+            for point, outward, requested_width in zip(
+                metric_points,
+                outward_normals,
+                requested_widths,
+            )
+        ]
+        cap_regularization_count = 0
+        cap_indices: set[int] = set()
+        for segment_name in ("leading_edge", "trailing_edge"):
+            index_range = (segment_ranges or {}).get(segment_name)
+            if not index_range:
+                continue
+            start_index = max(0, int(index_range[0]))
+            end_index = min(count - 1, int(index_range[1]))
+            if end_index - start_index < 2:
+                continue
+            _regularize_root_cap_offset(
+                points,
+                metric_points,
+                requested_widths,
+                start_index=start_index,
+                end_index=end_index,
+                scale_factor=scale_factor,
+            )
+            cap_indices.update(range(start_index, end_index + 1))
+            cap_regularization_count += 1
+
+        support_boundary_intersection_count = 0
+        for index, (source_point, offset_point, outward, requested_width) in enumerate(
+            zip(metric_points, points, outward_normals, requested_widths)
+        ):
+            if 0.0 <= offset_point[0] <= streamwise_scale_mm:
+                continue
+            boundary_s = 0.0 if offset_point[0] < 0.0 else streamwise_scale_mm
+            streamwise_offset = boundary_s - source_point[0]
+            resolved_width = requested_width * scale_factor
+            remaining_q = math.sqrt(
+                max(resolved_width * resolved_width - streamwise_offset * streamwise_offset, 0.0)
+            )
+            q_direction = offset_point[1] - source_point[1]
+            if abs(q_direction) <= 1.0e-12:
+                q_direction = outward[1]
+            if abs(q_direction) <= 1.0e-12:
+                q_direction = source_point[1]
+            q_sign = -1.0 if q_direction < 0.0 else 1.0
+            points[index] = [
+                boundary_s,
+                source_point[1] + q_sign * remaining_q,
+            ]
+            support_boundary_intersection_count += 1
+
+        cap_arc_length_resample_count = 0
+        for segment_name in ("leading_edge", "trailing_edge"):
+            index_range = (segment_ranges or {}).get(segment_name)
+            if not index_range:
+                continue
+            start_index = max(0, int(index_range[0]))
+            end_index = min(count - 1, int(index_range[1]))
+            if _resample_metric_polyline_segment_by_arc_length(
+                points,
+                start_index=start_index,
+                end_index=end_index,
+            ):
+                cap_arc_length_resample_count += 1
+
+        widths: list[float] = []
+        side_failures = 0
+        for index, (point, outward, offset_point) in enumerate(zip(
+            metric_points,
+            outward_normals,
+            points,
+        )):
+            actual_offset = _subtract_2d(offset_point, point)
+            actual_width = _norm_2d(actual_offset)
+            if actual_width <= 1.0e-9 or (
+                index not in cap_indices
+                and _dot_2d(actual_offset, outward) <= 0.0
+            ):
+                side_failures += 1
+            widths.append(actual_width)
+        outer_area = _signed_area_2d(points)
+        if (
+            outer_area * signed_area <= 0.0
+            or abs(outer_area) <= abs(signed_area)
+        ):
+            side_failures += 1
+        points = [
+            [point[0] / streamwise_scale_mm, point[1]] for point in points
+        ]
+        intersections = _closed_polyline_self_intersection_count_2d(points)
+        degenerate_edges = _closed_polyline_degenerate_edge_count_2d(points)
+        return (
+            points,
+            widths,
+            side_failures,
+            intersections + degenerate_edges,
+            intersections,
+            degenerate_edges,
+            cap_regularization_count,
+            support_boundary_intersection_count,
+            cap_arc_length_resample_count,
+        )
+
+    stabilization_factor = 1.0
+    result = build_offset(stabilization_factor)
+    for _ in range(24):
+        if result[3] == 0:
+            break
+        stabilization_factor *= 0.85
+        result = build_offset(stabilization_factor)
+    (
+        offset_metric_points,
+        effective_widths,
+        side_failures,
+        foldover_count,
+        self_intersection_count,
+        degenerate_edge_count,
+        cap_regularization_count,
+        support_boundary_intersection_count,
+        cap_arc_length_resample_count,
+    ) = result
+    offset_metric_points.append(copy.deepcopy(offset_metric_points[0]))
+    width_ratios = [
+        effective / requested
+        for effective, requested in zip(effective_widths, requested_widths)
+    ]
+    taper_count = sum(
+        effective < 0.999 * requested
+        for effective, requested in zip(effective_widths, requested_widths)
+    )
+    status = (
+        "PASS"
+        if side_failures == 0
+        and foldover_count == 0
+        and min(effective_widths) > 1.0e-9
+        else "FAIL"
+    )
+    return [_round_point_2d(point) for point in offset_metric_points], {
+        "status": status,
+        "material_side_status": status,
+        "root_offset_method": "v116_segment_aware_cap_regularized_metric_offset",
+        "root_outer_offset_side_failures": side_failures,
+        "root_offset_domain_clipped_count": 0,
+        "root_offset_numerical_domain_correction_count": 0,
+        "root_offset_feasibility_taper_count": taper_count,
+        "root_offset_domain_direction_adjustment_count": 0,
+        "root_offset_endpoint_policy": "metric_support_boundary_intersection",
+        "root_offset_support_boundary_intersection_count": (
+            support_boundary_intersection_count
+        ),
+        "root_offset_cap_regularization_count": cap_regularization_count,
+        "root_offset_cap_arc_length_resample_count": (
+            cap_arc_length_resample_count
+        ),
+        "root_offset_stabilization_factor": _round(stabilization_factor),
+        "root_effective_width_min_mm": _round(min(effective_widths)),
+        "root_effective_width_max_mm": _round(max(effective_widths)),
+        "root_offset_width_ratio_min": _round(min(width_ratios)),
+        "root_offset_width_ratio_max": _round(max(width_ratios)),
+        "root_streamwise_metric_scale_mm": _round(streamwise_scale_mm),
+        "foldover_count": foldover_count,
+        "root_offset_self_intersection_count": self_intersection_count,
+        "root_offset_degenerate_edge_count": degenerate_edge_count,
+    }
+
+
+def _regularize_root_cap_offset(
+    offset_points: list[Point2],
+    source_points: list[Point2],
+    requested_widths: list[float],
+    *,
+    start_index: int,
+    end_index: int,
+    scale_factor: float,
+) -> None:
+    first = source_points[start_index]
+    last = source_points[end_index]
+    center = _scale_2d(_add_2d(first, last), 0.5)
+    chord = _normalized_2d(_subtract_2d(last, first))
+    if chord is None:
+        return
+    bulge_axis = [chord[1], -chord[0]]
+    mean_bulge = sum(
+        _dot_2d(_subtract_2d(source_points[index], center), bulge_axis)
+        for index in range(start_index, end_index + 1)
+    ) / max(end_index - start_index + 1, 1)
+    if mean_bulge < 0.0:
+        bulge_axis = _scale_2d(bulge_axis, -1.0)
+    half_chord = 0.5 * _norm_2d(_subtract_2d(last, first))
+    cap_bulge = max(
+        0.0,
+        *(
+            _dot_2d(
+                _subtract_2d(source_points[index], center),
+                bulge_axis,
+            )
+            for index in range(start_index, end_index + 1)
+        ),
+    )
+    denominator = max(end_index - start_index, 1)
+    for index in range(start_index, end_index + 1):
+        t = (index - start_index) / denominator
+        angle = math.pi * t
+        width = requested_widths[index] * scale_factor
+        regularized_target = _add_2d(
+            center,
+            _add_2d(
+                _scale_2d(chord, -math.cos(angle) * (half_chord + width)),
+                _scale_2d(bulge_axis, math.sin(angle) * (cap_bulge + width)),
+            ),
+        )
+        outward = _normalized_2d(
+            _subtract_2d(regularized_target, source_points[index])
+        )
+        if outward is None:
+            continue
+        offset_points[index] = _add_2d(
+            source_points[index],
+            _scale_2d(outward, width),
+        )
+
+
+def _resample_metric_polyline_segment_by_arc_length(
+    points: list[Point2],
+    *,
+    start_index: int,
+    end_index: int,
+) -> bool:
+    if end_index - start_index < 2:
+        return False
+    segment = [copy.deepcopy(point) for point in points[start_index : end_index + 1]]
+    cumulative = [0.0]
+    for left, right in zip(segment, segment[1:]):
+        cumulative.append(cumulative[-1] + _norm_2d(_subtract_2d(right, left)))
+    total_length = cumulative[-1]
+    if total_length <= 1.0e-9:
+        return False
+    resolved = [copy.deepcopy(segment[0])]
+    cursor = 0
+    denominator = max(len(segment) - 1, 1)
+    for index in range(1, len(segment) - 1):
+        target = total_length * index / denominator
+        while cursor + 1 < len(cumulative) and cumulative[cursor + 1] < target:
+            cursor += 1
+        upper = min(cursor + 1, len(segment) - 1)
+        local_length = cumulative[upper] - cumulative[cursor]
+        fraction = (
+            0.0
+            if local_length <= 1.0e-12
+            else (target - cumulative[cursor]) / local_length
+        )
+        resolved.append(
+            [
+                _lerp(segment[cursor][axis], segment[upper][axis], fraction)
+                for axis in range(2)
+            ]
+        )
+    resolved.append(copy.deepcopy(segment[-1]))
+    points[start_index : end_index + 1] = resolved
+    return True
+
+
+def _attachment_widths(
+    defaults: dict[str, Any],
+    attachment_name: str,
+    loop_s_q: list[Point2],
+    *,
+    fallback: float,
+) -> tuple[list[float], str]:
+    if not _uses_v116_adaptive_support_authority(defaults):
+        return [float(fallback) for _ in loop_s_q], "resolved_constant_mm"
+    canonical = defaults.get("canonical_nurbs_parameterization") or {}
+    attachment_policy = canonical.get("attachment_policy") or {}
+    policy = attachment_policy.get(attachment_name) or {}
+    field = policy.get("local_size_field") if isinstance(policy, dict) else None
+    if not isinstance(field, dict):
+        return [float(fallback) for _ in loop_s_q], "resolved_constant_mm"
+    main_s0, main_s1 = [float(value) for value in defaults.get("main_streamwise_interval_s", [0.0, 1.0])]
+    widths: list[float] = []
+    for point in loop_s_q:
+        u = (float(point[0]) - main_s0) / max(main_s1 - main_s0, 1.0e-12)
+        try:
+            sample = evaluate_nurbs_curve(field, max(0.0, min(1.0, u)))
+            width = float(sample[1])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return [float(fallback) for _ in loop_s_q], "resolved_constant_mm"
+        if not math.isfinite(width) or width <= 0.0:
+            return [float(fallback) for _ in loop_s_q], "resolved_constant_mm"
+        widths.append(width)
+    return widths, "v116_measured_streamwise_field"
+
+
 def _map_root_s_q_to_xyz(point_s_q: Point2, defaults: dict[str, Any], phase_pitch: float) -> Point3:
-    radius_mm, z_mm = _profile_sample_rz(defaults.get("hub_profile_rz_mm", []), point_s_q[0])
+    radius_mm, z_mm = _sample_attachment_profile_rz(
+        defaults,
+        canonical_name="hub_profile",
+        legacy_name="hub_profile_rz_mm",
+        s=point_s_q[0],
+    )
     blade_pitch_rad = 2.0 * math.pi / max(int(defaults.get("main_blade_count", 1)), 1)
     theta = phase_pitch * blade_pitch_rad + point_s_q[1] / max(radius_mm, 1.0e-9)
     return _round_point([radius_mm * math.cos(theta), radius_mm * math.sin(theta), z_mm])
 
 
 def _map_tip_s_q_to_xyz(point_s_q: Point2, defaults: dict[str, Any], phase_pitch: float) -> Point3:
-    radius_mm, z_mm = _profile_sample_rz(defaults.get("tip_or_shroud_profile_rz_mm", []), point_s_q[0])
+    radius_mm, z_mm = _sample_attachment_profile_rz(
+        defaults,
+        canonical_name="tip_or_shroud_profile",
+        legacy_name="tip_or_shroud_profile_rz_mm",
+        s=point_s_q[0],
+    )
     blade_pitch_rad = 2.0 * math.pi / max(int(defaults.get("main_blade_count", 1)), 1)
     theta = phase_pitch * blade_pitch_rad + point_s_q[1] / max(radius_mm, 1.0e-9)
     return _round_point([radius_mm * math.cos(theta), radius_mm * math.sin(theta), z_mm])
@@ -1256,11 +1779,20 @@ def _rotate_about_axis(point: Point3, *, arc_length_mm: float) -> Point3:
 
 
 def _root_streamwise_metric_scale(defaults: dict[str, Any]) -> float:
-    profile = [
-        [float(point[0]), float(point[1])]
-        for point in defaults.get("hub_profile_rz_mm", [])
-        if isinstance(point, list) and len(point) >= 2
-    ]
+    authority = _resolved_support_profile(
+        defaults,
+        canonical_name="hub_profile",
+        legacy_name="hub_profile_rz_mm",
+    )
+    profile = (
+        _sample_profile_rz(authority, sample_count=129)
+        if _uses_v116_adaptive_support_authority(defaults)
+        else [
+            [float(point[0]), float(point[1])]
+            for point in authority
+            if isinstance(point, list) and len(point) >= 2
+        ]
+    )
     if len(profile) < 2:
         return 1.0
     return max(
@@ -1270,6 +1802,11 @@ def _root_streamwise_metric_scale(defaults: dict[str, Any]) -> float:
 
 
 def _profile_sample_rz(profile_points: Any, s: float) -> Point2:
+    if isinstance(profile_points, dict):
+        return [
+            float(value)
+            for value in evaluate_nurbs_curve(profile_points, float(s))[:2]
+        ]
     points = [
         [float(point[0]), float(point[1])]
         for point in profile_points
@@ -1286,6 +1823,81 @@ def _profile_sample_rz(profile_points: Any, s: float) -> Point2:
         _lerp(float(points[left_index][0]), float(points[right_index][0]), fraction),
         _lerp(float(points[left_index][1]), float(points[right_index][1]), fraction),
     ]
+
+
+def _sample_attachment_profile_rz(
+    defaults: dict[str, Any],
+    *,
+    canonical_name: str,
+    legacy_name: str,
+    s: float,
+) -> Point2:
+    profile = _resolved_support_profile(
+        defaults,
+        canonical_name=canonical_name,
+        legacy_name=legacy_name,
+    )
+    if not _uses_v116_adaptive_support_authority(defaults) or 0.0 <= float(s) <= 1.0:
+        return _profile_sample_rz(profile, s)
+    return _profile_sample_rz_with_endpoint_tangent_extension(profile, s)
+
+
+def _profile_sample_rz_with_endpoint_tangent_extension(
+    profile_points: Any,
+    s: float,
+) -> Point2:
+    parameter = float(s)
+    endpoint_parameter = 0.0 if parameter < 0.0 else 1.0
+    inward_parameter = 1.0e-4 if parameter < 0.0 else 1.0 - 1.0e-4
+    endpoint = _profile_sample_rz(profile_points, endpoint_parameter)
+    inward = _profile_sample_rz(profile_points, inward_parameter)
+    if parameter < 0.0:
+        tangent = [
+            (inward[axis] - endpoint[axis]) / inward_parameter
+            for axis in range(2)
+        ]
+        extension = parameter
+    else:
+        tangent = [
+            (endpoint[axis] - inward[axis]) / (1.0 - inward_parameter)
+            for axis in range(2)
+        ]
+        extension = parameter - 1.0
+    return [
+        endpoint[axis] + extension * tangent[axis]
+        for axis in range(2)
+    ]
+
+
+def _resolved_support_profile(
+    defaults: dict[str, Any],
+    *,
+    canonical_name: str,
+    legacy_name: str,
+) -> Any:
+    canonical = defaults.get("canonical_nurbs_parameterization")
+    if not _uses_v116_adaptive_support_authority(defaults):
+        return defaults.get(legacy_name, [])
+    support_profiles = canonical.get("support_profiles")
+    if not isinstance(support_profiles, dict):
+        return defaults.get(legacy_name, [])
+    profile = support_profiles.get(canonical_name)
+    if not isinstance(profile, dict) or not profile.get("control_points"):
+        return defaults.get(legacy_name, [])
+    return profile
+
+
+def _uses_v116_adaptive_support_authority(defaults: dict[str, Any]) -> bool:
+    canonical = defaults.get("canonical_nurbs_parameterization")
+    if not isinstance(canonical, dict):
+        return False
+    extension = canonical.get("adaptive_reconstruction_extension")
+    return (
+        canonical.get("canonical_input_source")
+        == "v116_adaptive_step_reconstruction_extension"
+        and isinstance(extension, dict)
+        and extension.get("status") == "PASS"
+    )
 
 
 def _circle_row(radius_mm: float, z_mm: float, sample_count: int) -> list[Point3]:
@@ -1328,6 +1940,85 @@ def _signed_area_2d(points: list[Point2]) -> float:
     for left, right in zip(points, [*points[1:], points[0]]):
         area += left[0] * right[1] - right[0] * left[1]
     return 0.5 * area
+
+
+def _closed_polyline_self_intersection_count_2d(points: list[Point2]) -> int:
+    count = len(points)
+    if count < 4:
+        return 0
+    intersections = 0
+    for first_index in range(count):
+        first_start = points[first_index]
+        first_end = points[(first_index + 1) % count]
+        for second_index in range(first_index + 1, count):
+            if second_index in {
+                first_index,
+                (first_index + 1) % count,
+                (first_index - 1) % count,
+            }:
+                continue
+            second_start = points[second_index]
+            second_end = points[(second_index + 1) % count]
+            if _segments_intersect_2d(
+                first_start,
+                first_end,
+                second_start,
+                second_end,
+            ):
+                intersections += 1
+    return intersections
+
+
+def _closed_polyline_degenerate_edge_count_2d(points: list[Point2]) -> int:
+    return sum(
+        _norm_2d(_subtract_2d(left, right)) <= 1.0e-9
+        for left, right in zip(points, [*points[1:], points[0]])
+    )
+
+
+def _segments_intersect_2d(
+    first_start: Point2,
+    first_end: Point2,
+    second_start: Point2,
+    second_end: Point2,
+) -> bool:
+    def orientation(start: Point2, end: Point2, point: Point2) -> float:
+        return (
+            (end[0] - start[0]) * (point[1] - start[1])
+            - (end[1] - start[1]) * (point[0] - start[0])
+        )
+
+    first_left = orientation(first_start, first_end, second_start)
+    first_right = orientation(first_start, first_end, second_end)
+    second_left = orientation(second_start, second_end, first_start)
+    second_right = orientation(second_start, second_end, first_end)
+    tolerance = 1.0e-10
+    if (
+        first_left * first_right < -tolerance
+        and second_left * second_right < -tolerance
+    ):
+        return True
+
+    def on_segment(start: Point2, end: Point2, point: Point2) -> bool:
+        return (
+            min(start[0], end[0]) - tolerance
+            <= point[0]
+            <= max(start[0], end[0]) + tolerance
+            and min(start[1], end[1]) - tolerance
+            <= point[1]
+            <= max(start[1], end[1]) + tolerance
+        )
+
+    return (
+        abs(first_left) <= tolerance
+        and on_segment(first_start, first_end, second_start)
+        or abs(first_right) <= tolerance
+        and on_segment(first_start, first_end, second_end)
+        or abs(second_left) <= tolerance
+        and on_segment(second_start, second_end, first_start)
+        or abs(second_right) <= tolerance
+        and on_segment(second_start, second_end, first_end)
+    )
 
 
 def _edge_outward_normal(tangent: Point2, signed_area: float) -> Point2:

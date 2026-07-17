@@ -19,6 +19,9 @@ from part_rule_synthesis.impeller_v11_2_canonical import (
     evaluate_nurbs_curve,
     evaluate_nurbs_surface,
 )
+from part_rule_synthesis.impeller_v11_6_adaptive_extension import (
+    build_v116_adaptive_reconstruction_extension,
+)
 from part_rule_synthesis.impeller_runtime_compiler import IMPELLER_PARAMETER_LIMITS
 from part_rule_synthesis.impeller_v11_blade_to_blade_loop import (
     build_v11_blade_to_blade_loop_family,
@@ -109,6 +112,7 @@ DEFAULT_KEYS = frozenset(
         "blade_hub_angle_contract_deg",
         "minimum_active_blade_height_mm",
         "enforce_support_profile_contract",
+        "v116_step_reconstruction_extension",
     }
 )
 
@@ -661,6 +665,25 @@ def map_measurements_to_v112_review(
             or _stable_hash(canonical) != canonical_hash
         ):
             raise
+        legacy_canonical_hash = canonical_hash
+        normalized_measurements = _validate_and_normalize_bundle(measurements)
+        extension = build_v116_adaptive_reconstruction_extension(
+            normalized_measurements
+        )
+        if extension.get("status") == "PASS":
+            defaults["v116_step_reconstruction_extension"] = deepcopy(extension)
+            defaults["span_stations_h"] = list(extension["span_stations_h"])
+            _assert_output_whitelists(
+                parameters,
+                defaults,
+                allow_v116_adaptive_extension=True,
+            )
+            canonical = canonical_nurbs_from_v11_defaults(
+                parameters,
+                defaults,
+                source="v116_adaptive_step_reconstruction_extension",
+            )
+            canonical_hash = _stable_hash(canonical)
         constructor_hash = _stable_hash(
             {
                 "geometry_patch_version": GEOMETRY_PATCH_VERSION,
@@ -676,11 +699,7 @@ def map_measurements_to_v112_review(
             "objective_terms_pass": False,
             "rejection_reason": exc.reason,
         }
-        section_families = (
-            measurements.get("section_families", {})
-            if isinstance(measurements, Mapping)
-            else {}
-        )
+        section_families = normalized_measurements["section_families"]
         return {
             "mapping_status": "REJECTED_REVIEW_CANDIDATE",
             "promotable": False,
@@ -695,6 +714,7 @@ def map_measurements_to_v112_review(
             "regenerated_canonical_payload": canonical,
             "canonical_payload_hash_sha256": canonical_hash,
             "constructor_input_hash_sha256": constructor_hash,
+            "adaptive_reconstruction_extension": deepcopy(extension),
             "five_station_resampling_report": deepcopy(
                 candidate["five_station_resampling_report"]
             ),
@@ -718,6 +738,14 @@ def map_measurements_to_v112_review(
                     "feature": "frozen_v1_1_2_objective_gates",
                     "failed_terms": deepcopy(failed_terms),
                     "disposition": "candidate_retained_for_deviation_review_only",
+                },
+                {
+                    "feature": "v116_adaptive_review_extension",
+                    "status": extension.get("status"),
+                    "station_count": extension.get("station_count"),
+                    "legacy_canonical_hash_sha256": legacy_canonical_hash,
+                    "adaptive_canonical_hash_sha256": canonical_hash,
+                    "disposition": "review_only_pending_corresponding_surface_deviation",
                 }
             ],
             "provenance": {
@@ -725,7 +753,9 @@ def map_measurements_to_v112_review(
                 "frame": deepcopy(details.get("frame")),
                 "canonical_hash_excludes_source_identity": True,
                 "candidate_authority": (
-                    "bounded_v112_solver_candidate_rejected_by_objective_gates"
+                    "v116_adaptive_review_candidate_rejected_by_v112_objective_gates"
+                    if extension.get("status") == "PASS"
+                    else "bounded_v112_solver_candidate_rejected_by_objective_gates"
                 ),
             },
         }
@@ -2980,13 +3010,25 @@ def _validate_station(
     _require_mapping(station, path)
     _require_keys(
         station,
-        {"h", "source_ids", "decomposition", "camber", "pose", "normal_thickness"},
+        {
+            "h",
+            "support_span_h",
+            "source_ids",
+            "decomposition",
+            "camber",
+            "pose",
+            "normal_thickness",
+        },
         {"h", "source_ids", "decomposition", "camber", "pose", "normal_thickness"},
         path,
     )
     h = _finite(station["h"], f"{path}.h")
     if not 0.0 <= h <= 1.0:
         _schema_error(f"{path}.h must be in [0, 1]")
+    if "support_span_h" in station:
+        support_h = _finite(station["support_span_h"], f"{path}.support_span_h")
+        if not 0.0 <= support_h <= 1.0:
+            _schema_error(f"{path}.support_span_h must be in [0, 1]")
     _source_ids(station["source_ids"], f"{path}.source_ids")
     decomposition = station["decomposition"]
     _require_mapping(decomposition, f"{path}.decomposition")
@@ -3333,10 +3375,18 @@ def _validate_attachments(attachments: Any, topology: Mapping[str, Any]) -> None
     for name, record in attachments.items():
         path = f"attachments.{name}"
         _require_mapping(record, path)
+        required = {
+            "lift_samples_mm",
+            "width_samples_mm",
+            "source_ids",
+            "source_measurement",
+            "promotable",
+            "material_side",
+        }
         _require_keys(
             record,
-            {"lift_samples_mm", "width_samples_mm", "source_ids", "source_measurement", "promotable", "material_side"},
-            {"lift_samples_mm", "width_samples_mm", "source_ids", "source_measurement", "promotable", "material_side"},
+            required | {"streamwise_samples_s"},
+            required,
             path,
         )
         for key in ("lift_samples_mm", "width_samples_mm"):
@@ -3345,6 +3395,22 @@ def _validate_attachments(attachments: Any, topology: Mapping[str, Any]) -> None
                 _schema_error(f"{path}.{key} must contain at least three source samples")
             for index, value in enumerate(values):
                 _positive(value, f"{path}.{key}[{index}]")
+        if "streamwise_samples_s" in record:
+            samples_s = record["streamwise_samples_s"]
+            if (
+                not _is_sequence(samples_s)
+                or len(samples_s) != len(record["lift_samples_mm"])
+                or len(samples_s) != len(record["width_samples_mm"])
+            ):
+                _schema_error(
+                    f"{path}.streamwise_samples_s must match lift and width samples"
+                )
+            for index, value in enumerate(samples_s):
+                sample_s = _finite(value, f"{path}.streamwise_samples_s[{index}]")
+                if not 0.0 <= sample_s <= 1.0:
+                    _schema_error(
+                        f"{path}.streamwise_samples_s must stay in [0, 1]"
+                    )
         if record["source_measurement"] is not True or record["promotable"] is not True:
             raise V112MappingError(
                 "v116_v112_material_measurement_missing",
@@ -3403,7 +3469,10 @@ def _normalized_bundle_order(bundle: dict[str, Any]) -> dict[str, Any]:
 
 
 def _assert_output_whitelists(
-    parameters: Mapping[str, Any], defaults: Mapping[str, Any]
+    parameters: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+    *,
+    allow_v116_adaptive_extension: bool = False,
 ) -> None:
     forbidden_parameters = set(parameters) - RUNTIME_PARAMETER_KEYS
     forbidden_defaults = set(defaults) - DEFAULT_KEYS
@@ -3416,11 +3485,25 @@ def _assert_output_whitelists(
                 "forbidden_defaults": sorted(forbidden_defaults),
             },
         )
-    if tuple(defaults.get("span_stations_h", ())) != CANONICAL_STATIONS_H:
+    stations = tuple(defaults.get("span_stations_h", ()))
+    if stations != CANONICAL_STATIONS_H and not allow_v116_adaptive_extension:
         raise V112MappingError(
             "v116_v112_forbidden_parameter",
             "adaptive measurement stations cannot replace the fixed V1.1.2 stations",
         )
+    if allow_v116_adaptive_extension:
+        extension = defaults.get("v116_step_reconstruction_extension")
+        if (
+            not isinstance(extension, Mapping)
+            or extension.get("contract_id")
+            != "impeller_v1_1_6_adaptive_reconstruction_extension"
+            or extension.get("status") != "PASS"
+            or stations != tuple(extension.get("span_stations_h", ()))
+        ):
+            raise V112MappingError(
+                "v116_v112_forbidden_parameter",
+                "adaptive stations require the approved V1.1.6 extension contract",
+            )
 
 
 def _assert_output_limits_and_material_domain(

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -21,10 +23,17 @@ if str(Path(__file__).parent) not in sys.path:
 
 from part_rule_synthesis.impeller_v11_6_step_audit import (
     AUDIT_CONTRACT_ID,
+    AUDIT_IMPLEMENTATION_REVISION,
     AUDIT_RUNTIME_VERSION,
     CANONICAL_GEOMETRY_VERSION,
+    SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD,
+    SOURCE_REVIEW_LINEAR_TOLERANCE_MM,
     StepAuditError,
+    _apply_bounded_audit_sampling,
+    _audit_artifacts_match_manifest,
     _atomic_json,
+    _axis_first_cache_manifest_complete,
+    _manifest_digest_matches_status,
     _validated_mapping_canonical_payload,
     classify_impeller_semantics,
     extract_v11_review_parameters,
@@ -34,7 +43,11 @@ from part_rule_synthesis.impeller_v11_6_step_audit import (
     sanitize_step_filename,
     validate_step_header,
 )
+from part_rule_synthesis.impeller_v11_6_comparison_scope import (
+    COMPARISON_SCOPE_CONTRACT_ID,
+)
 from part_rule_synthesis import impeller_runtime_compiler as compiler_module
+from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as axis_pipeline
 from part_rule_synthesis import impeller_v11_6_step_audit as step_audit_module
 from part_rule_synthesis import service as service_module
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
@@ -46,6 +59,156 @@ def test_v116_contract_keeps_v112_geometry_authority():
     assert AUDIT_CONTRACT_ID == "impeller_v1_1_6_step_reconstruction_audit"
     assert AUDIT_RUNTIME_VERSION == "1.1.6"
     assert CANONICAL_GEOMETRY_VERSION == "1.1.2"
+
+
+def test_r13_review_sampling_meets_dense_surface_and_source_targets():
+    defaults = {
+        "side_sample_count": 7,
+        "theta_sample_count": 999,
+    }
+
+    _apply_bounded_audit_sampling(defaults)
+
+    assert defaults["side_sample_count"] == 129
+    assert defaults["edge_cap_sample_count"] == 65
+    assert defaults["surface_span_sample_count"] == 33
+    assert defaults["root_short_direction_sample_count"] == 17
+    assert defaults["profile_revolve_sample_count"] == 129
+    assert defaults["theta_sample_count"] == 181
+    assert defaults["v1_1_6_audit_sampling_policy"]["changes_geometry_math"] is False
+    assert SOURCE_REVIEW_LINEAR_TOLERANCE_MM == pytest.approx(0.06)
+    assert SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD == pytest.approx(0.08)
+
+
+def test_completed_rejected_review_audit_is_cacheable_but_not_promotable(tmp_path):
+    required_sections = {
+        "canonical_frame": {"status": "REVIEW_EVIDENCE"},
+        "support_recovery": {"status": "REVIEW_EVIDENCE"},
+        "periodic_populations": {"status": "REVIEW_EVIDENCE"},
+        "span_measurement_lattice": {"status": "REVIEW_EVIDENCE"},
+        "representative_blades": {"status": "REVIEW_EVIDENCE"},
+        "v11_2_mapping": {"status": "REVIEW_EVIDENCE"},
+        "pattern_instances": {"status": "REVIEW_EVIDENCE"},
+        "regional_deviation": {
+            "status": "CORRESPONDING_SURFACES_MEASURED_REVIEW_ONLY"
+        },
+        "invariants": {"canonical_geometry_version": CANONICAL_GEOMETRY_VERSION},
+    }
+    manifest = {
+        "status": "PASS",
+        "source": {"sha256": "a" * 64},
+        "legacy_workflow_status": "PASS",
+        "axis_first_algorithm_status": "REJECTED",
+        "promotable": False,
+        "reconstruction_disposition": "review_only_not_promotable",
+        "parameter_mapping": {
+            "mapping_status": "REJECTED_REVIEW_CANDIDATE"
+        },
+        "comparison_scope": {
+            "contract_id": COMPARISON_SCOPE_CONTRACT_ID,
+            "status": "PARTIAL_REVIEW",
+            "coverage_complete": True,
+        },
+        "comparison": {
+            "contract_id": (
+                "impeller_v1_1_6_corresponding_surface_deviation_v5"
+            )
+        },
+        "axis_first_section_reconstruction": {
+            "algorithm_revision": AUDIT_IMPLEMENTATION_REVISION,
+            "algorithm_readiness": {
+                "status": "REJECTED",
+                "algorithm_ready": False,
+                "cache_reusable": False,
+                "failed_terms": ["camber"],
+            },
+            **required_sections,
+        },
+    }
+
+    assert _axis_first_cache_manifest_complete(manifest) is True
+
+    artifact_names = {
+        "source_stl": "source.stl",
+        "reconstruction_stl": "reconstruction.stl",
+        "heatmap": "heatmap.json",
+        "geometric_manifest": "geometric-manifest.json",
+    }
+    manifest["artifacts"] = {}
+    for artifact_id, name in artifact_names.items():
+        payload = f"evidence:{artifact_id}".encode()
+        (tmp_path / name).write_bytes(payload)
+        manifest["artifacts"][artifact_id] = {
+            "file_name": name,
+            "size_bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    assert _audit_artifacts_match_manifest(tmp_path, manifest) is True
+    (tmp_path / "heatmap.json").write_bytes(b"tampered")
+    assert _audit_artifacts_match_manifest(tmp_path, manifest) is False
+
+    manifest_path = tmp_path / "manifest.json"
+    _atomic_json(manifest_path, manifest)
+    status = {"manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest()}
+    assert _manifest_digest_matches_status(manifest_path, status) is True
+    manifest_path.write_text("{}", encoding="utf-8")
+    assert _manifest_digest_matches_status(manifest_path, status) is False
+
+
+def test_pass_cache_binds_status_manifest_source_and_audit_identity(
+    tmp_path, monkeypatch
+):
+    audit_dir = tmp_path / "step-audit-0123456789abcdef"
+    audit_dir.mkdir()
+    source_sha256 = "a" * 64
+    manifest = {
+        "audit_id": audit_dir.name,
+        "contract_id": AUDIT_CONTRACT_ID,
+        "implementation_revision": AUDIT_IMPLEMENTATION_REVISION,
+        "algorithm_revision": AUDIT_IMPLEMENTATION_REVISION,
+        "canonical_geometry_version": CANONICAL_GEOMETRY_VERSION,
+        "source": {"sha256": source_sha256},
+        "comparison_alignment": {
+            "method": "bounded_symmetric_periodic_phase_search"
+        },
+    }
+    manifest_path = audit_dir / "manifest.json"
+    _atomic_json(manifest_path, manifest)
+    status = {
+        "audit_id": audit_dir.name,
+        "contract_id": AUDIT_CONTRACT_ID,
+        "implementation_revision": AUDIT_IMPLEMENTATION_REVISION,
+        "algorithm_revision": AUDIT_IMPLEMENTATION_REVISION,
+        "canonical_geometry_version": CANONICAL_GEOMETRY_VERSION,
+        "source": {"sha256": source_sha256},
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    monkeypatch.setattr(
+        step_audit_module, "_axis_first_cache_manifest_complete", lambda _: True
+    )
+    monkeypatch.setattr(
+        step_audit_module, "_audit_artifacts_match_manifest", lambda *_: True
+    )
+
+    compatible = step_audit_module.StepReconstructionAuditService._compatible_pass_manifest
+    assert compatible(audit_dir, status) is True
+    assert compatible(
+        audit_dir, {**status, "source": {"sha256": "b" * 64}}
+    ) is False
+    assert compatible(audit_dir, {**status, "audit_id": "step-audit-stale"}) is False
+
+    manifest["audit_id"] = "step-audit-stale"
+    _atomic_json(manifest_path, manifest)
+    stale_status = {
+        **status,
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    assert compatible(audit_dir, stale_status) is False
+
+
+def test_step_audit_error_contract_covers_axis_first_pipeline_failures():
+    for reason in axis_pipeline._STABLE_REASONS:
+        assert StepAuditError(reason, "contract probe").reason == reason
 
 
 def test_step_filename_is_sanitized_without_trusting_extension():
@@ -327,6 +490,144 @@ def test_material_export_graph_excludes_open_tip_reference():
     ]
 
 
+def test_geometric_manifest_preserves_uv_topology_and_applies_phase_alignment(tmp_path):
+    path = tmp_path / "geometric-manifest.json"
+    graph = {
+        "surfaces": [
+            {
+                "id": "blade-pressure",
+                "role": "blade_pressure",
+                "face_family": "blade_pressure",
+                "material": True,
+                "display": {"color": "#759b7d"},
+                "uv_grid": [
+                    [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                    [[1.0, 1.0, 0.0], [2.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "open-tip-reference",
+                "role": "open_tip_reference",
+                "material": False,
+                "export_default": "excluded",
+                "uv_grid": [[[0, 0, 0], [1, 0, 0]], [[0, 1, 0], [1, 1, 0]]],
+            },
+        ]
+    }
+
+    step_audit_module._write_geometric_manifest(
+        path,
+        graph,
+        alignment_matrix=step_audit_module._rotation_about_z_matrix(90.0),
+        comparison_alignment={"rotation_about_axis_deg": 90.0},
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["contract_id"] == "impeller_v1_1_6_geometric_manifest_v2"
+    assert payload["render_contract"]["triangle_edges_forbidden"] is True
+    assert payload["surface_count"] == 1
+    assert payload["surfaces"][0]["uv_grid"][0][0] == pytest.approx(
+        [0.0, 1.0, 0.0]
+    )
+
+
+@pytest.mark.parametrize(
+    ("comparison_role", "surface", "expected"),
+    (
+        ("hub_flowpath", {"id": "hub_support_surface", "role": "hub_support"}, True),
+        ("hub_flowpath", {"id": "hub_top_annulus_surface", "role": "hub_support"}, False),
+        (
+            "hub_material_closure",
+            {"id": "hub_top_annulus_surface", "role": "hub_support"},
+            True,
+        ),
+        ("blade_root_attachment", {"id": "root", "role": "root_to_hub_attachment"}, True),
+        ("blade_sides", {"id": "pressure", "role": "blade_pressure"}, True),
+        ("blade_leading_edge", {"id": "leading", "role": "blade_leading_edge"}, True),
+        ("blade_trailing_edge", {"id": "trailing", "role": "blade_trailing_edge"}, True),
+        ("blade_sides", {"id": "root", "role": "root_to_hub_attachment"}, False),
+        ("blade_tip_attachment", {"id": "tip-root", "role": "closed_shroud_attachment"}, True),
+        ("blade_tip", {"id": "tip", "role": "open_tip_dome"}, True),
+    ),
+)
+def test_comparison_role_mapping_is_explicit(comparison_role, surface, expected):
+    assert (
+        step_audit_module._surface_matches_comparison_role(surface, comparison_role)
+        is expected
+    )
+
+
+def test_reconstruction_blade_index_is_read_from_surface_identity():
+    assert step_audit_module._surface_blade_index(
+        {"id": "blade_12_pressure_surface", "role": "blade_pressure"}
+    ) == 12
+    assert step_audit_module._surface_blade_index(
+        {"id": "hub_support_surface", "role": "hub_support"}
+    ) is None
+
+
+def test_post_phase_instance_assignment_applies_the_best_cyclic_shift():
+    records = []
+    source_regions = {}
+    reconstruction_regions = {}
+    for population, count, phase, reconstruction_offset in (
+        ("main", 4, 0.0, 1),
+        ("splitter", 3, 20.0, -1),
+    ):
+        pitch = 360.0 / count
+        for index in range(count):
+            region_id = f"blade_sides::{population}-{index:02d}"
+            records.append(
+                {
+                    "comparison_region_id": region_id,
+                    "reconstruction_role": "blade_sides",
+                    "periodic_instance_id": f"{population}-{index:02d}",
+                    "periodic_population": population,
+                    "periodic_lattice_index": index,
+                    "reconstruction_blade_pair_index": index,
+                }
+            )
+            source_regions[region_id] = _angular_triangle_mesh(
+                phase + index * pitch
+            )
+            reconstruction_regions[region_id] = _angular_triangle_mesh(
+                phase + ((index + reconstruction_offset) % count) * pitch
+            )
+
+    pairs, diagnostics = step_audit_module._phase_aligned_comparison_regions(
+        source_regions,
+        reconstruction_regions,
+        {"included_surfaces": records},
+    )
+
+    assert diagnostics["populations"]["main"]["cyclic_shift"] == 3
+    assert diagnostics["populations"]["splitter"]["cyclic_shift"] == 1
+    for source, reconstructed in pairs.values():
+        source_center = np.mean(source.vertices, axis=0)
+        reconstruction_center = np.mean(reconstructed.vertices, axis=0)
+        assert math.atan2(source_center[1], source_center[0]) == pytest.approx(
+            math.atan2(reconstruction_center[1], reconstruction_center[0])
+        )
+
+
+def _angular_triangle_mesh(angle_deg):
+    angle = math.radians(float(angle_deg))
+    center = np.asarray([10.0 * math.cos(angle), 10.0 * math.sin(angle), 0.0])
+    vertices = np.asarray(
+        [
+            center + [-0.1, -0.1, 0.0],
+            center + [0.1, -0.1, 0.0],
+            center + [0.0, 0.2, 0.0],
+        ],
+        dtype=float,
+    )
+    return step_audit_module.TriangleMesh(
+        vertices=vertices,
+        triangles=np.asarray([[0, 1, 2]], dtype=np.int32),
+        normals=np.asarray([[0.0, 0.0, 1.0]], dtype=float),
+    )
+
+
 def test_ordinary_v112_runtime_compiler_retains_legacy_regeneration(monkeypatch):
     calls = []
 
@@ -558,7 +859,7 @@ def test_residual_rejected_candidate_has_explicit_review_disposition():
     ]
 
 
-def test_acceptance_evaluation_reports_regression_without_promoting_topology_pass():
+def test_acceptance_evaluation_refuses_legacy_baseline_for_corresponding_surfaces():
     evaluation = step_audit_module._evaluate_axis_first_acceptance(
         {
             "mapping_status": "REJECTED_REVIEW_CANDIDATE",
@@ -583,20 +884,20 @@ def test_acceptance_evaluation_reports_regression_without_promoting_topology_pas
             }
         },
         {
-            "bidirectional": {"rms_mm": 2.608269, "p95_mm": 6.040549},
-            "silhouettes": {
-                "top_xy_hausdorff_mm": 5.27592,
-                "meridional_rz_hausdorff_mm": 10.184372,
-            },
+            "contract_id": "impeller_v1_1_6_corresponding_surface_deviation_v5",
+            "reconstruction_to_corresponding_source": {"rms_mm": 2.608269},
+            "corresponding_source_to_reconstruction": {"rms_mm": 2.4},
+            "symmetric_corresponding_sample_distribution": {"rms_mm": 2.51},
         },
     )
 
-    assert evaluation["status"] == "REJECTED"
+    assert evaluation["status"] == "NOT_EVALUATED"
+    assert evaluation["promotable"] is False
     assert evaluation["topology"]["status"] == "PASS"
     assert evaluation["mapping"]["status"] == "FAIL"
-    assert evaluation["improvement"]["bidirectional_rms"]["status"] == "FAIL"
-    assert evaluation["improvement"]["top_silhouette"]["status"] == "FAIL"
-    assert evaluation["improvement"]["meridional_silhouette"]["status"] == "FAIL"
+    assert evaluation["comparison"]["baseline_status"] == (
+        "UNAVAILABLE_NON_COMPARABLE_WITH_LEGACY_GLOBAL_METRICS"
+    )
 
 
 def test_acceptance_rejects_legacy_pattern_collision_pass_without_exact_evidence():
@@ -620,16 +921,13 @@ def test_acceptance_rejects_legacy_pattern_collision_pass_without_exact_evidence
         {"mapping_status": "PASS", "promotion": {"promotable": True}},
         reconstruction,
         {
-            "bidirectional": {"rms_mm": 0.0, "p95_mm": 0.0},
-            "silhouettes": {
-                "top_xy_hausdorff_mm": 0.0,
-                "meridional_rz_hausdorff_mm": 0.0,
-            },
+            "contract_id": "impeller_v1_1_6_corresponding_surface_deviation_v5",
+            "reconstruction_to_corresponding_source": {"rms_mm": 0.0},
         },
     )
 
     assert evaluation["topology"]["status"] == "FAIL"
-    assert evaluation["status"] == "REJECTED"
+    assert evaluation["status"] == "NOT_EVALUATED"
 
 
 @pytest.mark.skipif(not os.environ.get("KS007G23B_STEP_PATH"), reason="local customer STEP not configured")
@@ -657,6 +955,7 @@ def test_optional_ks007g23b_exact_source_facts_and_mapping():
         "normal_thickness",
         "edge_curves",
         "periodicity",
+        "pose",
     }
     assert mapping["geometry_patch_version"] == "1.1.2"
     assert mapping["support_recovery"]["hub_profile"]["accepted_sample_count"] > 6

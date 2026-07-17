@@ -16,6 +16,9 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from part_rule_synthesis.api import create_app
+from part_rule_synthesis.impeller_v11_6_step_audit import (
+    AUDIT_IMPLEMENTATION_REVISION,
+)
 from step_fixtures import write_periodic_impeller_step
 
 
@@ -52,7 +55,7 @@ def test_step_upload_returns_202_and_persists_recoverable_status(tmp_path):
     status = client.get(f"/api/step-reconstruction-audits/{audit_id}")
     assert status.status_code == 200
     assert status.json()["source"]["sha256"]
-    assert status.json()["algorithm_revision"] == "axis_first_pattern_material_r6"
+    assert status.json()["algorithm_revision"] == AUDIT_IMPLEMENTATION_REVISION
     assert status.json()["canonical_geometry_version"] == "1.1.2"
     assert status.json()["legacy_workflow_status"] == "PENDING"
     assert status.json()["axis_first_algorithm_status"] == "INCOMPLETE"
@@ -95,6 +98,8 @@ def test_step_artifact_endpoint_uses_hash_cache_header(tmp_path):
     handle = service.begin_upload("part.step")
     artifact = handle.audit_dir / "source.stl"
     artifact.write_bytes(b"solid source\nendsolid source\n")
+    geometric_manifest = handle.audit_dir / "geometric-manifest.json"
+    geometric_manifest.write_text('{"contract_id":"test"}', encoding="utf-8")
     client = TestClient(app)
 
     response = client.get(f"/api/step-reconstruction-audits/{handle.audit_id}/artifacts/source.stl")
@@ -102,3 +107,8 @@ def test_step_artifact_endpoint_uses_hash_cache_header(tmp_path):
     assert response.status_code == 200
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
     assert response.headers["etag"].startswith('"')
+    manifest_response = client.get(
+        f"/api/step-reconstruction-audits/{handle.audit_id}/artifacts/geometric-manifest.json"
+    )
+    assert manifest_response.status_code == 200
+    assert manifest_response.headers["content-type"].startswith("application/json")

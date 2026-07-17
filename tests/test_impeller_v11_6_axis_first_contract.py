@@ -28,6 +28,9 @@ from part_rule_synthesis.impeller_v11_6_step_audit import (
     _axis_first_cache_manifest_complete,
     _axis_first_section_reconstruction_manifest,
 )
+from part_rule_synthesis.impeller_v11_6_comparison_scope import (
+    COMPARISON_SCOPE_CONTRACT_ID,
+)
 from part_rule_synthesis.api import create_app
 
 
@@ -107,16 +110,25 @@ def _write_pass_cache(
         "source": {"sha256": source_sha256},
     }
     manifest = {
+        "audit_id": audit_id,
         "contract_id": AUDIT_CONTRACT_ID,
         "implementation_revision": revision,
         "algorithm_revision": revision,
         "canonical_geometry_version": CANONICAL_GEOMETRY_VERSION,
+        "status": "PASS",
         "source": {"sha256": source_sha256},
         "legacy_workflow_status": "PASS",
         "axis_first_algorithm_status": "PASS" if complete_axis_first else "INCOMPLETE",
         "promotable": complete_axis_first,
         "comparison_alignment": {"method": "bounded_symmetric_periodic_phase_search"},
     }
+    if complete_axis_first:
+        manifest["comparison_scope"] = {
+            "contract_id": COMPARISON_SCOPE_CONTRACT_ID,
+            "status": "PASS",
+            "coverage_complete": True,
+            "comparison_coverage_complete": True,
+        }
     if axis_first_revision is not None:
         axis_first = {
             "algorithm_revision": axis_first_revision,
@@ -301,15 +313,30 @@ def _write_pass_cache(
                     "status": "PASS",
                 }
         manifest["axis_first_section_reconstruction"] = axis_first
-    (audit_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
-    (audit_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for artifact_name in ("source.stl", "reconstruction.stl", "heatmap.json"):
-        (audit_dir / artifact_name).write_bytes(b"cache evidence")
+    manifest["artifacts"] = {}
+    for artifact_id, artifact_name in {
+        "source_stl": "source.stl",
+        "reconstruction_stl": "reconstruction.stl",
+        "heatmap": "heatmap.json",
+        "geometric_manifest": "geometric-manifest.json",
+    }.items():
+        payload = f"cache evidence:{artifact_id}".encode()
+        (audit_dir / artifact_name).write_bytes(payload)
+        manifest["artifacts"][artifact_id] = {
+            "file_name": artifact_name,
+            "size_bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    _atomic_json(audit_dir / "manifest.json", manifest)
+    status["manifest_sha256"] = hashlib.sha256(
+        (audit_dir / "manifest.json").read_bytes()
+    ).hexdigest()
+    _atomic_json(audit_dir / "status.json", status)
     return audit_dir
 
 
 def test_axis_first_contract_pins_revision_failures_and_v112_authority():
-    assert AUDIT_IMPLEMENTATION_REVISION == "axis_first_pattern_material_r6"
+    assert AUDIT_IMPLEMENTATION_REVISION == "axis_first_triangle_surface_r13_2"
     assert AXIS_FIRST_FAILURE_REASONS <= FAILURE_REASONS
     assert CANONICAL_GEOMETRY_VERSION == "1.1.2"
 

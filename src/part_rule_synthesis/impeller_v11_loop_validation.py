@@ -33,7 +33,7 @@ def _validate_loop_family_invariants(loop_family: Mapping[str, Any]) -> list[dic
     failures: list[dict[str, Any]] = []
     if loop_family.get("coordinate_system") != COORDINATE_SYSTEM:
         failures.append(_failure("v1_1_loop_orientation_failed"))
-    if loop_family.get("span_stations_h") != SPAN_STATIONS_H:
+    if not _span_station_contract_is_valid(loop_family):
         failures.append(_failure("v1_1_loop_station_knot_mismatch"))
     failures.extend(_validate_domain_map(loop_family.get("domain_map")))
     expected_defaults, default_failures = _resolved_blade_graph_defaults(loop_family)
@@ -59,6 +59,40 @@ def _validate_loop_family_invariants(loop_family: Mapping[str, Any]) -> list[dic
             )
         )
     return failures
+
+
+def _span_station_contract_is_valid(loop_family: Mapping[str, Any]) -> bool:
+    stations = loop_family.get("span_stations_h")
+    if stations == SPAN_STATIONS_H:
+        return True
+    canonical = loop_family.get("canonical_nurbs_parameterization")
+    if not isinstance(canonical, Mapping):
+        return False
+    extension = canonical.get("adaptive_reconstruction_extension")
+    if not isinstance(extension, Mapping):
+        return False
+    expected = canonical.get("section_loop_family", {}).get("span_stations_h")
+    if (
+        extension.get("contract_id")
+        != "impeller_v1_1_6_adaptive_reconstruction_extension"
+        or extension.get("status") != "PASS"
+        or extension.get("mode") != "v116_step_reconstruction_opt_in"
+        or canonical.get("canonical_payload_version") != "1.1.2"
+        or not isinstance(expected, list)
+        or not 5 <= len(expected) <= 9
+        or extension.get("station_count") != len(expected)
+        or stations != expected
+    ):
+        return False
+    try:
+        values = [float(value) for value in expected]
+    except (TypeError, ValueError):
+        return False
+    return (
+        abs(values[0]) <= 1.0e-9
+        and abs(values[-1] - 1.0) <= 1.0e-9
+        and all(upper > lower for lower, upper in zip(values, values[1:]))
+    )
 
 
 def _validate_domain_map(domain_map: Any) -> list[dict[str, Any]]:

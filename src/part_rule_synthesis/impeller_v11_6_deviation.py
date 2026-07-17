@@ -4,9 +4,10 @@ import hashlib
 import json
 import math
 import struct
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -40,6 +41,105 @@ class TriangleMesh:
     vertices: np.ndarray
     triangles: np.ndarray
     normals: np.ndarray
+
+
+@dataclass(frozen=True)
+class _TriangleRadiusBucket:
+    triangles: np.ndarray
+    maximum_radius: float
+    centroid_tree: Any
+
+
+@dataclass(frozen=True)
+class TriangleSurfaceIndex:
+    """Reusable exact-distance acceleration data for one triangle mesh."""
+
+    mesh_identity: int
+    triangles: np.ndarray
+    buckets: tuple[_TriangleRadiusBucket, ...]
+
+    @classmethod
+    def build(cls, mesh: TriangleMesh) -> "TriangleSurfaceIndex":
+        triangles = np.asarray(mesh.vertices[mesh.triangles], dtype=float)
+        if len(triangles) == 0:
+            raise ValueError("triangle surface comparison requires a non-empty mesh")
+        centroids = np.mean(triangles, axis=1)
+        radii = np.max(
+            np.linalg.norm(triangles - centroids[:, None, :], axis=2), axis=1
+        )
+        buckets = []
+        for bucket_indexes in _triangle_radius_buckets(radii):
+            bucket_triangles = np.ascontiguousarray(triangles[bucket_indexes])
+            bucket_triangles.setflags(write=False)
+            bucket_centroids = np.ascontiguousarray(centroids[bucket_indexes])
+            buckets.append(
+                _TriangleRadiusBucket(
+                    triangles=bucket_triangles,
+                    maximum_radius=float(np.max(radii[bucket_indexes])),
+                    centroid_tree=(
+                        cKDTree(bucket_centroids) if cKDTree is not None else None
+                    ),
+                )
+            )
+        triangles.setflags(write=False)
+        return cls(
+            mesh_identity=id(mesh),
+            triangles=triangles,
+            buckets=tuple(buckets),
+        )
+
+    def distances(self, points: np.ndarray, *, workers: int = 1) -> np.ndarray:
+        samples = np.asarray(points, dtype=float)
+        if samples.ndim != 2 or samples.shape[1] != 3 or len(samples) == 0:
+            raise ValueError(
+                "triangle surface comparison requires non-empty 3D points"
+            )
+        if workers == 0 or workers < -1:
+            raise ValueError("triangle surface query workers must be -1 or positive")
+        if cKDTree is None:  # pragma: no cover - CadQuery installations provide SciPy.
+            return np.asarray(
+                [
+                    float(
+                        np.min(
+                            _point_to_triangles_distance(point, self.triangles)
+                        )
+                    )
+                    for point in samples
+                ],
+                dtype=float,
+            )
+
+        result = np.full(len(samples), np.inf, dtype=float)
+        for bucket in self.buckets:
+            active = np.arange(len(samples), dtype=np.int64)
+            neighbor_count = min(8, len(bucket.triangles))
+            while len(active):
+                centroid_distances, candidate_indexes = bucket.centroid_tree.query(
+                    samples[active], k=neighbor_count, workers=workers
+                )
+                centroid_distances = np.asarray(centroid_distances, dtype=float)
+                candidate_indexes = np.asarray(candidate_indexes, dtype=np.int64)
+                if neighbor_count == 1:
+                    centroid_distances = centroid_distances[:, None]
+                    candidate_indexes = candidate_indexes[:, None]
+                candidate_distances = _candidate_triangle_distances(
+                    samples[active], bucket.triangles, candidate_indexes
+                )
+                result[active] = np.minimum(
+                    result[active], np.min(candidate_distances, axis=1)
+                )
+                if neighbor_count == len(bucket.triangles):
+                    break
+                unseen_lower_bound = (
+                    centroid_distances[:, -1] - bucket.maximum_radius
+                )
+                active = active[
+                    unseen_lower_bound < result[active] - 1.0e-12
+                ]
+                neighbor_count = min(
+                    neighbor_count * 2, len(bucket.triangles)
+                )
+        return result
 
 
 def read_stl(path: str | Path) -> TriangleMesh:
@@ -168,6 +268,183 @@ def compare_meshes(
     }
     heatmap = _heatmap_payload(reconstruction, vertex_error)
     return metrics, heatmap
+
+
+def compare_corresponding_mesh_regions(
+    regions: dict[str, tuple[TriangleMesh, TriangleMesh]],
+    *,
+    execution_stats: dict[str, Any] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    query_workers: int = 1,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Measure each reconstruction region against only its source counterpart."""
+
+    if not regions:
+        raise ValueError("corresponding mesh comparison requires at least one region")
+    started = time.perf_counter()
+    regional_metrics: dict[str, Any] = {}
+    reconstruction_meshes: list[TriangleMesh] = []
+    reconstruction_vertex_errors: list[np.ndarray] = []
+    reconstruction_centroid_errors: list[np.ndarray] = []
+    source_centroid_errors: list[np.ndarray] = []
+    triangle_regions: list[str] = []
+    index_cache: dict[int, TriangleSurfaceIndex] = {}
+    source_mesh_ids: set[int] = set()
+    reconstruction_mesh_ids: set[int] = set()
+    distance_query_count = 0
+    role_timings = []
+
+    def index_for(mesh: TriangleMesh) -> TriangleSurfaceIndex:
+        mesh_id = id(mesh)
+        index = index_cache.get(mesh_id)
+        if index is None:
+            index = TriangleSurfaceIndex.build(mesh)
+            index_cache[mesh_id] = index
+        return index
+
+    for role in sorted(regions):
+        role_started = time.perf_counter()
+        pair = regions[role]
+        if not isinstance(pair, tuple) or len(pair) != 2:
+            raise ValueError(f"region {role!r} must contain source and reconstruction meshes")
+        source, reconstruction = pair
+        if len(source.triangles) == 0 or len(reconstruction.triangles) == 0:
+            raise ValueError(f"region {role!r} contains an empty mesh")
+        source_mesh_ids.add(id(source))
+        reconstruction_mesh_ids.add(id(reconstruction))
+        source_index = index_for(source)
+        reconstruction_index = index_for(reconstruction)
+        reconstruction_centroids = _triangle_centroids(reconstruction)
+        forward_points = np.concatenate(
+            (reconstruction_centroids, reconstruction.vertices), axis=0
+        )
+        forward_errors = source_index.distances(
+            forward_points, workers=query_workers
+        )
+        distance_query_count += 1
+        centroid_errors = forward_errors[: len(reconstruction_centroids)]
+        vertex_errors = forward_errors[len(reconstruction_centroids) :]
+        reverse_centroid_errors = _nearest_triangle_surface_distances(
+            _triangle_centroids(source),
+            reconstruction,
+            index=reconstruction_index,
+            workers=query_workers,
+        )
+        distance_query_count += 1
+        regional_metrics[role] = {
+            "reconstruction_to_corresponding_source": _distribution(
+                centroid_errors
+            ),
+            "corresponding_source_to_reconstruction": _distribution(
+                reverse_centroid_errors
+            ),
+            "symmetric_corresponding_sample_distribution": (
+                _equal_weight_bidirectional_distribution(
+                    centroid_errors, reverse_centroid_errors
+                )
+            ),
+            "source_triangle_count": int(len(source.triangles)),
+            "reconstruction_triangle_count": int(len(reconstruction.triangles)),
+            "comparison_direction": (
+                "reconstruction_samples_to_corresponding_source_triangle_surfaces"
+            ),
+        }
+        reconstruction_meshes.append(reconstruction)
+        reconstruction_vertex_errors.append(vertex_errors)
+        reconstruction_centroid_errors.append(centroid_errors)
+        source_centroid_errors.append(reverse_centroid_errors)
+        triangle_regions.extend([role] * len(reconstruction.triangles))
+        role_timing = {
+            "role": role,
+            "source_triangle_count": int(len(source.triangles)),
+            "reconstruction_triangle_count": int(len(reconstruction.triangles)),
+            "forward_query_point_count": int(len(forward_points)),
+            "reverse_query_point_count": int(len(source.triangles)),
+            "duration_ms": round(
+                (time.perf_counter() - role_started) * 1000.0, 3
+            ),
+        }
+        role_timings.append(role_timing)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    **role_timing,
+                    "completed_surface_count": len(role_timings),
+                    "total_surface_count": len(regions),
+                }
+            )
+
+    combined_mesh = combine_triangle_meshes(reconstruction_meshes)
+    combined_vertex_errors = np.concatenate(reconstruction_vertex_errors)
+    combined_centroid_errors = np.concatenate(reconstruction_centroid_errors)
+    reverse_distribution = _distribution(np.concatenate(source_centroid_errors))
+    distribution = _distribution(combined_centroid_errors)
+    symmetric_distribution = _equal_weight_bidirectional_distribution(
+        combined_centroid_errors, np.concatenate(source_centroid_errors)
+    )
+    metrics = {
+        "contract_id": "impeller_v1_1_6_corresponding_surface_deviation_v5",
+        "distance_kind": (
+            "unsigned_corresponding_sample_to_triangle_surface_distance_mm"
+        ),
+        "comparison_direction": (
+            "reconstruction_samples_to_corresponding_source_triangle_surfaces"
+        ),
+        "signed_distance_available": False,
+        "reconstruction_to_corresponding_source": distribution,
+        "corresponding_source_to_reconstruction": reverse_distribution,
+        "symmetric_corresponding_sample_distribution": symmetric_distribution,
+        "regions": regional_metrics,
+        "semantic_role_metrics": regional_metrics,
+        "semantic_triangle_coverage": 1.0,
+        "heatmap_direction": (
+            "reconstruction_vertices_to_corresponding_source_triangle_surfaces"
+        ),
+    }
+    heatmap = _heatmap_payload(
+        combined_mesh,
+        combined_vertex_errors,
+        triangle_regions=triangle_regions,
+    )
+    if execution_stats is not None:
+        execution_stats.clear()
+        execution_stats.update(
+            {
+                "surface_count": len(regions),
+                "unique_source_index_count": len(source_mesh_ids),
+                "unique_reconstruction_index_count": len(
+                    reconstruction_mesh_ids
+                ),
+                "triangle_index_build_count": len(index_cache),
+                "distance_query_count": distance_query_count,
+                "legacy_distance_query_count": 3 * len(regions),
+                "query_workers": int(query_workers),
+                "duration_ms": round(
+                    (time.perf_counter() - started) * 1000.0, 3
+                ),
+                "roles": role_timings,
+            }
+        )
+    return metrics, heatmap
+
+
+def combine_triangle_meshes(meshes: list[TriangleMesh]) -> TriangleMesh:
+    if not meshes:
+        raise ValueError("mesh combination requires at least one mesh")
+    vertices: list[np.ndarray] = []
+    triangles: list[np.ndarray] = []
+    normals: list[np.ndarray] = []
+    offset = 0
+    for mesh in meshes:
+        vertices.append(np.asarray(mesh.vertices, dtype=float))
+        triangles.append(np.asarray(mesh.triangles, dtype=np.int32) + offset)
+        normals.append(np.asarray(mesh.normals, dtype=float))
+        offset += len(mesh.vertices)
+    return TriangleMesh(
+        vertices=np.concatenate(vertices, axis=0),
+        triangles=np.concatenate(triangles, axis=0),
+        normals=np.concatenate(normals, axis=0),
+    )
 
 
 def write_heatmap(path: str | Path, heatmap: dict[str, Any]) -> None:
@@ -994,6 +1271,186 @@ def _nearest_distances(first: np.ndarray, second: np.ndarray) -> np.ndarray:
     return np.asarray(result, dtype=float)
 
 
+def _nearest_triangle_surface_distances(
+    points: np.ndarray,
+    mesh: TriangleMesh,
+    *,
+    index: TriangleSurfaceIndex | None = None,
+    workers: int = 1,
+) -> np.ndarray:
+    """Return exact point-to-triangle distances for a tessellated surface.
+
+    Triangle centroids provide an initial upper bound.  A centroid-radius
+    inequality then selects every triangle that can beat that bound, so the
+    acceleration does not change the result relative to an exhaustive search.
+    """
+
+    acceleration = index or TriangleSurfaceIndex.build(mesh)
+    if acceleration.mesh_identity != id(mesh):
+        raise ValueError("triangle surface index does not belong to the target mesh")
+    return acceleration.distances(points, workers=workers)
+
+
+def _triangle_radius_buckets(radii: np.ndarray) -> list[np.ndarray]:
+    positive = np.maximum(np.asarray(radii, dtype=float), 1.0e-12)
+    exponents = np.floor(np.log2(positive)).astype(np.int64)
+    return [
+        np.flatnonzero(exponents == exponent)
+        for exponent in sorted(set(exponents.tolist()))
+    ]
+
+
+def _candidate_triangle_distances(
+    points: np.ndarray,
+    triangles: np.ndarray,
+    candidate_indexes: np.ndarray,
+    *,
+    block_size: int = 4096,
+) -> np.ndarray:
+    neighbor_count = candidate_indexes.shape[1]
+    result = np.empty(candidate_indexes.shape, dtype=float)
+    for start in range(0, len(points), block_size):
+        stop = min(start + block_size, len(points))
+        block_indexes = candidate_indexes[start:stop]
+        block_triangles = triangles[block_indexes].reshape(-1, 3, 3)
+        block_points = np.repeat(points[start:stop], neighbor_count, axis=0)
+        result[start:stop] = _paired_point_triangle_distances(
+            block_points, block_triangles
+        ).reshape(stop - start, neighbor_count)
+    return result
+
+
+def _paired_point_triangle_distances(
+    points: np.ndarray, triangles: np.ndarray
+) -> np.ndarray:
+    first = triangles[:, 0]
+    second = triangles[:, 1]
+    third = triangles[:, 2]
+    first_second = second - first
+    first_third = third - first
+    first_point = points - first
+    normal = np.cross(first_second, first_third)
+    normal_squared = np.einsum("ij,ij->i", normal, normal)
+
+    dot00 = np.einsum("ij,ij->i", first_second, first_second)
+    dot01 = np.einsum("ij,ij->i", first_second, first_third)
+    dot11 = np.einsum("ij,ij->i", first_third, first_third)
+    dot20 = np.einsum("ij,ij->i", first_point, first_second)
+    dot21 = np.einsum("ij,ij->i", first_point, first_third)
+    denominator = dot00 * dot11 - dot01 * dot01
+    valid = np.abs(denominator) > 1.0e-24
+    barycentric_second = np.zeros(len(triangles), dtype=float)
+    barycentric_third = np.zeros(len(triangles), dtype=float)
+    barycentric_second[valid] = (
+        dot11[valid] * dot20[valid] - dot01[valid] * dot21[valid]
+    ) / denominator[valid]
+    barycentric_third[valid] = (
+        dot00[valid] * dot21[valid] - dot01[valid] * dot20[valid]
+    ) / denominator[valid]
+    barycentric_first = 1.0 - barycentric_second - barycentric_third
+    inside = (
+        valid
+        & (barycentric_first >= -1.0e-12)
+        & (barycentric_second >= -1.0e-12)
+        & (barycentric_third >= -1.0e-12)
+    )
+    plane_distance = np.full(len(triangles), np.inf, dtype=float)
+    plane_distance[inside] = np.abs(
+        np.einsum("ij,ij->i", first_point[inside], normal[inside])
+    ) / np.sqrt(normal_squared[inside])
+    return np.minimum(
+        plane_distance,
+        np.minimum.reduce(
+            (
+                _paired_point_segment_distances(points, first, second),
+                _paired_point_segment_distances(points, second, third),
+                _paired_point_segment_distances(points, third, first),
+            )
+        ),
+    )
+
+
+def _paired_point_segment_distances(
+    points: np.ndarray, starts: np.ndarray, ends: np.ndarray
+) -> np.ndarray:
+    directions = ends - starts
+    lengths_squared = np.einsum("ij,ij->i", directions, directions)
+    parameters = np.zeros(len(starts), dtype=float)
+    valid = lengths_squared > 1.0e-24
+    parameters[valid] = np.einsum(
+        "ij,ij->i", points[valid] - starts[valid], directions[valid]
+    ) / lengths_squared[valid]
+    parameters = np.clip(parameters, 0.0, 1.0)
+    closest = starts + parameters[:, None] * directions
+    return np.linalg.norm(points - closest, axis=1)
+
+
+def _point_to_triangles_distance(
+    point: np.ndarray, triangles: np.ndarray
+) -> np.ndarray:
+    """Vectorized Euclidean distance from one point to triangle interiors/edges."""
+
+    first = triangles[:, 0]
+    second = triangles[:, 1]
+    third = triangles[:, 2]
+    first_second = second - first
+    first_third = third - first
+    first_point = point - first
+    normal = np.cross(first_second, first_third)
+    normal_squared = np.einsum("ij,ij->i", normal, normal)
+
+    dot00 = np.einsum("ij,ij->i", first_second, first_second)
+    dot01 = np.einsum("ij,ij->i", first_second, first_third)
+    dot11 = np.einsum("ij,ij->i", first_third, first_third)
+    dot20 = np.einsum("ij,ij->i", first_point, first_second)
+    dot21 = np.einsum("ij,ij->i", first_point, first_third)
+    denominator = dot00 * dot11 - dot01 * dot01
+    valid = np.abs(denominator) > 1.0e-24
+    barycentric_second = np.zeros(len(triangles), dtype=float)
+    barycentric_third = np.zeros(len(triangles), dtype=float)
+    barycentric_second[valid] = (
+        dot11[valid] * dot20[valid] - dot01[valid] * dot21[valid]
+    ) / denominator[valid]
+    barycentric_third[valid] = (
+        dot00[valid] * dot21[valid] - dot01[valid] * dot20[valid]
+    ) / denominator[valid]
+    barycentric_first = 1.0 - barycentric_second - barycentric_third
+    inside = (
+        valid
+        & (barycentric_first >= -1.0e-12)
+        & (barycentric_second >= -1.0e-12)
+        & (barycentric_third >= -1.0e-12)
+    )
+    plane_distance = np.full(len(triangles), np.inf, dtype=float)
+    plane_distance[inside] = np.abs(
+        np.einsum("ij,ij->i", first_point[inside], normal[inside])
+    ) / np.sqrt(normal_squared[inside])
+
+    edge_distance = np.minimum.reduce(
+        (
+            _point_to_segments_distance(point, first, second),
+            _point_to_segments_distance(point, second, third),
+            _point_to_segments_distance(point, third, first),
+        )
+    )
+    return np.minimum(plane_distance, edge_distance)
+
+
+def _point_to_segments_distance(
+    point: np.ndarray, starts: np.ndarray, ends: np.ndarray
+) -> np.ndarray:
+    directions = ends - starts
+    lengths_squared = np.einsum("ij,ij->i", directions, directions)
+    parameters = np.zeros(len(starts), dtype=float)
+    valid = lengths_squared > 1.0e-24
+    parameters[valid] = np.einsum(
+        "ij,ij->i", point - starts[valid], directions[valid]
+    ) / lengths_squared[valid]
+    parameters = np.clip(parameters, 0.0, 1.0)
+    closest = starts + parameters[:, None] * directions
+    return np.linalg.norm(point - closest, axis=1)
+
+
 def _distribution(values: np.ndarray) -> dict[str, float]:
     finite = values[np.isfinite(values)]
     if len(finite) == 0:
@@ -1005,6 +1462,31 @@ def _distribution(values: np.ndarray) -> dict[str, float]:
         "p95_mm": round(float(np.percentile(finite, 95)), 6),
         "maximum_mm": round(float(np.max(finite)), 6),
     }
+
+
+def _equal_weight_bidirectional_distribution(
+    reconstruction_to_source: np.ndarray,
+    source_to_reconstruction: np.ndarray,
+) -> dict[str, Any]:
+    """Aggregate independent directional summaries with fixed 0.5 weights."""
+
+    forward = _distribution(reconstruction_to_source)
+    reverse = _distribution(source_to_reconstruction)
+    keys = ("minimum_mm", "median_mm", "p95_mm", "maximum_mm")
+    result: dict[str, Any] = {
+        "directional_aggregation": {
+            "method": "independent_directional_statistics_fixed_weights",
+            "reconstruction_to_source_weight": 0.5,
+            "source_to_reconstruction_weight": 0.5,
+        }
+    }
+    for key in keys:
+        result[key] = round(0.5 * forward[key] + 0.5 * reverse[key], 6)
+    result["rms_mm"] = round(
+        math.sqrt(0.5 * forward["rms_mm"] ** 2 + 0.5 * reverse["rms_mm"] ** 2),
+        6,
+    )
+    return result
 
 
 def _mesh_properties(mesh: TriangleMesh) -> dict[str, Any]:
@@ -1044,13 +1526,18 @@ def _section_residuals(source_vertices: np.ndarray, reconstruction_vertices: np.
     return results
 
 
-def _heatmap_payload(mesh: TriangleMesh, errors: np.ndarray) -> dict[str, Any]:
+def _heatmap_payload(
+    mesh: TriangleMesh,
+    errors: np.ndarray,
+    *,
+    triangle_regions: list[str] | None = None,
+) -> dict[str, Any]:
     finite = errors[np.isfinite(errors)]
     clip = float(np.percentile(finite, 95)) if len(finite) else 0.0
     scale = max(clip, 1.0e-12)
     colors = [_turbo_like_color(min(max(float(error) / scale, 0.0), 1.0)) for error in errors]
-    return {
-        "contract_id": "impeller_v1_1_6_deviation_heatmap",
+    payload = {
+        "contract_id": "impeller_v1_1_6_deviation_heatmap_v2",
         "units": "mm",
         "vertices": [[round(float(value), 6) for value in point] for point in mesh.vertices],
         "triangles": mesh.triangles.tolist(),
@@ -1058,10 +1545,16 @@ def _heatmap_payload(mesh: TriangleMesh, errors: np.ndarray) -> dict[str, Any]:
         "colors_rgb": colors,
         "legend": {
             **_distribution(errors),
+            "units": "mm",
             "clip_p95_mm": round(clip, 6),
             "clipped_for_color_only": True,
         },
     }
+    if triangle_regions is not None:
+        if len(triangle_regions) != len(mesh.triangles):
+            raise ValueError("triangle region count must match heatmap triangle count")
+        payload["triangle_regions"] = list(triangle_regions)
+    return payload
 
 
 def _turbo_like_color(value: float) -> list[float]:

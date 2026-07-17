@@ -1109,8 +1109,8 @@ def test_edge_gate_rejects_semicircle_proxy_instead_of_comparing_against_one():
 
 
 def test_review_mapping_retains_complete_residual_rejection_as_non_promotable_candidate():
-    bundle = _measurement_bundle(station_count=5)
-    station = bundle["section_families"]["main"]["stations"][2]
+    bundle = _measurement_bundle(station_count=7)
+    station = bundle["section_families"]["main"]["stations"][3]
     station["camber"]["samples"][3]["q_mm"] += 8.0
 
     reviewed = map_measurements_to_v112_review(bundle, tolerances={})
@@ -1123,7 +1123,37 @@ def test_review_mapping_retains_complete_residual_rejection_as_non_promotable_ca
     assert reviewed["objective_terms"]["camber"]["gate"]["status"] == "FAIL"
     assert reviewed["geometry_patch_version"] == "1.1.2"
     assert reviewed["regenerated_canonical_payload"]["canonical_payload_version"] == "1.1.2"
+    assert reviewed["adaptive_reconstruction_extension"]["status"] == "PASS"
+    assert reviewed["adaptive_reconstruction_extension"]["station_count"] == 7
+    assert reviewed["resolved_blade_to_blade_loop_family_defaults"][
+        "v116_step_reconstruction_extension"
+    ]["contract_id"] == "impeller_v1_1_6_adaptive_reconstruction_extension"
+    assert reviewed["regenerated_canonical_payload"]["section_loop_family"][
+        "span_stations_h"
+    ] == pytest.approx([index / 6 for index in range(7)])
+    assert reviewed["regenerated_canonical_payload"]["canonical_input_source"] == (
+        "v116_adaptive_step_reconstruction_extension"
+    )
     assert len(reviewed["constructor_input_hash_sha256"]) == 64
+
+
+def test_review_adaptive_extension_uses_the_normalized_station_order():
+    ordered = _measurement_bundle(station_count=7)
+    ordered["section_families"]["main"]["stations"][3]["camber"]["samples"][3][
+        "q_mm"
+    ] += 8.0
+    reversed_bundle = copy.deepcopy(ordered)
+    reversed_bundle["section_families"]["main"]["stations"].reverse()
+
+    first = map_measurements_to_v112_review(ordered, tolerances={})
+    second = map_measurements_to_v112_review(reversed_bundle, tolerances={})
+
+    assert first["adaptive_reconstruction_extension"]["status"] == "PASS"
+    assert second["adaptive_reconstruction_extension"]["status"] == "PASS"
+    assert second["adaptive_reconstruction_extension"]["span_stations_h"] == pytest.approx(
+        [index / 6 for index in range(7)]
+    )
+    assert first["canonical_payload_hash_sha256"] == second["canonical_payload_hash_sha256"]
 
 
 def test_review_mapping_does_not_convert_schema_failure_into_a_candidate():

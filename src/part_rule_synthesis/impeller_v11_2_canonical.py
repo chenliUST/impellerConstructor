@@ -84,9 +84,17 @@ def canonical_nurbs_from_v11_defaults(
         average_thickness,
     )
     maximum_thickness = max(maximum_thickness, average_thickness)
-    span_stations = [float(value) for value in defaults.get("span_stations_h", [0.0, 0.25, 0.5, 0.75, 1.0])]
-    skeleton = _skeleton_field(defaults)
-    thickness = _thickness_field(defaults, average_thickness, maximum_thickness)
+    extension = _adaptive_reconstruction_extension(defaults)
+    if extension is None:
+        span_stations = [float(value) for value in defaults.get("span_stations_h", [0.0, 0.25, 0.5, 0.75, 1.0])]
+        skeleton = _skeleton_field(defaults)
+        thickness = _thickness_field(defaults, average_thickness, maximum_thickness)
+        pose = _pose_field(parameters, defaults)
+    else:
+        span_stations = [float(value) for value in extension["span_stations_h"]]
+        skeleton = copy.deepcopy(extension["blade_skeleton_field"])
+        thickness = copy.deepcopy(extension["thickness_field"])
+        pose = copy.deepcopy(extension["pose_field"])
     root_offset = _float_default(
         defaults,
         "root_blade_lift_mm",
@@ -97,6 +105,54 @@ def canonical_nurbs_from_v11_defaults(
         if defaults.get("tip_attachment_mode") == "closed_shroud_attachment"
         else 0.0
     )
+    leading_cap = _cap_intent(defaults, "leading_edge_cap_roundness")
+    trailing_cap = _cap_intent(defaults, "trailing_edge_cap_roundness")
+    if extension is not None:
+        targets = extension.get("source_cap_curve_targets", {})
+        leading_cap["measurement_targets"] = copy.deepcopy(
+            targets.get("leading_edge", [])
+        )
+        trailing_cap["measurement_targets"] = copy.deepcopy(
+            targets.get("trailing_edge", [])
+        )
+        leading_cap["measurement_target_mode"] = str(targets.get("mode", ""))
+        trailing_cap["measurement_target_mode"] = str(targets.get("mode", ""))
+    active_span_policy = {
+        "root_offset": {
+            "mode": "thickness_ratio",
+            "ratio_of_local_thickness": _round(root_offset / max(average_thickness, 1.0e-9)),
+            "resolved_constant_mm": _round(root_offset),
+        },
+        "tip_offset": {
+            "mode": "closed_shroud_thickness_ratio_or_open_zero",
+            "ratio_of_local_thickness": _round(tip_offset / max(average_thickness, 1.0e-9)),
+            "resolved_constant_mm": _round(tip_offset),
+        },
+        "report_resolved_offsets": True,
+    }
+    attachment_policy = _attachment_policy(defaults, average_thickness)
+    if extension is not None and "root_attachment_field" in extension:
+        root_field = copy.deepcopy(extension["root_attachment_field"])
+        active_span_policy["root_offset"].update(
+            {
+                "mode": "v116_measured_streamwise_field",
+                "local_size_field": root_field,
+            }
+        )
+        attachment_policy["root_to_hub"]["local_size_field"] = copy.deepcopy(
+            root_field
+        )
+    if extension is not None and "shroud_attachment_field" in extension:
+        shroud_field = copy.deepcopy(extension["shroud_attachment_field"])
+        active_span_policy["tip_offset"].update(
+            {
+                "mode": "v116_measured_streamwise_field",
+                "local_size_field": shroud_field,
+            }
+        )
+        attachment_policy["tip_to_shroud"]["local_size_field"] = copy.deepcopy(
+            shroud_field
+        )
     payload = {
         "canonical_payload_version": CANONICAL_PAYLOAD_VERSION,
         "math_parameterization": MATH_PARAMETERIZATION,
@@ -105,19 +161,7 @@ def canonical_nurbs_from_v11_defaults(
             "hub_profile": _nurbs_curve("hub_profile", hub_points),
             "tip_or_shroud_profile": _nurbs_curve("tip_or_shroud_profile", tip_points),
         },
-        "active_span_policy": {
-            "root_offset": {
-                "mode": "thickness_ratio",
-                "ratio_of_local_thickness": _round(root_offset / max(average_thickness, 1.0e-9)),
-                "resolved_constant_mm": _round(root_offset),
-            },
-            "tip_offset": {
-                "mode": "closed_shroud_thickness_ratio_or_open_zero",
-                "ratio_of_local_thickness": _round(tip_offset / max(average_thickness, 1.0e-9)),
-                "resolved_constant_mm": _round(tip_offset),
-            },
-            "report_resolved_offsets": True,
-        },
+        "active_span_policy": active_span_policy,
         "blade_population": {
             "main_blade_count": int(defaults["main_blade_count"]),
             "splitter_blade_count": int(defaults.get("splitter_blade_count", 0)),
@@ -135,14 +179,28 @@ def canonical_nurbs_from_v11_defaults(
             "segments": {
                 "pressure_side": {"construction": "skeleton_minus_half_thickness"},
                 "suction_side": {"construction": "skeleton_plus_half_thickness"},
-                "leading_edge_cap": _cap_intent(defaults, "leading_edge_cap_roundness"),
-                "trailing_edge_cap": _cap_intent(defaults, "trailing_edge_cap_roundness"),
+                "leading_edge_cap": leading_cap,
+                "trailing_edge_cap": trailing_cap,
             },
         },
-        "attachment_policy": _attachment_policy(defaults, average_thickness),
-        "pose_field": _pose_field(parameters, defaults),
+        "attachment_policy": attachment_policy,
+        "pose_field": pose,
         "sampling_policy": _sampling_policy(defaults),
     }
+    if extension is not None:
+        payload["adaptive_reconstruction_extension"] = {
+            "contract_id": extension["contract_id"],
+            "status": extension["status"],
+            "mode": extension["mode"],
+            "station_count": int(extension["station_count"]),
+            "minimum_thickness_mm": float(extension["minimum_thickness_mm"]),
+            "minimum_thickness_policy": extension["minimum_thickness_policy"],
+            "population_scope": copy.deepcopy(extension.get("population_scope", {})),
+        }
+        if "source_support_span_mapping" in extension:
+            payload["adaptive_reconstruction_extension"][
+                "source_support_span_mapping"
+            ] = copy.deepcopy(extension["source_support_span_mapping"])
     payload["metrics"] = _canonical_metrics(payload, average_thickness, maximum_thickness)
     return payload
 
@@ -375,7 +433,12 @@ def _canonical_metrics(
         "active_tip_offset_min_mm": _round(tip_offset),
         "active_tip_offset_max_mm": _round(tip_offset),
         "skeleton_field_control_net_shape": [len(skeleton_points), len(skeleton_points[0])],
-        "thickness_min_mm": _round(max(min(thickness_values), 1.0)),
+        "thickness_min_mm": _round(
+            float(payload["thickness_field"]["minimum_thickness_mm"])
+            if payload.get("canonical_input_source")
+            == "v116_adaptive_step_reconstruction_extension"
+            else max(min(thickness_values), 1.0)
+        ),
         "thickness_max_mm": _round(max(max(thickness_values), maximum_thickness)),
         "loop_station_count": len(payload["section_loop_family"]["span_stations_h"]),
         "max_join_position_gap_mm": 0.0,
@@ -386,6 +449,70 @@ def _canonical_metrics(
         "trailing_cap_sagitta_target_min_mm": _round(trailing_target),
         "trailing_cap_sagitta_resolved_min_mm": _round(trailing_resolved),
     }
+
+
+def _adaptive_reconstruction_extension(
+    defaults: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    extension = defaults.get("v116_step_reconstruction_extension")
+    if extension is None:
+        return None
+    if not isinstance(extension, Mapping):
+        raise ValueError("v116_step_reconstruction_extension must be a mapping")
+    if (
+        extension.get("contract_id")
+        != "impeller_v1_1_6_adaptive_reconstruction_extension"
+        or extension.get("status") != "PASS"
+        or extension.get("geometry_patch_version") != CANONICAL_PAYLOAD_VERSION
+        or extension.get("mode") != "v116_step_reconstruction_opt_in"
+    ):
+        raise ValueError("v116_step_reconstruction_extension contract is not approved")
+    stations = extension.get("span_stations_h")
+    if not isinstance(stations, list) or not 5 <= len(stations) <= 9:
+        raise ValueError("v116 adaptive span stations must contain 5 to 9 values")
+    values = [float(value) for value in stations]
+    if (
+        abs(values[0]) > 1.0e-9
+        or abs(values[-1] - 1.0) > 1.0e-9
+        or any(upper <= lower for lower, upper in zip(values, values[1:]))
+    ):
+        raise ValueError("v116 adaptive span stations must increase from 0 to 1")
+    for field_name in ("blade_skeleton_field", "thickness_field", "pose_field"):
+        field = extension.get(field_name)
+        if not isinstance(field, Mapping) or field.get("kind") != "nurbs_surface":
+            raise ValueError(f"v116 extension {field_name} must be a NURBS surface")
+    support_mapping = extension.get("source_support_span_mapping")
+    if support_mapping is not None:
+        if (
+            not isinstance(support_mapping, Mapping)
+            or support_mapping.get("kind") != "nurbs_curve"
+            or support_mapping.get("components") != ["active_h", "support_h"]
+            or support_mapping.get("construction_usage")
+            not in {
+                "measurement_station_provenance_only",
+                "constructor_span_authority",
+            }
+        ):
+            raise ValueError("v116 source support-span mapping must be a NURBS curve")
+        sampled_support_h = [
+            float(evaluate_nurbs_curve(dict(support_mapping), index / 128.0)[1])
+            for index in range(129)
+        ]
+        if (
+            sampled_support_h[0] < -1.0e-9
+            or sampled_support_h[-1] > 1.0 + 1.0e-9
+            or any(
+                upper <= lower
+                for lower, upper in zip(sampled_support_h, sampled_support_h[1:])
+            )
+        ):
+            raise ValueError(
+                "v116 source support-span mapping must increase inside [0, 1]"
+            )
+    minimum = float(extension.get("minimum_thickness_mm", 0.0))
+    if not math.isfinite(minimum) or minimum <= 0.0:
+        raise ValueError("v116 adaptive minimum thickness must be positive")
+    return extension
 
 
 def _surface(

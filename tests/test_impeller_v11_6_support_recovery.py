@@ -748,6 +748,39 @@ def test_authenticated_support_projection_preserves_source_order_or_fails_closed
     assert projected["paths_rz_mm"][0] == list(reversed(decreasing["paths_rz_mm"][0]))
     assert projected["provenance"]["reversed_path_indices"] == [0]
 
+    single_turn = {
+        **common,
+        "source_tolerance_mm": 0.03,
+        "paths_rz_mm": [
+            [
+                [10.20, 0.20],
+                [10.18, 0.15],
+                [10.16, 0.10],
+                [10.14, 0.00],
+                [10.16, 0.10],
+                [10.18, 0.15],
+                [10.22, 0.22],
+                [11.00, 1.00],
+                [12.00, 2.00],
+            ]
+        ],
+    }
+    projected = _radially_order_authenticated_support_paths(
+        single_turn,
+        failure_reason="v116_tip_reference_inference_failed",
+    )
+    assert len(projected["paths_rz_mm"]) == 2
+    assert all(
+        all(
+            second[0] >= first[0]
+            for first, second in zip(path, path[1:])
+        )
+        for path in projected["paths_rz_mm"]
+    )
+    assert projected["provenance"][
+        "split_at_single_radial_turning_point_path_indices"
+    ] == [0]
+
     non_monotone = {
         **common,
         "paths_rz_mm": [[[10.0, 0.0], [12.0, 1.0], [11.0, 2.0], [13.0, 3.0]]],

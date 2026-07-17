@@ -723,6 +723,7 @@ def recover_open_tip_reference(
             {"tip_cap_evidence": tip_cap_evidence},
         )
     authenticated_edges = _authenticated_edge_profile_inputs(source_edge_evidence)
+    authenticated_fit_provenance = None
     if authenticated_edges is not None:
         if sample_paths_rz_mm or source_edge_ids:
             raise ValueError(
@@ -749,6 +750,20 @@ def recover_open_tip_reference(
                 float(np.max(edge_points[:, 1]) + padding),
             ),
         )
+        ordered = _radially_order_authenticated_support_paths(
+            {
+                "paths_rz_mm": sample_paths_rz_mm,
+                "path_source_ids": source_edge_ids,
+                "material_domain_rz_mm": material_domain_rz_mm,
+                "source_tolerance_mm": source_tolerance_mm,
+                "provenance": authenticated_edges["provenance"],
+            },
+            failure_reason="v116_tip_reference_inference_failed",
+        )
+        sample_paths_rz_mm = ordered["paths_rz_mm"]
+        source_edge_ids = ordered["path_source_ids"]
+        material_domain_rz_mm = ordered["material_domain_rz_mm"]
+        authenticated_fit_provenance = ordered["provenance"]
         endpoints_rz_mm = None
     fitted_edge_ids = _identifier_sequence(source_edge_ids, "source_edge_ids")
     shared_source_edge_ids = set(tip_cap_evidence["shared_source_edge_ids"])
@@ -830,7 +845,7 @@ def recover_open_tip_reference(
             and expected_loops_covered
             and source_solid_matches
         ),
-        authenticated_provenance=(authenticated_edges or {}).get("provenance"),
+        authenticated_provenance=authenticated_fit_provenance,
     )
     authenticated_fit_payload = (
         fit._verified_payload({"v112_support_fit"})
@@ -2397,17 +2412,8 @@ def _radially_order_authenticated_support_paths(
         if len(points) < 2:
             continue
         radial_steps = np.diff(points[:, 0])
-        signed_steps = [
-            (step_index, 1 if value > 0.0 else -1)
-            for step_index, value in enumerate(radial_steps)
-            if abs(float(value)) > tolerance
-        ]
-        sign_changes = [
-            signed_steps[position][0]
-            for position in range(1, len(signed_steps))
-            if signed_steps[position][1] != signed_steps[position - 1][1]
-        ]
-        if len(sign_changes) > 1:
+        turning_indices = _radial_turning_indices(points[:, 0], tolerance)
+        if len(turning_indices) > 1:
             raise SupportRecoveryError(
                 failure_reason,
                 "authenticated support trace is not monotone in source order",
@@ -2416,21 +2422,18 @@ def _radially_order_authenticated_support_paths(
                     "source_entity_id": str(source_id),
                     "minimum_radial_step_mm": float(np.min(radial_steps)),
                     "maximum_radial_step_mm": float(np.max(radial_steps)),
-                    "source_order_sign_change_count": len(sign_changes),
+                    "source_order_sign_change_count": len(turning_indices),
                 },
             )
         branches = [points]
-        if sign_changes:
-            pivot = sign_changes[0]
+        if turning_indices:
+            pivot = turning_indices[0]
             branches = [points[: pivot + 1], points[pivot:]]
             split_path_indices.append(index)
         for branch in branches:
             if len(branch) < 2:
                 continue
-            branch_steps = np.diff(branch[:, 0])
-            if np.all(branch_steps <= tolerance) and np.any(
-                branch_steps < -tolerance
-            ):
+            if float(branch[-1, 0]) < float(branch[0, 0]) - tolerance:
                 branch = branch[::-1].copy()
                 reversed_path_indices.append(index)
             if np.any(np.diff(branch[:, 0]) < -tolerance):
@@ -2519,6 +2522,44 @@ def _radially_order_authenticated_support_paths(
         "material_domain_rz_mm": material_domain,
         "provenance": provenance,
     }
+
+
+def _radial_turning_indices(radii: np.ndarray, tolerance: float) -> list[int]:
+    """Find source-order radial reversals using a tolerance deadband."""
+
+    if len(radii) < 3:
+        return []
+    direction = 0
+    anchor = float(radii[0])
+    extreme_index = 0
+    turns = []
+    for index in range(1, len(radii)):
+        value = float(radii[index])
+        if direction == 0:
+            delta = value - anchor
+            if delta > tolerance:
+                direction = 1
+                extreme_index = index
+            elif delta < -tolerance:
+                direction = -1
+                extreme_index = index
+            continue
+        extreme = float(radii[extreme_index])
+        if direction > 0:
+            if value >= extreme:
+                extreme_index = index
+            elif extreme - value > tolerance:
+                turns.append(extreme_index)
+                direction = -1
+                extreme_index = index
+        else:
+            if value <= extreme:
+                extreme_index = index
+            elif value - extreme > tolerance:
+                turns.append(extreme_index)
+                direction = 1
+                extreme_index = index
+    return turns
 
 
 def _authenticated_edge_profile_inputs(

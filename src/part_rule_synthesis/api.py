@@ -257,6 +257,7 @@ def create_app(root: Path | None = None) -> FastAPI:
             "source.stl": "model/stl",
             "reconstruction.stl": "model/stl",
             "heatmap.json": "application/json",
+            "geometric-manifest.json": "application/json",
         }
         etag = hashlib.sha256(path.read_bytes()).hexdigest()
         return FileResponse(

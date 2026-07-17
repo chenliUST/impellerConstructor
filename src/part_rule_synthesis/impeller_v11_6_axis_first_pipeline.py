@@ -11,6 +11,13 @@ import numpy as np
 
 from part_rule_synthesis import impeller_v11_6_section_recovery as section_recovery
 from part_rule_synthesis import impeller_v11_6_support_recovery as support_recovery
+from part_rule_synthesis.impeller_v11_2_canonical import evaluate_nurbs_curve
+from part_rule_synthesis.impeller_v11_6_comparison_scope import (
+    build_supported_surface_comparison_scope,
+)
+from part_rule_synthesis.impeller_v11_6_meridional_mapping import (
+    project_rz_points_to_meridional_s,
+)
 from part_rule_synthesis.impeller_v11_6_v112_mapping import (
     MEASUREMENT_SCHEMA_VERSION,
     V112MappingError,
@@ -272,6 +279,19 @@ def _enrich_mapping(
     )
     support_payload = _jsonable(result.support_evidence)
     periodic_payload = _jsonable(result.periodic_evidence)
+    main_count = int((periodic_payload.get("main") or {}).get("count", 0))
+    splitter_count = int((periodic_payload.get("splitter") or {}).get("count", 0))
+    comparison_scope = build_supported_surface_comparison_scope(
+        support_payload.get("source_face_semantics", ()),
+        measurements=result.measurements,
+        topology_mode=str(support_payload.get("topology_mode", "")),
+        expected_periodic_instance_count=main_count + splitter_count,
+        periodic_populations=(
+            periodic_payload.get("pattern_population_evidence", {}).get(
+                "populations", ()
+            )
+        ),
+    )
     source_sha256 = str(result.measurements["provenance"]["source_sha256"])
     mapped.update(
         {
@@ -309,6 +329,7 @@ def _enrich_mapping(
             },
             "unsupported_source_features": unsupported_audit["features"],
             "unsupported_source_feature_audit": unsupported_audit,
+            "comparison_scope": comparison_scope,
         }
     )
     return mapped
@@ -478,11 +499,23 @@ def _recover_support_evidence(inventory, frame, semantics) -> dict[str, Any]:
         tip_support, topology_result = _recover_closed_shroud(
             inventory, frame, semantics, topology, partition
         )
+    closure_classification = _refine_periodic_closure_assignments(
+        assignments,
+        inventory,
+        semantics,
+        topology,
+        matrix=matrix,
+        hub_profile_rz_mm=hub_fit["control_points_rz_mm"],
+    )
     return {
         "status": "PASS",
         "topology": topology_result,
         "topology_mode": topology["mode"],
         "semantic_partition_digest": partition["partition_digest"],
+        "source_face_semantics": _serialize_source_face_semantics(
+            assignments, inventory, semantics
+        ),
+        "periodic_closure_classification": closure_classification,
         "hub_profile": hub_fit,
         "tip_reference_or_shroud": tip_support,
         "mapping_fits": {
@@ -497,6 +530,33 @@ def _recover_support_evidence(inventory, frame, semantics) -> dict[str, Any]:
             tip_support,
         ),
     }
+
+
+def _serialize_source_face_semantics(assignments, inventory, semantics):
+    role_hints = semantics.get("face_roles", {})
+    records = []
+    for source_face_id in sorted(assignments):
+        assignment = assignments[source_face_id]
+        source_record = inventory["records_by_id"].get(source_face_id, {})
+        hint = role_hints.get(source_face_id, {})
+        geometry_type = source_record.get("geometry_type")
+        if geometry_type is None:
+            geometry_type = assignment["shape"].geomType()
+        records.append(
+            {
+                "source_face_id": source_face_id,
+                "semantic_role": str(assignment["role"]),
+                "source_role_hint": str(hint.get("role", "")),
+                "geometry_type": str(geometry_type),
+                "periodic_instance_id": assignment["periodic_instance_id"],
+                "periodic_blade_related": bool(
+                    assignment["periodic_blade_related"]
+                ),
+                "flowpath_adjacent": bool(assignment["flowpath_adjacent"]),
+                "hole_boundary": bool(assignment["hole_boundary"]),
+            }
+        )
+    return records
 
 
 def _pattern_material_partition(inventory, semantics, topology, tip_support):
@@ -651,6 +711,9 @@ def _classify_support_topology(inventory, frame, semantics) -> dict[str, Any]:
                 "member_face_ids": [],
                 "adjacent_periodic_face_ids": set(),
                 "periodic_instance_ids": set(),
+                "member_periodic_instance_ids": {},
+                "member_contact_length_mm": {},
+                "member_area_mm2": {},
                 "shared_contact_length_mm": 0.0,
                 "total_area_mm2": 0.0,
             }
@@ -662,6 +725,18 @@ def _classify_support_topology(inventory, frame, semantics) -> dict[str, Any]:
         group["periodic_instance_ids"].update(
             inventory["instance_by_face"][face_id]
             for face_id in candidate["adjacent_periodic_face_ids"]
+        )
+        group["member_periodic_instance_ids"][candidate["face_id"]] = sorted(
+            {
+                inventory["instance_by_face"][face_id]
+                for face_id in candidate["adjacent_periodic_face_ids"]
+            }
+        )
+        group["member_contact_length_mm"][candidate["face_id"]] = float(
+            candidate["shared_contact_length_mm"]
+        )
+        group["member_area_mm2"][candidate["face_id"]] = float(
+            candidate["area_mm2"]
         )
         group["shared_contact_length_mm"] += candidate[
             "shared_contact_length_mm"
@@ -799,6 +874,37 @@ def _shared_contact_length(inventory, support_face_id, periodic_face_ids):
 def _semantic_assignments(inventory, semantics, topology) -> dict[str, Any]:
     instance_by_face = inventory["instance_by_face"]
     open_caps = set(topology.get("open_tip_caps", {}).values())
+    instances = [
+        instance
+        for population in semantics["periodic_population_recovery"]["populations"]
+        for instance in population["instances"]
+    ]
+    authenticated_side_faces = {
+        face_id
+        for instance in instances
+        for face_id in instance["component_completeness"]["blade_side_face_ids"]
+    }
+    hub_support_ids = set(
+        topology.get("hub_support_face_ids", [topology["hub_face_id"]])
+    )
+    adjacency = inventory["source_manifest"]["adjacency"]
+    root_attachment_faces = set()
+    for instance in instances:
+        side_faces = set(
+            instance["component_completeness"]["blade_side_face_ids"]
+        )
+        candidates = {
+            face_id
+            for face_id in instance["source_face_ids"]
+            if face_id not in authenticated_side_faces
+            and hub_support_ids.intersection(adjacency.get(face_id, ()))
+        }
+        dual_side_candidates = {
+            face_id
+            for face_id in candidates
+            if len(side_faces.intersection(adjacency.get(face_id, ()))) >= 2
+        }
+        root_attachment_faces.update(dual_side_candidates or candidates)
     attachment_faces = set()
     if topology["mode"] == "closed":
         inner_id = topology["inner_shroud_face_id"]
@@ -830,8 +936,12 @@ def _semantic_assignments(inventory, semantics, topology) -> dict[str, Any]:
             role, flowpath = "periodic_blade_tip_attachment", True
         elif face_id in open_caps:
             role, flowpath = "periodic_blade_tip_cap", True
-        elif instance_id is not None:
+        elif face_id in root_attachment_faces:
+            role, flowpath = "periodic_blade_root_attachment", True
+        elif face_id in authenticated_side_faces:
             role, flowpath = "periodic_blade_side", True
+        elif instance_id is not None:
+            role = "periodic_blade_unclassified_closure"
         assignments[face_id] = {
             "shape": face,
             "role": role,
@@ -839,7 +949,7 @@ def _semantic_assignments(inventory, semantics, topology) -> dict[str, Any]:
             "periodic_instance_id": instance_id,
             "periodic_blade_related": instance_id is not None,
             "flowpath_adjacent": flowpath,
-            "root_blend": False,
+            "root_blend": face_id in root_attachment_faces,
             "hole_boundary": (
                 face_id not in support_boundary_ids
                 and "bore"
@@ -848,6 +958,119 @@ def _semantic_assignments(inventory, semantics, topology) -> dict[str, Any]:
             "local_edge_treatment": False,
         }
     return assignments
+
+
+def _refine_periodic_closure_assignments(
+    assignments,
+    inventory,
+    semantics,
+    topology,
+    *,
+    matrix,
+    hub_profile_rz_mm,
+) -> dict[str, Any]:
+    """Split authenticated periodic closure faces at the two streamwise ends."""
+
+    evidence = {}
+    populations = semantics["periodic_population_recovery"]["populations"]
+    for population in populations:
+        for instance in population["instances"]:
+            instance_id = str(instance["instance_id"])
+            side_face_ids = set(
+                instance["component_completeness"]["blade_side_face_ids"]
+            )
+            candidates = []
+            rejected = []
+            for face_id in instance["source_face_ids"]:
+                assignment = assignments[face_id]
+                if assignment["role"] != "periodic_blade_unclassified_closure":
+                    continue
+                if not side_face_ids.intersection(
+                    inventory["source_manifest"]["adjacency"].get(face_id, ())
+                ):
+                    continue
+                try:
+                    streamwise_s = _closure_meridional_s(
+                        inventory,
+                        face_id,
+                        side_face_ids,
+                        matrix,
+                        hub_profile_rz_mm,
+                    )
+                except AxisFirstPipelineError as exc:
+                    rejected.append(
+                        {
+                            "source_face_id": face_id,
+                            "reason": exc.reason,
+                        }
+                    )
+                    continue
+                candidates.append((float(streamwise_s), face_id))
+            candidates.sort(key=lambda item: (item[0], item[1]))
+            if len(candidates) < 2:
+                evidence[instance_id] = {
+                    "status": "UNRESOLVED",
+                    "reason": "fewer_than_two_authenticated_streamwise_closure_faces",
+                    "candidate_source_face_ids": [
+                        face_id for _value, face_id in candidates
+                    ],
+                    "rejected_candidates": rejected,
+                }
+                continue
+            gaps = [
+                right[0] - left[0]
+                for left, right in zip(candidates, candidates[1:])
+            ]
+            split_index = max(
+                range(len(gaps)), key=lambda index: (gaps[index], -index)
+            ) + 1
+            leading = candidates[:split_index]
+            trailing = candidates[split_index:]
+            if not leading or not trailing or gaps[split_index - 1] <= 1.0e-9:
+                evidence[instance_id] = {
+                    "status": "UNRESOLVED",
+                    "reason": "streamwise_closure_partition_ambiguous",
+                    "candidate_source_face_ids": [
+                        face_id for _value, face_id in candidates
+                    ],
+                    "streamwise_s_mm": {
+                        face_id: value for value, face_id in candidates
+                    },
+                    "rejected_candidates": rejected,
+                }
+                continue
+            for _value, face_id in leading:
+                assignments[face_id].update(
+                    {
+                        "role": "periodic_blade_leading_edge",
+                        "flowpath_adjacent": True,
+                        "local_edge_treatment": True,
+                    }
+                )
+            for _value, face_id in trailing:
+                assignments[face_id].update(
+                    {
+                        "role": "periodic_blade_trailing_edge",
+                        "flowpath_adjacent": True,
+                        "local_edge_treatment": True,
+                    }
+                )
+            evidence[instance_id] = {
+                "status": "PASS",
+                "method": "exact_shared_boundary_hub_meridional_s_partition",
+                "leading_edge_source_face_ids": [
+                    face_id for _value, face_id in leading
+                ],
+                "trailing_edge_source_face_ids": [
+                    face_id for _value, face_id in trailing
+                ],
+                "streamwise_s_mm": {
+                    face_id: value for value, face_id in candidates
+                },
+                "separation_gap_mm": gaps[split_index - 1],
+                "rejected_candidates": rejected,
+            }
+    return evidence
 
 
 def _recover_open_tip(inventory, frame, semantics, topology):
@@ -862,42 +1085,57 @@ def _recover_open_tip(inventory, frame, semantics, topology):
             instance_id = str(instance["instance_id"])
             cap_id = cap_by_instance[instance_id]
             cap = inventory["faces_by_id"][cap_id]
-            adjacent_id, edge_id, edge = _cap_shared_edge(
-                inventory, cap_id, set(instance["source_face_ids"])
+            side_edge_groups = _cap_shared_side_edge_groups(
+                inventory,
+                cap_id,
+                set(
+                    instance["component_completeness"]["blade_side_face_ids"]
+                ),
             )
-            loop_id = f"{instance_id}_open_tip_loop"
+            loops = []
+            loop_ids = []
+            for group_index, (adjacent_id, edge_ids) in enumerate(
+                side_edge_groups
+            ):
+                loop_id = f"{instance_id}_open_tip_side_{group_index:02d}"
+                loop_ids.append(loop_id)
+                loops.append(
+                    {
+                        "loop_id": loop_id,
+                        "source_edge_ids": list(edge_ids),
+                        "adjacent_periodic_faces": [
+                            {
+                                "face_id": adjacent_id,
+                                "face_role": "side",
+                                "periodic_instance_id": instance_id,
+                            }
+                        ],
+                    }
+                )
+                face_shapes[adjacent_id] = inventory["faces_by_id"][adjacent_id]
+                for edge_id in edge_ids:
+                    edge = inventory["edges_by_id"][edge_id]
+                    edge_shapes[edge_id] = edge
+                    edge_evidence.append(
+                        support_recovery.sample_occt_edge_meridional_path(
+                            edge,
+                            source_edge_id=edge_id,
+                            source_solid=inventory["shape"],
+                            source_to_canonical_matrix=frame[
+                                "source_to_canonical_matrix"
+                            ],
+                            source_tolerance_mm=_source_tolerance(frame),
+                        )
+                    )
             records.append(
                 {
                     "periodic_instance_id": instance_id,
                     "tip_cap_face_id": cap_id,
-                    "shared_edge_loops": [
-                        {
-                            "loop_id": loop_id,
-                            "source_edge_ids": [edge_id],
-                            "adjacent_periodic_faces": [
-                                {
-                                    "face_id": adjacent_id,
-                                    "face_role": "side",
-                                    "periodic_instance_id": instance_id,
-                                }
-                            ],
-                        }
-                    ],
+                    "shared_edge_loops": loops,
                 }
             )
-            expected[instance_id] = [loop_id]
+            expected[instance_id] = loop_ids
             face_shapes[cap_id] = cap
-            face_shapes[adjacent_id] = inventory["faces_by_id"][adjacent_id]
-            edge_shapes[edge_id] = edge
-            edge_evidence.append(
-                support_recovery.sample_occt_edge_meridional_path(
-                    edge,
-                    source_edge_id=edge_id,
-                    source_solid=inventory["shape"],
-                    source_to_canonical_matrix=frame["source_to_canonical_matrix"],
-                    source_tolerance_mm=_source_tolerance(frame),
-                )
-            )
     population_evidence = support_recovery.authenticate_open_tip_population_contract(
         inventory["shape"],
         topology_records=records,
@@ -1205,14 +1443,38 @@ def _recover_periodic_evidence(
                 stage="periodic_representatives",
                 evidence={"component": instance},
             )
-        radial = instance["radial_support_range_mm"]
-        outer_radius = float(frame["outer_radius_mm"])
-        interval = [
-            max(0.0, min(0.95, float(radial[0]) / max(abs(outer_radius), 1.0e-9))),
-            max(0.05, min(1.0, float(radial[1]) / max(abs(outer_radius), 1.0e-9))),
-        ]
-        if interval[1] <= interval[0]:
-            interval = [0.05, 0.95]
+        if support is None:
+            raise AxisFirstPipelineError(
+                "v116_representative_blade_selection_failed",
+                "streamwise blade bounds require an authenticated meridional support",
+                stage="periodic_representatives",
+                evidence={"population": name},
+            )
+        interval_evidence = project_rz_points_to_meridional_s(
+            support["mapping_fits"]["hub"],
+            _representative_meridional_points(
+                inventory,
+                frame,
+                instance,
+                source_face_ids=completeness["blade_side_face_ids"],
+            ),
+            tip_profile_fit=support["mapping_fits"]["tip_or_shroud"],
+            maximum_projection_residual_mm=_support_projection_residual_gate_mm(
+                support, frame
+            ),
+        )
+        if interval_evidence.get("status") != "PASS":
+            raise AxisFirstPipelineError(
+                "v116_representative_blade_selection_failed",
+                "representative blade cannot be bounded on normalized meridional arc length",
+                stage="periodic_representatives",
+                evidence={
+                    "population": name,
+                    "projection": interval_evidence,
+                    "source_face_ids": sorted(instance["source_face_ids"]),
+                },
+            )
+        interval = list(interval_evidence["streamwise_interval_s"])
         angular_sector, sector_evidence = _measurement_sector_from_envelope(
             instance["angular_envelope_deg"],
             pitch_deg=float(population["pitch_deg"]),
@@ -1223,12 +1485,103 @@ def _recover_periodic_evidence(
             "phase_deg": float(population["phase_deg"]),
             "phase_relative_to_main_deg": float(population["phase_relative_to_main_deg"]),
             "streamwise_interval_s": interval,
+            "streamwise_interval_evidence": interval_evidence,
             "source_ids": sorted(instance["source_face_ids"]),
             "representative_instance": copy.deepcopy(instance),
             "angular_sector_deg": angular_sector,
             "angular_sector_evidence": sector_evidence,
         }
     return result
+
+
+def _representative_meridional_points(
+    inventory, frame, instance, *, source_face_ids=None
+):
+    matrix = frame["source_to_canonical_matrix"]
+    points = set()
+    selected_ids = (
+        instance["source_face_ids"]
+        if source_face_ids is None
+        else source_face_ids
+    )
+    for source_face_id in selected_ids:
+        face = inventory["faces_by_id"][source_face_id]
+        for vertex in face.Vertices():
+            _add_meridional_point(points, vertex.Center().toTuple(), matrix)
+        for edge in face.Edges():
+            try:
+                edge_points, _parameters = edge.sample(17)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+            for point in edge_points:
+                coordinates = point.toTuple() if hasattr(point, "toTuple") else point
+                _add_meridional_point(points, coordinates, matrix)
+    return [list(point) for point in sorted(points)]
+
+
+def _add_meridional_point(points, coordinates, matrix):
+    point = _transform_point(coordinates, matrix)
+    points.add(
+        (
+            round(float(math.hypot(point[0], point[1])), 9),
+            round(float(point[2]), 9),
+        )
+    )
+
+
+def _support_projection_residual_gate_mm(support, frame):
+    mapping_fits = support.get("mapping_fits", {})
+    hub = mapping_fits.get("hub", {})
+    tip = mapping_fits.get("tip_or_shroud", {})
+    hub_controls = hub.get("control_points_rz_mm")
+    tip_controls = tip.get("control_points_rz_mm")
+    if hub_controls is None or tip_controls is None:
+        raise AxisFirstPipelineError(
+            "v116_representative_blade_selection_failed",
+            "authenticated support profiles cannot define a projection residual gate",
+            stage="periodic_representatives",
+        )
+    try:
+        correspondence = section_recovery.solve_meridional_correspondence(hub, tip)
+    except section_recovery.SectionRecoveryError as exc:
+        raise AxisFirstPipelineError(
+            "v116_representative_blade_selection_failed",
+            "authenticated support profiles have no ordered meridional correspondence",
+            stage="periodic_representatives",
+            evidence={"correspondence_failure": exc.reason},
+        ) from exc
+    hub_points = np.asarray(correspondence.hub_points_rz_mm, dtype=float)
+    tip_points = np.asarray(correspondence.tip_points_rz_mm, dtype=float)
+    spans = np.linalg.norm(tip_points - hub_points, axis=1)
+    minimum_span = float(np.min(spans))
+    source_tolerance = _source_tolerance(frame)
+    fit_residual = max(
+        float(hub.get("residual_rms_mm", 0.0)),
+        float(tip.get("residual_rms_mm", 0.0)),
+    )
+    gate = max(
+        10.0 * source_tolerance,
+        4.0 * fit_residual,
+        0.005 * minimum_span,
+    )
+    if (
+        not math.isfinite(gate)
+        or gate <= 0.0
+        or not math.isfinite(minimum_span)
+        or minimum_span <= 0.0
+        or gate >= 0.25 * minimum_span
+    ):
+        raise AxisFirstPipelineError(
+            "v116_representative_blade_selection_failed",
+            "authenticated support profiles produced an invalid projection residual gate",
+            stage="periodic_representatives",
+            evidence={
+                "minimum_support_span_mm": minimum_span,
+                "fit_residual_rms_mm": fit_residual,
+                "candidate_gate_mm": gate,
+            },
+        )
+    return gate
 
 
 def _measurement_sector_from_envelope(envelope, *, pitch_deg):
@@ -1266,7 +1619,13 @@ def _measurement_sector_from_envelope(envelope, *, pitch_deg):
 
 
 def _select_complete_hub_group(groups, expected_instance_ids):
-    """Complete the strongest support family without mixing surface types."""
+    """Complete the strongest support family without mixing surface types.
+
+    Periodic instance adjacency alone is insufficient for a hub split into one
+    passage patch per blade pitch: a small seam patch can close the instance-id
+    set while other passage patches are still missing.  Dense periodic seeds
+    therefore require both instance coverage and one retained patch per pitch.
+    """
 
     if not groups or not expected_instance_ids:
         raise AxisFirstPipelineError(
@@ -1290,30 +1649,133 @@ def _select_complete_hub_group(groups, expected_instance_ids):
     )
     selected["periodic_instance_ids"] = set(seed["periodic_instance_ids"])
     remaining = [item for item in groups if item is not seed]
-    while selected["periodic_instance_ids"] != expected_instance_ids:
-        missing = expected_instance_ids - selected["periodic_instance_ids"]
-        compatible = [
-            item
-            for item in remaining
-            if item["geometry_type"] == selected["geometry_type"]
-            and missing.intersection(item["periodic_instance_ids"])
+    expected_instance_ids = set(expected_instance_ids)
+    expected_patch_count = len(expected_instance_ids)
+    compatible_groups = [
+        item for item in groups if item["geometry_type"] == seed["geometry_type"]
+    ]
+    compatible_member_instances = {
+        face_id: instance_ids
+        for item in compatible_groups
+        for face_id, instance_ids in _hub_group_member_instances(item).items()
+    }
+    passage_member_instances = {
+        face_id: instance_ids
+        for face_id, instance_ids in compatible_member_instances.items()
+        if 0 < len(instance_ids) <= 2
+    }
+    periodic_passage_mode = (
+        len(passage_member_instances) >= expected_patch_count
+        and not any(
+            instance_ids == expected_instance_ids
+            for instance_ids in passage_member_instances.values()
+        )
+    )
+
+    if periodic_passage_mode:
+        compatible_areas = [
+            float(area)
+            for item in compatible_groups
+            for area in (item.get("member_area_mm2") or {}).values()
+            if float(area) > 0.0
         ]
-        if not compatible:
+        reference_area_mm2 = (
+            float(np.median(compatible_areas))
+            if compatible_areas
+            else float(seed["mean_area_mm2"])
+        )
+        face_records = _hub_passage_face_records(
+            compatible_groups,
+            expected_instance_ids,
+            seed_mean_area_mm2=reference_area_mm2,
+        )
+        ownership = _match_hub_passage_faces(
+            face_records,
+            expected_instance_ids,
+        )
+        if set(ownership) != expected_instance_ids:
             raise AxisFirstPipelineError(
                 "v116_hub_support_classification_failed",
-                "strongest hub support family does not cover every periodic instance",
+                "hub support patches cannot be assigned one-to-one to every periodic pitch",
+                stage="support_recovery",
+                evidence={
+                    "geometry_type": seed["geometry_type"],
+                    "matched_periodic_instance_ids": sorted(ownership),
+                    "missing_periodic_instance_ids": sorted(
+                        expected_instance_ids - set(ownership)
+                    ),
+                    "candidate_face_ids": sorted(face_records),
+                    "candidate_instance_ownership": {
+                        face_id: sorted(record["periodic_instance_ids"])
+                        for face_id, record in face_records.items()
+                    },
+                },
+            )
+        retained_face_ids = sorted(set(ownership.values()))
+        selected = _merge_hub_groups_for_faces(
+            compatible_groups,
+            retained_face_ids,
+        )
+        selected["periodic_passage_face_coverage"] = {
+            "mode": "periodic_passage_patches",
+            "ownership_authority": "one_face_per_periodic_instance_bipartite_match",
+            "expected_count": expected_patch_count,
+            "observed_count": len(retained_face_ids),
+            "instance_to_face_id": {
+                instance_id: ownership[instance_id]
+                for instance_id in sorted(ownership)
+            },
+            "complete": len(retained_face_ids) == expected_patch_count,
+        }
+        return selected
+
+    def _selected_patch_count():
+        return len(set(selected["member_face_ids"]))
+
+    def _selection_incomplete():
+        instances_incomplete = (
+            selected["periodic_instance_ids"] != expected_instance_ids
+        )
+        return instances_incomplete
+
+    while _selection_incomplete():
+        missing = expected_instance_ids - selected["periodic_instance_ids"]
+        compatible = []
+        for item in remaining:
+            item_instances = set(item["periodic_instance_ids"])
+            if item["geometry_type"] != selected["geometry_type"]:
+                continue
+            if not item_instances.issubset(expected_instance_ids):
+                continue
+            if missing and not missing.intersection(item_instances):
+                continue
+            compatible.append(item)
+        if not compatible:
+            message = (
+                "strongest hub support family does not provide one retained "
+                "passage patch per periodic pitch"
+                if periodic_passage_mode and not missing
+                else "strongest hub support family does not cover every periodic instance"
+            )
+            raise AxisFirstPipelineError(
+                "v116_hub_support_classification_failed",
+                message,
                 stage="support_recovery",
                 evidence={
                     "geometry_type": selected["geometry_type"],
                     "hub_support_face_ids": sorted(selected["member_face_ids"]),
                     "missing_periodic_instance_ids": sorted(missing),
+                    "periodic_passage_mode": periodic_passage_mode,
+                    "expected_passage_patch_count": expected_patch_count,
+                    "observed_passage_patch_count": _selected_patch_count(),
                 },
             )
         addition = max(
             compatible,
             key=lambda item: (
                 len(missing.intersection(item["periodic_instance_ids"])),
-                float(item["shared_contact_length_mm"]),
+                float(item["shared_contact_length_mm"])
+                / max(1, len(set(item["member_face_ids"]))),
                 float(item["total_area_mm2"]),
                 tuple(sorted(item["member_face_ids"])),
             ),
@@ -1334,7 +1796,154 @@ def _select_complete_hub_group(groups, expected_instance_ids):
     selected["mean_area_mm2"] = selected["total_area_mm2"] / len(
         selected["member_face_ids"]
     )
+    selected["periodic_passage_face_coverage"] = {
+        "mode": (
+            "shared_support_patch"
+        ),
+        "expected_count": (
+            None
+        ),
+        "observed_count": len(selected["member_face_ids"]),
+        "complete": (
+            selected["periodic_instance_ids"] == expected_instance_ids
+            and (
+                True
+            )
+        ),
+    }
     return selected
+
+
+def _hub_group_member_instances(group):
+    mapping = group.get("member_periodic_instance_ids")
+    if isinstance(mapping, dict) and mapping:
+        return {
+            str(face_id): set(instance_ids)
+            for face_id, instance_ids in mapping.items()
+        }
+    member_face_ids = [str(face_id) for face_id in group.get("member_face_ids", ())]
+    aggregate = set(group.get("periodic_instance_ids", ()))
+    if len(member_face_ids) == 1:
+        return {member_face_ids[0]: aggregate}
+    return {}
+
+
+def _hub_passage_face_records(
+    groups,
+    expected_instance_ids,
+    *,
+    seed_mean_area_mm2,
+):
+    records = {}
+    expected_instance_ids = set(expected_instance_ids)
+    minimum_area = max(0.0, 0.2 * float(seed_mean_area_mm2))
+    maximum_area = 3.0 * float(seed_mean_area_mm2)
+    for group in groups:
+        instances_by_face = _hub_group_member_instances(group)
+        contact_by_face = group.get("member_contact_length_mm") or {}
+        area_by_face = group.get("member_area_mm2") or {}
+        fallback_contact = float(group.get("shared_contact_length_mm", 0.0)) / max(
+            len(group.get("member_face_ids", ())), 1
+        )
+        fallback_area = float(group.get("mean_area_mm2", 0.0))
+        for face_id, instance_ids in instances_by_face.items():
+            instance_ids = set(instance_ids) & expected_instance_ids
+            area_mm2 = float(area_by_face.get(face_id, fallback_area))
+            if not instance_ids or len(instance_ids) > 2:
+                continue
+            if not minimum_area <= area_mm2 <= maximum_area:
+                continue
+            records[face_id] = {
+                "periodic_instance_ids": instance_ids,
+                "contact_length_mm": float(
+                    contact_by_face.get(face_id, fallback_contact)
+                ),
+                "area_mm2": area_mm2,
+            }
+    return records
+
+
+def _match_hub_passage_faces(face_records, expected_instance_ids):
+    ordered_instances = sorted(
+        expected_instance_ids,
+        key=lambda instance_id: (
+            sum(
+                instance_id in record["periodic_instance_ids"]
+                for record in face_records.values()
+            ),
+            instance_id,
+        ),
+    )
+    face_to_instance = {}
+
+    def assign(instance_id, visited_faces):
+        candidates = sorted(
+            (
+                (face_id, record)
+                for face_id, record in face_records.items()
+                if instance_id in record["periodic_instance_ids"]
+            ),
+            key=lambda item: (
+                len(item[1]["periodic_instance_ids"]),
+                -item[1]["contact_length_mm"],
+                -item[1]["area_mm2"],
+                item[0],
+            ),
+        )
+        for face_id, _record in candidates:
+            if face_id in visited_faces:
+                continue
+            visited_faces.add(face_id)
+            previous = face_to_instance.get(face_id)
+            if previous is None or assign(previous, visited_faces):
+                face_to_instance[face_id] = instance_id
+                return True
+        return False
+
+    for instance_id in ordered_instances:
+        assign(instance_id, set())
+    return {
+        instance_id: face_id
+        for face_id, instance_id in face_to_instance.items()
+    }
+
+
+def _merge_hub_groups_for_faces(groups, retained_face_ids):
+    retained = set(retained_face_ids)
+    result = {
+        "geometry_type": groups[0]["geometry_type"],
+        "member_face_ids": sorted(retained),
+        "adjacent_periodic_face_ids": set(),
+        "periodic_instance_ids": set(),
+        "member_periodic_instance_ids": {},
+        "member_contact_length_mm": {},
+        "member_area_mm2": {},
+        "shared_contact_length_mm": 0.0,
+        "total_area_mm2": 0.0,
+    }
+    for group in groups:
+        member_instances = _hub_group_member_instances(group)
+        contact_by_face = group.get("member_contact_length_mm") or {}
+        area_by_face = group.get("member_area_mm2") or {}
+        fallback_contact = float(group.get("shared_contact_length_mm", 0.0)) / max(
+            len(group.get("member_face_ids", ())), 1
+        )
+        fallback_area = float(group.get("mean_area_mm2", 0.0))
+        for face_id in set(group.get("member_face_ids", ())) & retained:
+            instance_ids = set(member_instances.get(face_id, ()))
+            contact = float(contact_by_face.get(face_id, fallback_contact))
+            area = float(area_by_face.get(face_id, fallback_area))
+            result["member_periodic_instance_ids"][face_id] = sorted(instance_ids)
+            result["member_contact_length_mm"][face_id] = contact
+            result["member_area_mm2"][face_id] = area
+            result["periodic_instance_ids"].update(instance_ids)
+            result["shared_contact_length_mm"] += contact
+            result["total_area_mm2"] += area
+        result["adjacent_periodic_face_ids"].update(
+            group.get("adjacent_periodic_face_ids", ())
+        )
+    result["mean_area_mm2"] = result["total_area_mm2"] / max(len(retained), 1)
+    return result
 
 
 def _bounded_representative_fit_tolerance(frame, observed_residual_mm):
@@ -1374,6 +1983,7 @@ def _recover_section_evidence(inventory, frame, support, periodic) -> dict[str, 
             frame,
             population,
             topology,
+            support_profiles=support["mapping_fits"],
             include_shroud=topology["mode"] == "closed",
         )
         attachment_records[name] = attachment_record
@@ -1556,7 +2166,16 @@ def _section_family(inventory, frame, support, name, population, attachments):
         else:
             mapped_h = (float(station.h) - raw_root) / span_width
         loop = result.accepted_loop
-        output_stations.append(_station_for_mapping(mapped_h, loop, decomposition, thickness, frame))
+        output_stations.append(
+            _station_for_mapping(
+                mapped_h,
+                loop,
+                decomposition,
+                thickness,
+                frame,
+                support_span_h=float(station.h),
+            )
+        )
         records.append(
             {
                 "population": name,
@@ -1823,7 +2442,15 @@ def _extended_section_profile(
     return [tuple(float(value) for value in point) for point in extended], margin
 
 
-def _station_for_mapping(h, loop, decomposition, thickness, frame):
+def _station_for_mapping(
+    h,
+    loop,
+    decomposition,
+    thickness,
+    frame,
+    *,
+    support_span_h=None,
+):
     segments = {}
     fit_tolerance = _source_tolerance(frame)
     _assert_section_segment_fit_quality(decomposition, fit_tolerance, h)
@@ -1846,7 +2473,7 @@ def _station_for_mapping(h, loop, decomposition, thickness, frame):
                 "theta_deg": math.degrees(math.atan2(float(tangent[1]), float(tangent[0]))),
             }
         )
-    return {
+    station = {
         "h": float(h),
         "source_ids": source_ids,
         "decomposition": {
@@ -1876,6 +2503,9 @@ def _station_for_mapping(h, loop, decomposition, thickness, frame):
             "method": thickness.method,
         },
     }
+    if support_span_h is not None:
+        station["support_span_h"] = float(support_span_h)
+    return station
 
 
 def _assert_section_segment_fit_quality(decomposition, fit_tolerance, h):
@@ -2168,7 +2798,13 @@ def _preliminary_section_metrics(loop, decomposition, thickness):
 
 
 def _measure_family_attachments(
-    inventory, frame, population, topology, *, include_shroud
+    inventory,
+    frame,
+    population,
+    topology,
+    *,
+    support_profiles,
+    include_shroud,
 ):
     instance = population["representative_instance"]
     component_ids = set(instance["source_face_ids"])
@@ -2179,6 +2815,7 @@ def _measure_family_attachments(
         topology.get("hub_support_face_ids", [topology["hub_face_id"]]),
         upper=True,
         kind="root",
+        support_profile=support_profiles["hub"],
     )
     result = {"root": root}
     if include_shroud:
@@ -2189,12 +2826,20 @@ def _measure_family_attachments(
             [topology["inner_shroud_face_id"]],
             upper=False,
             kind="shroud",
+            support_profile=support_profiles["tip_or_shroud"],
         )
     return result
 
 
 def _measure_attachment_between_supports(
-    inventory, frame, component_ids, support_ids, *, upper, kind
+    inventory,
+    frame,
+    component_ids,
+    support_ids,
+    *,
+    upper,
+    kind,
+    support_profile,
 ):
     support_ids = tuple(sorted(set(support_ids)))
     component_edges = _component_edge_ids(inventory, component_ids)
@@ -2240,6 +2885,12 @@ def _measure_attachment_between_supports(
             footprint_candidates[edge_id] for edge_id in retained_point_edge_ids
         ],
     )
+    support_normals, streamwise_parameters = _support_profile_sample_frames(
+        frame["source_to_canonical_matrix"],
+        support_profile,
+        paired_footprint,
+        retained,
+    )
     face_ids = sorted(
         set(component_ids)
         | set(support_ids)
@@ -2259,6 +2910,8 @@ def _measure_attachment_between_supports(
         retained,
         local_span_directions_xyz=local_span_directions,
         paired_footprint_points_xyz_mm=paired_footprint,
+        support_normal_directions_xyz=support_normals,
+        streamwise_parameters_s=streamwise_parameters,
         width_direction_xyz=None,
         source_face_ids=face_ids,
         footprint_source_edge_ids=footprint_ids,
@@ -3311,6 +3964,110 @@ def _population_for_mapping(population):
     }
 
 
+def _support_profile_sample_frames(
+    source_to_canonical,
+    profile,
+    paired_footprint_points_xyz_mm,
+    retained_points_xyz_mm,
+):
+    """Resolve support-normal height separately from in-plane root width."""
+
+    matrix = np.asarray(source_to_canonical, dtype=float)
+    inverse_rotation = np.linalg.inv(matrix[:3, :3])
+    if isinstance(profile, Mapping):
+        control_points = profile.get("control_points_rz_mm", ())
+        if "degree" not in profile and "knots" not in profile:
+            profile_points = np.asarray(
+                support_recovery.evaluate_profile_rz(
+                    control_points, np.linspace(0.0, 1.0, 257)
+                ),
+                dtype=float,
+            )
+        else:
+            weights = profile.get("weights")
+            if not isinstance(weights, Sequence) or len(weights) != len(control_points):
+                weights = [1.0] * len(control_points)
+            knots = profile.get("knots")
+            if not knots:
+                knots = "clamped_uniform"
+            curve = {
+                "degree": int(profile.get("degree", min(3, len(control_points) - 1))),
+                "control_points": control_points,
+                "weights": weights,
+                "knots": knots,
+            }
+            profile_points = np.asarray(
+                [evaluate_nurbs_curve(curve, index / 256.0) for index in range(257)],
+                dtype=float,
+            )
+    else:
+        profile_points = np.asarray(profile, dtype=float)
+    if (
+        profile_points.ndim != 2
+        or profile_points.shape[1] != 2
+        or len(profile_points) < 2
+    ):
+        raise AxisFirstPipelineError(
+            "v116_root_attachment_measurement_failed",
+            "attachment support profile cannot provide local normals",
+            stage="exact_sections",
+        )
+    segments = np.diff(profile_points, axis=0)
+    lengths_sq = np.sum(segments * segments, axis=1)
+    lengths = np.sqrt(lengths_sq)
+    cumulative = np.concatenate(([0.0], np.cumsum(lengths)))
+    total_length = max(float(cumulative[-1]), 1.0e-18)
+    normals = []
+    streamwise_parameters = []
+    for source_point, retained_point in zip(
+        paired_footprint_points_xyz_mm, retained_points_xyz_mm
+    ):
+        canonical_point = _transform_point(source_point, matrix)
+        canonical_retained = _transform_point(retained_point, matrix)
+        radius = math.hypot(float(canonical_point[0]), float(canonical_point[1]))
+        rz = np.asarray([radius, float(canonical_point[2])], dtype=float)
+        fractions = np.divide(
+            np.sum((rz - profile_points[:-1]) * segments, axis=1),
+            lengths_sq,
+            out=np.zeros_like(lengths_sq),
+            where=lengths_sq > 1.0e-18,
+        )
+        fractions = np.clip(fractions, 0.0, 1.0)
+        projections = profile_points[:-1] + fractions[:, None] * segments
+        segment_index = int(np.argmin(np.linalg.norm(projections - rz, axis=1)))
+        tangent_rz = segments[segment_index].copy()
+        tangent_rz /= max(float(np.linalg.norm(tangent_rz)), 1.0e-18)
+        normal_rz = np.asarray([-tangent_rz[1], tangent_rz[0]], dtype=float)
+        radial = (
+            np.asarray(
+                [canonical_point[0] / radius, canonical_point[1] / radius],
+                dtype=float,
+            )
+            if radius > 1.0e-12
+            else np.asarray([1.0, 0.0], dtype=float)
+        )
+        canonical_normal = np.asarray(
+            [
+                normal_rz[0] * radial[0],
+                normal_rz[0] * radial[1],
+                normal_rz[1],
+            ],
+            dtype=float,
+        )
+        if float(np.dot(canonical_retained - canonical_point, canonical_normal)) < 0.0:
+            canonical_normal = -canonical_normal
+        source_normal = inverse_rotation @ canonical_normal
+        source_normal /= max(float(np.linalg.norm(source_normal)), 1.0e-18)
+        normals.append([float(value) for value in source_normal])
+        streamwise_parameters.append(
+            float(
+                (cumulative[segment_index] + fractions[segment_index] * lengths[segment_index])
+                / total_length
+            )
+        )
+    return normals, streamwise_parameters
+
+
 def _attachment_for_mapping(record):
     source_ids = sorted(
         set(record.source_face_ids)
@@ -3318,10 +4075,12 @@ def _attachment_for_mapping(record):
         | set(record.retained_source_edge_ids)
         | set(record.span_direction_source_ids)
     )
-    width = float(record.attachment_width_mm)
     return {
         "lift_samples_mm": [float(value) for value in record.lift_samples_mm],
-        "width_samples_mm": [width, width, width],
+        "width_samples_mm": [float(value) for value in record.width_samples_mm],
+        "streamwise_samples_s": [
+            float(value) for value in record.streamwise_samples_s
+        ],
         "source_ids": source_ids,
         "source_measurement": bool(record.source_measurement),
         "promotable": bool(record.promotable),
@@ -3984,25 +4743,31 @@ def _decomposition_summary(decomposition):
     }
 
 
-def _cap_shared_edge(inventory, cap_id, component_ids):
-    choices = []
-    for adjacent_id in sorted(component_ids - {cap_id}):
-        for edge_id in sorted(
-            _face_edge_ids(inventory, cap_id).intersection(
-                _face_edge_ids(inventory, adjacent_id)
-            )
-        ):
-            edge = inventory["edges_by_id"][edge_id]
-            choices.append((-float(edge.Length()), adjacent_id, edge_id, edge))
-    if not choices:
+def _cap_shared_side_edge_groups(inventory, cap_id, side_face_ids):
+    cap_edges = _face_edge_ids(inventory, cap_id)
+    groups = []
+    missing_side_ids = []
+    for adjacent_id in sorted(side_face_ids - {cap_id}):
+        shared = tuple(
+            sorted(cap_edges.intersection(_face_edge_ids(inventory, adjacent_id)))
+        )
+        if shared:
+            groups.append((adjacent_id, shared))
+        else:
+            missing_side_ids.append(adjacent_id)
+    if not groups or missing_side_ids:
         raise AxisFirstPipelineError(
             "v116_tip_reference_inference_failed",
-            "open tip cap has no exact shared edge with its periodic component",
+            "open tip cap does not own an exact shared edge chain for every "
+            "authenticated blade side",
             stage="support_recovery",
-            evidence={"tip_cap_face_id": cap_id},
+            evidence={
+                "tip_cap_face_id": cap_id,
+                "authenticated_side_face_ids": sorted(side_face_ids),
+                "missing_side_face_ids": missing_side_ids,
+            },
         )
-    _, adjacent_id, edge_id, edge = min(choices)
-    return adjacent_id, edge_id, edge
+    return groups
 
 
 def _attachment_face_for_support(inventory, instance, support_id):

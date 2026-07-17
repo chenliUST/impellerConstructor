@@ -25,6 +25,10 @@ from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
 from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
 from part_rule_synthesis.impeller_v11_2_canonical import clamped_uniform_knots
+from part_rule_synthesis.impeller_v11_6_comparison_scope import (
+    COMPARISON_SCOPE_CONTRACT_ID,
+    build_reconstruction_surface_comparison_ledger,
+)
 from part_rule_synthesis import impeller_v11_6_source_frame as source_frame
 from part_rule_synthesis import impeller_v11_6_periodic_blades as periodic_blades
 from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as axis_first_pipeline
@@ -32,7 +36,8 @@ from part_rule_synthesis import impeller_v11_6_pattern_reconstruction as pattern
 from part_rule_synthesis.impeller_v11_6_deviation import (
     TriangleMesh,
     artifact_record,
-    compare_meshes,
+    combine_triangle_meshes,
+    compare_corresponding_mesh_regions,
     read_stl,
     resolve_periodic_phase_alignment,
     transform_mesh,
@@ -45,7 +50,9 @@ from part_rule_synthesis.service import RuleSynthesisService
 AUDIT_CONTRACT_ID = "impeller_v1_1_6_step_reconstruction_audit"
 AUDIT_RUNTIME_VERSION = "1.1.6"
 CANONICAL_GEOMETRY_VERSION = "1.1.2"
-AUDIT_IMPLEMENTATION_REVISION = "axis_first_pattern_material_r6"
+AUDIT_IMPLEMENTATION_REVISION = "axis_first_triangle_surface_r13_2"
+SOURCE_REVIEW_LINEAR_TOLERANCE_MM = 0.06
+SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD = 0.08
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_FACE_COUNT = 20_000
 MAX_QUEUE_LENGTH = 4
@@ -76,6 +83,7 @@ FAILURE_REASONS = {
     "v116_step_reconstruction_validation_failed",
     "v116_step_alignment_failed",
     "v116_step_deviation_failed",
+    "v116_step_comparison_scope_failed",
     "v116_step_ocp_unavailable",
     "v116_step_queue_full",
     "v116_audit_persistence_failed",
@@ -98,6 +106,16 @@ FAILURE_REASONS = {
     "v116_section_tangent_flip_detected",
     "v116_thickness_field_invalid",
     "v116_root_attachment_measurement_failed",
+    "v116_v112_canonical_hash_mismatch",
+    "v116_v112_canonical_patch_mismatch",
+    "v116_v112_forbidden_parameter",
+    "v116_v112_mapping_solver_exception",
+    "v116_v112_mapping_solver_failed",
+    "v116_v112_material_domain_failed",
+    "v116_v112_material_measurement_missing",
+    "v116_v112_measurement_schema_invalid",
+    "v116_v112_parameter_limit_failed",
+    "v116_v112_topology_failed",
     "v116_v112_mapping_residual_exceeded",
     "v116_false_material_surface_forbidden",
 }
@@ -113,14 +131,6 @@ _FINAL_AXIS_FIRST_SECTIONS = (
 _KS007G23B_SOURCE_SHA256 = (
     "1010f341320ce9d98f5ab6456611f73d47dfcc270969a042e8ed10647f1a59f5"
 )
-_KS007G23B_GENERIC_BASELINE = {
-    "bidirectional_rms_mm": 2.110076,
-    "bidirectional_p95_mm": 4.819965,
-    "top_silhouette_hausdorff_mm": 5.254113,
-    "meridional_silhouette_hausdorff_mm": 10.168447,
-}
-
-
 def _staged_axis_first_algorithm_readiness() -> dict[str, Any]:
     return {
         "status": "INCOMPLETE",
@@ -284,7 +294,12 @@ class StepReconstructionAuditService:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def artifact_path(self, audit_id: str, artifact_name: str) -> Path:
-        allowed = {"source.stl", "reconstruction.stl", "heatmap.json"}
+        allowed = {
+            "source.stl",
+            "reconstruction.stl",
+            "heatmap.json",
+            "geometric-manifest.json",
+        }
         if artifact_name not in allowed:
             raise KeyError(artifact_name)
         path = self._audit_path(audit_id) / artifact_name
@@ -382,25 +397,102 @@ class StepReconstructionAuditService:
 
         started = time.perf_counter()
         try:
+            comparison_scope = copy.deepcopy(mapping.get("comparison_scope", {}))
+            if (
+                not isinstance(comparison_scope, Mapping)
+                or comparison_scope.get("status") not in {"PASS", "PARTIAL_REVIEW"}
+                or comparison_scope.get("coverage_complete") is not True
+            ):
+                raise StepAuditError(
+                    "v116_step_comparison_scope_failed",
+                    "source faces do not have a complete supported/excluded comparison partition",
+                    {"comparison_scope": copy.deepcopy(comparison_scope)},
+                )
             reconstruction_mesh = read_stl(reconstruction_stl)
-            reconstruction_mesh, comparison_alignment = resolve_periodic_phase_alignment(
-                source_mesh,
-                reconstruction_mesh,
+            source_regions = _source_comparison_region_meshes(
+                source_shape,
+                source_manifest,
+                comparison_scope,
+                frame["source_to_canonical_matrix"],
+            )
+            reconstruction_regions = _reconstruction_comparison_region_meshes(
+                reconstruction["surface_graph"], comparison_scope
+            )
+            surface_ledger = build_reconstruction_surface_comparison_ledger(
+                reconstruction["surface_graph"], comparison_scope
+            )
+            comparison_scope["reconstruction_surface_ledger"] = copy.deepcopy(
+                surface_ledger
+            )
+            comparison_scope["surface_coverage_complete"] = bool(
+                surface_ledger.get("comparison_coverage_complete")
+            )
+            _, comparison_alignment = resolve_periodic_phase_alignment(
+                combine_triangle_meshes(list(source_regions.values())),
+                combine_triangle_meshes(list(reconstruction_regions.values())),
                 int(semantics["main_blade_count"]),
+            )
+            alignment_matrix = _rotation_about_z_matrix(
+                float(comparison_alignment["rotation_about_axis_deg"])
+            )
+            reconstruction_mesh = transform_mesh(
+                reconstruction_mesh, alignment_matrix
+            )
+            aligned_reconstruction_regions = {
+                role: transform_mesh(reconstructed, alignment_matrix)
+                for role, reconstructed in reconstruction_regions.items()
+            }
+            _, instance_alignment = _phase_aligned_comparison_regions(
+                source_regions,
+                aligned_reconstruction_regions,
+                comparison_scope,
+            )
+            comparison_alignment["periodic_instance_alignment"] = instance_alignment
+            aligned_surface_meshes = {
+                surface_id: transform_mesh(mesh, alignment_matrix)
+                for surface_id, mesh in _reconstruction_surface_comparison_meshes(
+                    reconstruction["surface_graph"], surface_ledger
+                ).items()
+            }
+            surface_pairs, surface_ledger = _surface_comparison_pairs(
+                source_regions,
+                aligned_surface_meshes,
+                surface_ledger,
+                comparison_scope,
+                instance_alignment,
+            )
+            comparison_scope["reconstruction_surface_ledger"] = copy.deepcopy(
+                surface_ledger
             )
             write_binary_stl(
                 reconstruction_stl,
                 reconstruction_mesh,
-                label="V1.1.2 reconstruction in V1.1.6 comparison phase",
+                label=(
+                    f"{reconstruction['manifest']['reconstruction_variant']} "
+                    "in V1.1.6 corresponding-surface phase"
+                ),
             )
-            comparison, heatmap = compare_meshes(
-                source_mesh,
-                reconstruction_mesh,
-                source_closed=bool(source_manifest.get("closed_solid")),
-                reconstruction_closed=False,
+            comparison, heatmap = compare_corresponding_mesh_regions(surface_pairs)
+            comparison["scope"] = copy.deepcopy(comparison_scope)
+            comparison["surface_ledger"] = copy.deepcopy(surface_ledger)
+            comparison["alignment_applied_to"] = (
+                "supported_reconstruction_regions_and_full_review_mesh"
             )
             heatmap_path = audit_dir / "heatmap.json"
             write_heatmap(heatmap_path, heatmap)
+            geometric_manifest_path = audit_dir / "geometric-manifest.json"
+            _write_geometric_manifest(
+                geometric_manifest_path,
+                reconstruction["surface_graph"],
+                alignment_matrix=alignment_matrix,
+                comparison_alignment=comparison_alignment,
+                surface_ledger=surface_ledger,
+                reconstruction_variant=reconstruction["manifest"][
+                    "reconstruction_variant"
+                ],
+            )
+        except StepAuditError:
+            raise
         except Exception as exc:  # noqa: BLE001
             raise StepAuditError("v116_step_deviation_failed", str(exc)) from exc
         self._complete_reconstruction_stage(
@@ -409,7 +501,9 @@ class StepReconstructionAuditService:
             "deviation_measured",
             (time.perf_counter() - started) * 1000.0,
             {
-                "bidirectional": comparison["bidirectional"],
+                "reconstruction_to_corresponding_source": comparison[
+                    "reconstruction_to_corresponding_source"
+                ],
                 "comparison_alignment": comparison_alignment,
             },
         )
@@ -419,10 +513,26 @@ class StepReconstructionAuditService:
                 source_stl, fidelity="tessellated_from_source_brep", media_type="model/stl"
             ),
             "reconstruction_stl": artifact_record(
-                reconstruction_stl, fidelity="v1_1_2_review_grade_reconstruction", media_type="model/stl"
+                reconstruction_stl,
+                fidelity=reconstruction["manifest"]["reconstruction_variant"],
+                media_type="model/stl",
             ),
             "heatmap": artifact_record(
-                heatmap_path, fidelity="mesh_sampled_unsigned_deviation", media_type="application/json"
+                heatmap_path,
+                fidelity=(
+                    "corresponding_reconstruction_samples_to_source_triangle_"
+                    "surfaces_unsigned_deviation"
+                ),
+                media_type="application/json",
+            ),
+            "geometric_manifest": artifact_record(
+                geometric_manifest_path,
+                fidelity=(
+                    "sampled_"
+                    + reconstruction["manifest"]["reconstruction_variant"]
+                    + "_surface_graph_manifest"
+                ),
+                media_type="application/json",
             ),
         }
         self._complete_reconstruction_stage(audit_id, stage_records, "complete", 0.0, {})
@@ -468,6 +578,7 @@ class StepReconstructionAuditService:
             "parameter_mapping": mapping,
             "reconstruction": reconstruction["manifest"],
             "comparison_alignment": comparison_alignment,
+            "comparison_scope": copy.deepcopy(comparison_scope),
             "comparison": comparison,
             "acceptance_evaluation": acceptance_evaluation,
             "axis_first_section_reconstruction": axis_first_manifest,
@@ -476,13 +587,17 @@ class StepReconstructionAuditService:
             "limitations": [
                 "Source STEP remains the B-Rep authority; displayed source geometry is a recorded tessellation.",
                 "V1.1.2 reconstruction does not preserve source face identity, local holes, splines or manufacturing detail.",
+                "When enabled, the V1.1.6 adaptive review extension changes station, thickness, pose and attachment fields while retaining V1.1.2 as the base geometry contract.",
                 "Periodic phase alignment rotates only about the confirmed axis; it does not fit translation or scale.",
                 "The V1.1.2 reconstruction is an open review surface graph, so its signed mesh volume is not comparable to the source solid volume.",
-                "Deviation is an unsigned bounded mesh-sample comparison, not certified CAD metrology.",
+                "Deviation is an unsigned reconstruction-to-corresponding-source bounded mesh-sample comparison, not certified CAD metrology.",
+                "Keyways, splines, auxiliary holes, non-planar hub-bottom relief and bosses are explicitly outside the V1.1.2 comparison scope.",
                 "A rejected review candidate is retained only to diagnose frozen V1.1.2 representational loss; it is not an accepted constructor mapping.",
             ],
         }
-        _atomic_json(audit_dir / "manifest.json", manifest)
+        manifest_path = audit_dir / "manifest.json"
+        _atomic_json(manifest_path, manifest)
+        manifest_sha256 = _file_sha256(manifest_path)
         status = self.status(audit_id)
         status.update(
             {
@@ -499,6 +614,7 @@ class StepReconstructionAuditService:
                 "completed_stages": list(AUDIT_STAGES),
                 "finished_at": _now(),
                 "manifest_available": True,
+                "manifest_sha256": manifest_sha256,
                 "algorithm_readiness": copy.deepcopy(
                     axis_first_manifest["algorithm_readiness"]
                 ),
@@ -582,7 +698,11 @@ class StepReconstructionAuditService:
         except (OSError, ValueError, json.JSONDecodeError):
             return False
         return (
-            status.get("contract_id") == AUDIT_CONTRACT_ID
+            status.get("audit_id") == audit_dir.name
+            and manifest.get("audit_id") == audit_dir.name
+            and status.get("source", {}).get("sha256")
+            == manifest.get("source", {}).get("sha256")
+            and status.get("contract_id") == AUDIT_CONTRACT_ID
             and status.get("implementation_revision") == AUDIT_IMPLEMENTATION_REVISION
             and status.get("algorithm_revision") == AUDIT_IMPLEMENTATION_REVISION
             and status.get("canonical_geometry_version") == CANONICAL_GEOMETRY_VERSION
@@ -590,10 +710,11 @@ class StepReconstructionAuditService:
             and manifest.get("implementation_revision") == AUDIT_IMPLEMENTATION_REVISION
             and manifest.get("algorithm_revision") == AUDIT_IMPLEMENTATION_REVISION
             and manifest.get("canonical_geometry_version") == CANONICAL_GEOMETRY_VERSION
+            and _manifest_digest_matches_status(manifest_path, status)
             and _axis_first_cache_manifest_complete(manifest)
             and manifest.get("comparison_alignment", {}).get("method")
             == "bounded_symmetric_periodic_phase_search"
-            and all((audit_dir / name).is_file() for name in ("source.stl", "reconstruction.stl", "heatmap.json"))
+            and _audit_artifacts_match_manifest(audit_dir, manifest)
         )
 
     def _recover_interrupted_audits(self) -> None:
@@ -686,7 +807,12 @@ def load_step_source(path: str | Path):
         "surface_type_inventory": dict(sorted(surface_types.items())),
         "faces": face_records,
         "adjacency": adjacency,
-        "tessellation": {"linear_tolerance_mm": 0.12, "angular_tolerance_rad": 0.16, "authority": False},
+        "tessellation": {
+            "linear_tolerance_mm": SOURCE_REVIEW_LINEAR_TOLERANCE_MM,
+            "angular_tolerance_rad": SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD,
+            "authority": False,
+            "purpose": "r13_dense_review_and_corresponding_surface_deviation",
+        },
     }
     return shape, source_manifest
 
@@ -906,6 +1032,13 @@ def reconstruct_with_current_v11(
 ) -> dict[str, Any]:
     canonical = _validated_mapping_canonical_payload(mapping)
     defaults = copy.deepcopy(mapping["resolved_blade_to_blade_loop_family_defaults"])
+    adaptive_extension = defaults.get("v116_step_reconstruction_extension")
+    reconstruction_variant = (
+        "v1.1.6_adaptive_review_extension_r1"
+        if isinstance(adaptive_extension, Mapping)
+        and adaptive_extension.get("status") == "PASS"
+        else "frozen_v1.1.2_review_baseline"
+    )
     _apply_bounded_audit_sampling(defaults)
     parameters = copy.deepcopy(mapping["parameters"])
     seed_preset = "radial_closed_reference_v1_1" if defaults.get("tip_attachment_mode") == "closed_shroud_attachment" else "radial_open_reference_v1_1"
@@ -932,6 +1065,8 @@ def reconstruct_with_current_v11(
         "source_kind": "uploaded_step_brep",
         "source_sha256": source_manifest["sha256"],
         "authority": "source STEP is authoritative; V1.1.2 output is review-grade",
+        "base_geometry_version": CANONICAL_GEOMETRY_VERSION,
+        "reconstruction_variant": reconstruction_variant,
     }
     runtime["parameter_confidence"] = {
         row["feature_id"]: {
@@ -976,10 +1111,16 @@ def reconstruct_with_current_v11(
     if final_run.manifest.get("geometry_patch_version") != CANONICAL_GEOMETRY_VERSION:
         raise StepAuditError("v116_step_reconstruction_validation_failed", "constructor changed geometry patch version")
     if final_run.manifest.get("geometry_validation_status") not in {"PASS", None}:
+        validation_report = copy.deepcopy(
+            final_run.manifest.get("geometry_validation_report", {})
+        )
         raise StepAuditError(
             "v116_step_reconstruction_validation_failed",
             "V1.1.2 reconstruction failed geometry validation",
-            {"status": final_run.manifest.get("geometry_validation_status")},
+            {
+                "status": final_run.manifest.get("geometry_validation_status"),
+                "geometry_validation_report": validation_report,
+            },
         )
     surface_graph = final_run.manifest.get("geometry", {}).get("surface_graph", {})
     try:
@@ -1000,7 +1141,9 @@ def reconstruct_with_current_v11(
     stl_path = audit_dir / "reconstruction-runtime.stl"
     _write_surface_graph_stl(surface_graph, stl_path)
     summary = {
-        "authority": "review_grade_v1_1_2_reconstruction",
+        "authority": "review_grade_step_reconstruction",
+        "base_geometry_version": CANONICAL_GEOMETRY_VERSION,
+        "reconstruction_variant": reconstruction_variant,
         "geometry_version": final_run.manifest.get("geometry_version"),
         "geometry_patch_version": final_run.manifest.get("geometry_patch_version"),
         "runtime_release_version": AUDIT_RUNTIME_VERSION,
@@ -1012,7 +1155,11 @@ def reconstruct_with_current_v11(
         "surface_count": len(surface_graph.get("surfaces", [])),
         "pattern_material_contract": axis_first_pipeline._jsonable(pattern_manifest),
     }
-    return {"manifest": summary, "stl_path": stl_path}
+    return {
+        "manifest": summary,
+        "stl_path": stl_path,
+        "surface_graph": surface_graph,
+    }
 
 
 def _axis_first_algorithm_disposition(mapping: Mapping[str, Any]) -> dict[str, Any]:
@@ -1037,9 +1184,11 @@ def _axis_first_algorithm_disposition(mapping: Mapping[str, Any]) -> dict[str, A
                     "representative_blades",
                     "v11_2_mapping",
                     "pattern_instances",
-                    "global_deviation",
+                    "corresponding_surface_deviation",
                 ],
-                "missing_required_sections": ["accepted_regional_deviation"],
+                "missing_required_sections": [
+                    "accepted_corresponding_surface_baseline"
+                ],
                 "rejection_reason": rejection.get(
                     "reason", "v116_v112_mapping_residual_exceeded"
                 ),
@@ -1079,44 +1228,10 @@ def _evaluate_axis_first_acceptance(
         mapping.get("mapping_status") == "PASS"
         and mapping.get("promotion", {}).get("promotable") is True
     )
-    bidirectional = comparison.get("bidirectional", {})
-    silhouettes = comparison.get("silhouettes", {})
-    improvement = {
-        "bidirectional_rms": _improvement_gate(
-            float(bidirectional.get("rms_mm", math.inf)),
-            _KS007G23B_GENERIC_BASELINE["bidirectional_rms_mm"],
-            0.30,
-            "mm",
-        ),
-        "bidirectional_p95": _improvement_gate(
-            float(bidirectional.get("p95_mm", math.inf)),
-            _KS007G23B_GENERIC_BASELINE["bidirectional_p95_mm"],
-            0.30,
-            "mm",
-        ),
-        "top_silhouette": _improvement_gate(
-            float(silhouettes.get("top_xy_hausdorff_mm", math.inf)),
-            _KS007G23B_GENERIC_BASELINE["top_silhouette_hausdorff_mm"],
-            0.40,
-            "mm",
-        ),
-        "meridional_silhouette": _improvement_gate(
-            float(silhouettes.get("meridional_rz_hausdorff_mm", math.inf)),
-            _KS007G23B_GENERIC_BASELINE[
-                "meridional_silhouette_hausdorff_mm"
-            ],
-            0.40,
-            "mm",
-        ),
-    }
-    improvement_pass = all(
-        gate["status"] == "PASS" for gate in improvement.values()
-    )
-    accepted = topology_pass and mapping_pass and improvement_pass
     return {
-        "contract": "ks007g23b_axis_first_acceptance_v1",
-        "status": "PASS" if accepted else "REJECTED",
-        "promotable": accepted,
+        "contract": "ks007g23b_axis_first_acceptance_v2_corresponding_surface_review",
+        "status": "NOT_EVALUATED",
+        "promotable": False,
         "topology": {
             "status": "PASS" if topology_pass else "FAIL",
             "expected": {"mode": "open", "main": 13, "splitter": 0},
@@ -1127,25 +1242,24 @@ def _evaluate_axis_first_acceptance(
             "mapping_status": mapping.get("mapping_status"),
             "failed_terms": copy.deepcopy(list(mapping.get("failed_terms", ()))),
         },
-        "improvement": improvement,
-    }
-
-
-def _improvement_gate(
-    actual: float, baseline: float, required_reduction_fraction: float, unit: str
-) -> dict[str, Any]:
-    threshold = baseline * (1.0 - required_reduction_fraction)
-    reduction = (baseline - actual) / baseline if math.isfinite(actual) else -math.inf
-    return {
-        "status": "PASS" if math.isfinite(actual) and actual <= threshold else "FAIL",
-        "actual": round(actual, 6) if math.isfinite(actual) else None,
-        "baseline": baseline,
-        "required_maximum": round(threshold, 6),
-        "required_reduction_fraction": required_reduction_fraction,
-        "actual_reduction_fraction": round(reduction, 6)
-        if math.isfinite(reduction)
-        else None,
-        "unit": unit,
+        "comparison": {
+            "contract_id": comparison.get("contract_id"),
+            "status": "MEASURED_REVIEW_ONLY",
+            "reconstruction_to_corresponding_source": copy.deepcopy(
+                comparison.get("reconstruction_to_corresponding_source", {})
+            ),
+            "corresponding_source_to_reconstruction": copy.deepcopy(
+                comparison.get("corresponding_source_to_reconstruction", {})
+            ),
+            "symmetric_corresponding_sample_distribution": copy.deepcopy(
+                comparison.get("symmetric_corresponding_sample_distribution", {})
+            ),
+            "baseline_status": "UNAVAILABLE_NON_COMPARABLE_WITH_LEGACY_GLOBAL_METRICS",
+            "reason": (
+                "the previous baseline included unsupported local features and global "
+                "silhouettes; a new corresponding-surface baseline has not been approved"
+            ),
+        },
     }
 def _disable_zero_radius_legacy_transition_policies(
     runtime: dict[str, Any], parameters: Mapping[str, Any]
@@ -1209,21 +1323,23 @@ def _validated_mapping_canonical_payload(mapping: Mapping[str, Any]) -> dict[str
 
 def _apply_bounded_audit_sampling(defaults: dict[str, Any]) -> None:
     policy = {
-        "side_sample_count": 49,
-        "edge_cap_sample_count": 33,
-        "surface_span_sample_count": 9,
-        "root_short_direction_sample_count": 9,
-        "closed_shroud_short_direction_sample_count": 9,
-        "profile_revolve_sample_count": 49,
-        "theta_sample_count": 73,
-        "hub_solid_radial_sample_count": 11,
-        "hub_solid_axial_sample_count": 17,
+        "side_sample_count": 129,
+        "edge_cap_sample_count": 65,
+        "surface_span_sample_count": 33,
+        "root_short_direction_sample_count": 17,
+        "closed_shroud_short_direction_sample_count": 17,
+        "profile_revolve_sample_count": 129,
+        "theta_sample_count": 181,
+        "hub_solid_radial_sample_count": 33,
+        "hub_solid_axial_sample_count": 33,
     }
-    for key, maximum in policy.items():
-        defaults[key] = min(int(defaults.get(key, maximum)), maximum)
+    for key, review_count in policy.items():
+        defaults[key] = review_count
     defaults["v1_1_6_audit_sampling_policy"] = {
-        "mode": "bounded_review_mesh",
-        "maximums": policy,
+        "mode": "r13_dense_review_mesh",
+        "resolved_counts": policy,
+        "source_linear_tolerance_mm": SOURCE_REVIEW_LINEAR_TOLERANCE_MM,
+        "source_angular_tolerance_rad": SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD,
         "changes_geometry_math": False,
     }
 
@@ -1263,6 +1379,600 @@ def _material_export_surface_graph(surface_graph: Mapping[str, Any]) -> dict[str
         and surface.get("material") is not False
     ]
     return graph
+
+
+def _write_geometric_manifest(
+    path: Path,
+    surface_graph: Mapping[str, Any],
+    *,
+    alignment_matrix,
+    comparison_alignment: Mapping[str, Any],
+    surface_ledger: Mapping[str, Any] | None = None,
+    reconstruction_variant: str = "frozen_v1.1.2_review_baseline",
+) -> None:
+    matrix = np.asarray(alignment_matrix, dtype=float)
+    ledger_by_surface = {
+        str(record.get("surface_id")): dict(record)
+        for record in (surface_ledger or {}).get("surfaces", ())
+        if isinstance(record, Mapping) and record.get("surface_id")
+    }
+    surfaces = []
+    for surface in _material_export_surface_graph(surface_graph).get(
+        "surfaces", ()
+    ):
+        uv_grid = surface.get("uv_grid")
+        if not isinstance(uv_grid, list) or len(uv_grid) < 2:
+            continue
+        transformed_rows = []
+        for row in uv_grid:
+            if not isinstance(row, list) or len(row) < 2:
+                transformed_rows = []
+                break
+            transformed_rows.append(
+                [
+                    [round(float(value), 6) for value in _transform_point(point, matrix)]
+                    for point in row
+                ]
+            )
+        if not transformed_rows:
+            continue
+        surfaces.append(
+            {
+                "id": str(surface.get("id", "")),
+                "role": str(surface.get("role", "")),
+                "face_family": str(surface.get("face_family", "")),
+                "material": surface.get("material", True) is not False,
+                "uv_grid": transformed_rows,
+                "display": copy.deepcopy(dict(surface.get("display", {}))),
+                "comparison": copy.deepcopy(
+                    ledger_by_surface.get(
+                        str(surface.get("id", "")),
+                        {
+                            "disposition": "FAILED_UNRESOLVED",
+                            "reason": "surface_comparison_ledger_missing",
+                        },
+                    )
+                ),
+            }
+        )
+    if not surfaces:
+        raise StepAuditError(
+            "v116_step_reconstruction_validation_failed",
+            "surface graph produced no Geometric Manifest surfaces",
+        )
+    payload = {
+        "contract_id": "impeller_v1_1_6_geometric_manifest_v2",
+        "runtime_release_version": AUDIT_RUNTIME_VERSION,
+        "base_geometry_version": CANONICAL_GEOMETRY_VERSION,
+        "reconstruction_variant": str(reconstruction_variant),
+        "geometry_patch_version": CANONICAL_GEOMETRY_VERSION,
+        "coordinate_system": "canonical_axis_frame_xyz_mm",
+        "units": "mm",
+        "fidelity": "sampled_review_grade_surface_graph_not_certified_brep",
+        "render_contract": {
+            "shade": "semi_transparent_surface_graph",
+            "wire": "uv_iso_lines_only",
+            "triangle_edges_forbidden": True,
+        },
+        "comparison_alignment": copy.deepcopy(dict(comparison_alignment)),
+        "surface_comparison_ledger": copy.deepcopy(dict(surface_ledger or {})),
+        "surface_count": len(surfaces),
+        "surfaces": surfaces,
+    }
+    _atomic_json(path, payload)
+
+
+def _source_comparison_region_meshes(
+    shape,
+    source_manifest: Mapping[str, Any],
+    comparison_scope: Mapping[str, Any],
+    source_to_canonical_matrix,
+) -> dict[str, TriangleMesh]:
+    face_records = {
+        str(record["face_id"]): int(record["source_entity_index"])
+        for record in source_manifest.get("faces", ())
+    }
+    faces = shape.Faces()
+    grouped_ids: dict[str, list[str]] = defaultdict(list)
+    for record in comparison_scope.get("included_surfaces", ()):
+        grouped_ids[
+            str(record.get("comparison_region_id") or record["reconstruction_role"])
+        ].append(
+            str(record["source_face_id"])
+        )
+    tessellation = source_manifest.get("tessellation", {})
+    linear_tolerance = float(tessellation.get("linear_tolerance_mm", 0.12))
+    angular_tolerance = float(tessellation.get("angular_tolerance_rad", 0.16))
+    result = {}
+    for role, source_ids in sorted(grouped_ids.items()):
+        missing = sorted(set(source_ids) - set(face_records))
+        if missing:
+            raise StepAuditError(
+                "v116_step_comparison_scope_failed",
+                f"comparison role {role} references unknown source faces",
+                {"role": role, "missing_source_face_ids": missing},
+            )
+        native = _tessellate_cadquery_faces(
+            [faces[face_records[source_id]] for source_id in source_ids],
+            linear_tolerance=linear_tolerance,
+            angular_tolerance=angular_tolerance,
+        )
+        result[role] = transform_mesh(native, source_to_canonical_matrix)
+    if not result:
+        raise StepAuditError(
+            "v116_step_comparison_scope_failed",
+            "comparison scope contains no supported source regions",
+        )
+    return result
+
+
+def _reconstruction_comparison_region_meshes(
+    surface_graph: Mapping[str, Any], comparison_scope: Mapping[str, Any]
+) -> dict[str, TriangleMesh]:
+    region_records = {}
+    for record in comparison_scope.get("included_surfaces", ()):
+        region_id = str(
+            record.get("comparison_region_id") or record["reconstruction_role"]
+        )
+        region_records.setdefault(region_id, record)
+    result = {}
+    for region_id, record in sorted(region_records.items()):
+        role = str(record["reconstruction_role"])
+        blade_index = record.get("reconstruction_blade_index")
+        blade_class = record.get("periodic_population")
+        blade_pair_index = record.get("reconstruction_blade_pair_index")
+        selected = [
+            surface
+            for surface in _material_export_surface_graph(surface_graph).get(
+                "surfaces", ()
+            )
+            if _surface_matches_comparison_role(surface, role)
+            and (
+                blade_pair_index is None
+                or (
+                    str(surface.get("blade_class", "")) == str(blade_class)
+                    and surface.get("blade_pair_index") == int(blade_pair_index)
+                )
+                or (
+                    surface.get("blade_class") is None
+                    and blade_index is not None
+                    and _surface_blade_index(surface) == int(blade_index)
+                )
+            )
+        ]
+        if not selected:
+            raise StepAuditError(
+                "v116_step_comparison_scope_failed",
+                f"V1.1.2 reconstruction has no counterpart for source region {region_id}",
+                {
+                    "comparison_region_id": region_id,
+                    "reconstruction_role": role,
+                    "reconstruction_blade_index": blade_index,
+                    "periodic_population": blade_class,
+                    "reconstruction_blade_pair_index": blade_pair_index,
+                },
+            )
+        graph = copy.deepcopy(dict(surface_graph))
+        graph["surfaces"] = copy.deepcopy(selected)
+        result[region_id] = _surface_graph_triangle_mesh(graph)
+    return result
+
+
+def _reconstruction_surface_comparison_meshes(
+    surface_graph: Mapping[str, Any], surface_ledger: Mapping[str, Any]
+) -> dict[str, TriangleMesh]:
+    evaluated_ids = {
+        str(record["surface_id"])
+        for record in surface_ledger.get("surfaces", ())
+        if record.get("disposition") == "EVALUATED"
+    }
+    material_surfaces = {
+        str(surface.get("id", "")): surface
+        for surface in _material_export_surface_graph(surface_graph).get(
+            "surfaces", ()
+        )
+    }
+    missing = sorted(evaluated_ids - set(material_surfaces))
+    if missing:
+        raise StepAuditError(
+            "v116_step_comparison_scope_failed",
+            "surface ledger references unavailable reconstruction surfaces",
+            {"missing_surface_ids": missing},
+        )
+    result = {}
+    for surface_id in sorted(evaluated_ids):
+        graph = copy.deepcopy(dict(surface_graph))
+        graph["surfaces"] = [copy.deepcopy(material_surfaces[surface_id])]
+        result[surface_id] = _surface_graph_triangle_mesh(graph)
+    return result
+
+
+def _surface_comparison_pairs(
+    source_regions: Mapping[str, TriangleMesh],
+    reconstruction_surfaces: Mapping[str, TriangleMesh],
+    surface_ledger: Mapping[str, Any],
+    comparison_scope: Mapping[str, Any],
+    instance_alignment: Mapping[str, Any],
+) -> tuple[dict[str, tuple[TriangleMesh, TriangleMesh]], dict[str, Any]]:
+    reconstruction_to_source = {
+        str(key): str(value)
+        for key, value in instance_alignment.get(
+            "reconstruction_to_source_region_ids", {}
+        ).items()
+    }
+    source_faces_by_region: dict[str, list[str]] = defaultdict(list)
+    for record in comparison_scope.get("included_surfaces", ()):
+        region_id = str(
+            record.get("comparison_region_id") or record.get("reconstruction_role")
+        )
+        source_faces_by_region[region_id].append(str(record["source_face_id"]))
+
+    updated_records = []
+    pairs: dict[str, tuple[TriangleMesh, TriangleMesh]] = {}
+    for raw_record in surface_ledger.get("surfaces", ()):
+        record = copy.deepcopy(dict(raw_record))
+        if record.get("disposition") != "EVALUATED":
+            updated_records.append(record)
+            continue
+        surface_id = str(record["surface_id"])
+        reconstruction_region_id = str(record["comparison_region_id"])
+        source_region_id = reconstruction_to_source.get(
+            reconstruction_region_id, reconstruction_region_id
+        )
+        if (
+            source_region_id not in source_regions
+            or surface_id not in reconstruction_surfaces
+        ):
+            record.update(
+                {
+                    "disposition": "FAILED_UNRESOLVED",
+                    "reason": "aligned_surface_correspondence_unresolved",
+                    "aligned_source_comparison_region_id": source_region_id,
+                }
+            )
+            updated_records.append(record)
+            continue
+        record["aligned_source_comparison_region_id"] = source_region_id
+        record["source_face_ids"] = sorted(source_faces_by_region[source_region_id])
+        pairs[surface_id] = (
+            source_regions[source_region_id],
+            reconstruction_surfaces[surface_id],
+        )
+        updated_records.append(record)
+
+    updated = copy.deepcopy(dict(surface_ledger))
+    updated["surfaces"] = updated_records
+    updated["evaluated_surface_count"] = sum(
+        record.get("disposition") == "EVALUATED" for record in updated_records
+    )
+    updated["excluded_surface_count"] = sum(
+        record.get("disposition") == "EXCLUDED_NOT_EVALUATED"
+        for record in updated_records
+    )
+    updated["unresolved_surface_count"] = sum(
+        record.get("disposition") == "FAILED_UNRESOLVED"
+        for record in updated_records
+    )
+    updated["comparison_coverage_complete"] = (
+        updated["unresolved_surface_count"] == 0
+    )
+    updated["status"] = (
+        "PASS" if updated["comparison_coverage_complete"] else "REJECTED"
+    )
+    if not pairs:
+        raise StepAuditError(
+            "v116_step_comparison_scope_failed",
+            "surface comparison ledger contains no evaluated surface pairs",
+            {"surface_ledger": updated},
+        )
+    return pairs, updated
+
+
+def _paired_comparison_regions(
+    source_regions: Mapping[str, TriangleMesh],
+    reconstruction_regions: Mapping[str, TriangleMesh],
+) -> dict[str, tuple[TriangleMesh, TriangleMesh]]:
+    source_roles = set(source_regions)
+    reconstruction_roles = set(reconstruction_regions)
+    if source_roles != reconstruction_roles:
+        raise StepAuditError(
+            "v116_step_comparison_scope_failed",
+            "source and reconstruction comparison roles do not match",
+            {
+                "source_only_roles": sorted(source_roles - reconstruction_roles),
+                "reconstruction_only_roles": sorted(
+                    reconstruction_roles - source_roles
+                ),
+            },
+        )
+    return {
+        role: (source_regions[role], reconstruction_regions[role])
+        for role in sorted(source_roles)
+    }
+
+
+def _phase_aligned_comparison_regions(
+    source_regions: Mapping[str, TriangleMesh],
+    reconstruction_regions: Mapping[str, TriangleMesh],
+    comparison_scope: Mapping[str, Any],
+) -> tuple[dict[str, tuple[TriangleMesh, TriangleMesh]], dict[str, Any]]:
+    """Apply one cyclic instance offset per blade population after phase alignment."""
+
+    base_pairs = _paired_comparison_regions(source_regions, reconstruction_regions)
+    records = {
+        str(record.get("comparison_region_id") or record["reconstruction_role"]): record
+        for record in comparison_scope.get("included_surfaces", ())
+    }
+    periodic_records = [
+        record
+        for region_id, record in records.items()
+        if region_id in source_regions
+        and record.get("periodic_instance_id") not in {None, ""}
+    ]
+    if not periodic_records:
+        return base_pairs, {
+            "method": "no_periodic_instance_regions",
+            "populations": {},
+            "reconstruction_to_source_region_ids": {
+                region_id: region_id for region_id in base_pairs
+            },
+        }
+
+    result = {
+        region_id: pair
+        for region_id, pair in base_pairs.items()
+        if records.get(region_id, {}).get("periodic_instance_id") in {None, ""}
+    }
+    nonperiodic_assignments = {region_id: region_id for region_id in result}
+    diagnostics: dict[str, Any] = {}
+    reconstruction_to_source = dict(nonperiodic_assignments)
+    populations = sorted(
+        {str(record.get("periodic_population", "periodic")) for record in periodic_records}
+    )
+    for population in populations:
+        population_records = [
+            record
+            for record in periodic_records
+            if str(record.get("periodic_population", "periodic")) == population
+        ]
+        roles = sorted({str(record["reconstruction_role"]) for record in population_records})
+        reference_role = "blade_sides" if "blade_sides" in roles else roles[0]
+        reference_records = [
+            record
+            for record in population_records
+            if record["reconstruction_role"] == reference_role
+        ]
+        shift, score = _best_periodic_cyclic_shift(
+            source_regions, reconstruction_regions, reference_records
+        )
+        population_count = len(reference_records)
+        role_counts = {}
+        for role in roles:
+            role_records = sorted(
+                (record for record in population_records if record["reconstruction_role"] == role),
+                key=lambda record: (
+                    int(record.get("periodic_lattice_index", 0)),
+                    str(record.get("periodic_instance_id", "")),
+                ),
+            )
+            reconstruction_order = sorted(
+                role_records,
+                key=lambda record: int(record.get("reconstruction_blade_pair_index", 0)),
+            )
+            if (
+                len(role_records) != population_count
+                or len(reconstruction_order) != population_count
+            ):
+                raise StepAuditError(
+                    "v116_step_comparison_scope_failed",
+                    f"periodic comparison role {role} lacks complete population coverage",
+                    {
+                        "periodic_population": population,
+                        "reference_instance_count": population_count,
+                        "role_instance_count": len(role_records),
+                    },
+                )
+            for index, source_record in enumerate(role_records):
+                source_region_id = str(source_record["comparison_region_id"])
+                reconstructed_record = reconstruction_order[(index + shift) % len(reconstruction_order)]
+                reconstructed_region_id = str(reconstructed_record["comparison_region_id"])
+                result[source_region_id] = (
+                    source_regions[source_region_id],
+                    reconstruction_regions[reconstructed_region_id],
+                )
+                reconstruction_to_source[reconstructed_region_id] = source_region_id
+            role_counts[role] = len(role_records)
+        diagnostics[population] = {
+            "method": "post_phase_cyclic_angular_centroid_assignment",
+            "reference_role": reference_role,
+            "cyclic_shift": shift,
+            "angular_rms_rad": round(math.sqrt(score), 12),
+            "role_instance_counts": role_counts,
+        }
+    if set(result) != set(source_regions):
+        raise StepAuditError(
+            "v116_step_comparison_scope_failed",
+            "post-phase periodic instance assignment is incomplete",
+            {"missing_region_ids": sorted(set(source_regions) - set(result))},
+        )
+    return result, {
+        "method": "independent_population_cyclic_assignment",
+        "populations": diagnostics,
+        "reconstruction_to_source_region_ids": reconstruction_to_source,
+    }
+
+
+def _best_periodic_cyclic_shift(
+    source_regions: Mapping[str, TriangleMesh],
+    reconstruction_regions: Mapping[str, TriangleMesh],
+    records: list[Mapping[str, Any]],
+) -> tuple[int, float]:
+    source_order = sorted(
+        records,
+        key=lambda record: (
+            int(record.get("periodic_lattice_index", 0)),
+            str(record.get("periodic_instance_id", "")),
+        ),
+    )
+    reconstruction_order = sorted(
+        records,
+        key=lambda record: int(record.get("reconstruction_blade_pair_index", 0)),
+    )
+    if not source_order:
+        raise StepAuditError(
+            "v116_step_comparison_scope_failed",
+            "periodic comparison population has no instance regions",
+        )
+    source_angles = [
+        _mesh_angular_centroid(source_regions[str(record["comparison_region_id"])])
+        for record in source_order
+    ]
+    reconstruction_angles = [
+        _mesh_angular_centroid(
+            reconstruction_regions[str(record["comparison_region_id"])]
+        )
+        for record in reconstruction_order
+    ]
+    scores = []
+    for shift in range(len(source_order)):
+        residuals = [
+            _wrapped_angle_difference(
+                source_angles[index],
+                reconstruction_angles[(index + shift) % len(reconstruction_order)],
+            )
+            for index in range(len(source_order))
+        ]
+        scores.append(float(np.mean(np.square(residuals))))
+    best = int(np.argmin(scores))
+    return best, scores[best]
+
+
+def _mesh_angular_centroid(mesh: TriangleMesh) -> float:
+    center = np.mean(np.asarray(mesh.vertices, dtype=float), axis=0)
+    return math.atan2(float(center[1]), float(center[0]))
+
+
+def _wrapped_angle_difference(first: float, second: float) -> float:
+    return (float(first) - float(second) + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _surface_matches_comparison_role(
+    surface: Mapping[str, Any], comparison_role: str
+) -> bool:
+    surface_id = str(surface.get("id", ""))
+    role = str(surface.get("role", ""))
+    if comparison_role == "hub_flowpath":
+        return surface_id == "hub_support_surface"
+    if comparison_role == "hub_material_closure":
+        return surface_id in {
+            "hub_top_annulus_surface",
+            "hub_bottom_annulus_surface",
+            "hub_bottom_outer_wall_surface",
+        }
+    if comparison_role == "shroud_inner_flowpath":
+        return surface_id == "shroud_support_surface"
+    if comparison_role == "shroud_outer_material":
+        return surface_id == "shroud_outer_material_surface"
+    if comparison_role == "mounting_bore":
+        return surface_id == "mounting_bore_inner_wall_surface"
+    if comparison_role == "blade_sides":
+        return role in {"blade_pressure", "blade_suction"}
+    if comparison_role == "blade_leading_edge":
+        return role == "blade_leading_edge"
+    if comparison_role == "blade_trailing_edge":
+        return role == "blade_trailing_edge"
+    if comparison_role == "blade_root_attachment":
+        return role == "root_to_hub_attachment"
+    if comparison_role == "blade_tip_attachment":
+        return role == "closed_shroud_attachment"
+    if comparison_role == "blade_tip":
+        return role == "open_tip_dome"
+    return False
+
+
+def _surface_blade_index(surface: Mapping[str, Any]) -> int | None:
+    value = surface.get("blade_index")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    match = re.match(r"blade_(\d+)_", str(surface.get("id", "")))
+    return None if match is None else int(match.group(1))
+
+
+def _tessellate_cadquery_faces(
+    faces, *, linear_tolerance: float, angular_tolerance: float
+) -> TriangleMesh:
+    meshes = []
+    for face in faces:
+        vectors, raw_triangles = face.tessellate(
+            linear_tolerance, angular_tolerance
+        )
+        vertices = np.asarray(
+            [
+                vector.toTuple() if hasattr(vector, "toTuple") else vector
+                for vector in vectors
+            ],
+            dtype=float,
+        )
+        triangles = np.asarray(raw_triangles, dtype=np.int32)
+        if len(vertices) == 0 or len(triangles) == 0:
+            continue
+        normals = np.asarray(
+            [
+                _triangle_normal_from_points(vertices[triangle])
+                for triangle in triangles
+            ],
+            dtype=float,
+        )
+        meshes.append(TriangleMesh(vertices, triangles, normals))
+    if not meshes:
+        raise ValueError("supported source faces produced no tessellation")
+    return combine_triangle_meshes(meshes)
+
+
+def _surface_graph_triangle_mesh(surface_graph: Mapping[str, Any]) -> TriangleMesh:
+    from part_rule_synthesis.impeller_surface_graph_export import (
+        triangulate_surface_graph,
+    )
+
+    triangulation = triangulate_surface_graph(
+        dict(surface_graph), view_id="cad_review_360"
+    )
+    triangles = triangulation.get("triangles", ())
+    if not triangles:
+        raise ValueError("supported reconstruction surfaces produced no triangles")
+    vertices = []
+    triangle_indices = []
+    normals = []
+    for triangle in triangles:
+        start = len(vertices)
+        vertices.extend(
+            [[float(value) for value in point] for point in triangle["points"]]
+        )
+        triangle_indices.append([start, start + 1, start + 2])
+        normals.append([float(value) for value in triangle["normal"]])
+    return TriangleMesh(
+        np.asarray(vertices, dtype=float),
+        np.asarray(triangle_indices, dtype=np.int32),
+        np.asarray(normals, dtype=float),
+    )
+
+
+def _triangle_normal_from_points(points: np.ndarray) -> np.ndarray:
+    normal = np.cross(points[1] - points[0], points[2] - points[0])
+    length = float(np.linalg.norm(normal))
+    return normal / max(length, 1.0e-12)
+
+
+def _rotation_about_z_matrix(angle_deg: float) -> list[list[float]]:
+    angle = math.radians(float(angle_deg))
+    cosine = math.cos(angle)
+    sine = math.sin(angle)
+    return [
+        [cosine, -sine, 0.0, 0.0],
+        [sine, cosine, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
 
 
 def _face_records(shape) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
@@ -1506,7 +2216,13 @@ def _export_source_stl(shape, path: Path) -> None:
     try:
         import cadquery as cq
 
-        cq.exporters.export(shape, str(path), exportType="STL", tolerance=0.12, angularTolerance=0.16)
+        cq.exporters.export(
+            shape,
+            str(path),
+            exportType="STL",
+            tolerance=SOURCE_REVIEW_LINEAR_TOLERANCE_MM,
+            angularTolerance=SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD,
+        )
     except Exception as exc:  # noqa: BLE001
         raise StepAuditError("v116_step_parse_failed", f"source STEP tessellation failed: {exc}") from exc
 
@@ -1626,10 +2342,20 @@ def _axis_first_section_reconstruction_manifest(
             "surface_count": reconstruction.get("surface_count"),
         },
         "regional_deviation": {
-            "status": "GLOBAL_ONLY_REJECTED_MAPPING"
-            if mapping.get("mapping_status") == "REJECTED_REVIEW_CANDIDATE"
-            else "global_comparison_pending_regional_finalizer",
-            "bidirectional": comparison.get("bidirectional", {}),
+            "status": "CORRESPONDING_SURFACES_MEASURED_REVIEW_ONLY",
+            "contract_id": comparison.get("contract_id"),
+            "comparison_direction": comparison.get("comparison_direction"),
+            "reconstruction_to_corresponding_source": copy.deepcopy(
+                comparison.get("reconstruction_to_corresponding_source", {})
+            ),
+            "corresponding_source_to_reconstruction": copy.deepcopy(
+                comparison.get("corresponding_source_to_reconstruction", {})
+            ),
+            "symmetric_corresponding_sample_distribution": copy.deepcopy(
+                comparison.get("symmetric_corresponding_sample_distribution", {})
+            ),
+            "regions": copy.deepcopy(comparison.get("regions", {})),
+            "scope": copy.deepcopy(comparison.get("scope", {})),
             "mapping_failed_terms": copy.deepcopy(
                 list(mapping.get("failed_terms", ()))
             ),
@@ -1650,22 +2376,18 @@ def _axis_first_cache_manifest_complete(manifest: dict[str, Any]) -> bool:
     source_sha256 = manifest.get("source", {}).get("sha256")
     if not _is_sha256(source_sha256):
         return False
+    axis_status = manifest.get("axis_first_algorithm_status")
     if not (
-        manifest.get("legacy_workflow_status") == "PASS"
-        and manifest.get("axis_first_algorithm_status") == "PASS"
-        and manifest.get("promotable") is True
+        manifest.get("status") == "PASS"
+        and manifest.get("legacy_workflow_status") == "PASS"
+        and axis_status in {"PASS", "REJECTED"}
     ):
         return False
     payload = manifest.get("axis_first_section_reconstruction")
     if not isinstance(payload, dict) or payload.get("algorithm_revision") != AUDIT_IMPLEMENTATION_REVISION:
         return False
     readiness = payload.get("algorithm_readiness", {})
-    if not (
-        isinstance(readiness, dict)
-        and readiness.get("status") == "READY"
-        and readiness.get("algorithm_ready") is True
-        and readiness.get("cache_reusable") is True
-    ):
+    if not isinstance(readiness, dict):
         return False
     required_sections = {
         "canonical_frame",
@@ -1679,6 +2401,20 @@ def _axis_first_cache_manifest_complete(manifest: dict[str, Any]) -> bool:
         "invariants",
     }
     if not required_sections <= payload.keys():
+        return False
+    if axis_status == "REJECTED":
+        return _completed_rejected_review_manifest(manifest, payload, readiness)
+    comparison_scope = manifest.get("comparison_scope", {})
+    if not (
+        manifest.get("promotable") is True
+        and isinstance(comparison_scope, dict)
+        and comparison_scope.get("contract_id") == COMPARISON_SCOPE_CONTRACT_ID
+        and comparison_scope.get("status") == "PASS"
+        and comparison_scope.get("comparison_coverage_complete") is True
+        and readiness.get("status") == "READY"
+        and readiness.get("algorithm_ready") is True
+        and readiness.get("cache_reusable") is True
+    ):
         return False
     canonical_frame = payload.get("canonical_frame", {})
     axis = canonical_frame.get("axis", {})
@@ -1712,6 +2448,95 @@ def _axis_first_cache_manifest_complete(manifest: dict[str, Any]) -> bool:
         and _valid_mapping_cache_section(mapping, periodic, source_sha256)
         and _valid_pattern_cache_section(pattern, periodic, source_sha256)
         and _valid_deviation_cache_section(deviation, source_sha256)
+    )
+
+
+def _completed_rejected_review_manifest(
+    manifest: dict[str, Any],
+    payload: dict[str, Any],
+    readiness: dict[str, Any],
+) -> bool:
+    mapping = manifest.get("parameter_mapping", {})
+    scope = manifest.get("comparison_scope", {})
+    comparison = manifest.get("comparison", {})
+    evidence_sections = (
+        "canonical_frame",
+        "support_recovery",
+        "periodic_populations",
+        "span_measurement_lattice",
+        "representative_blades",
+        "v11_2_mapping",
+        "pattern_instances",
+        "regional_deviation",
+        "invariants",
+    )
+    return bool(
+        manifest.get("promotable") is False
+        and manifest.get("reconstruction_disposition")
+        == "review_only_not_promotable"
+        and readiness.get("status") == "REJECTED"
+        and readiness.get("algorithm_ready") is False
+        and isinstance(readiness.get("failed_terms"), list)
+        and readiness["failed_terms"]
+        and isinstance(mapping, dict)
+        and mapping.get("mapping_status") == "REJECTED_REVIEW_CANDIDATE"
+        and isinstance(scope, dict)
+        and scope.get("contract_id") == COMPARISON_SCOPE_CONTRACT_ID
+        and scope.get("status") in {"PASS", "PARTIAL_REVIEW"}
+        and scope.get("coverage_complete") is True
+        and isinstance(comparison, dict)
+        and comparison.get("contract_id")
+        == "impeller_v1_1_6_corresponding_surface_deviation_v5"
+        and payload.get("regional_deviation", {}).get("status")
+        in {"PASS", "CORRESPONDING_SURFACES_MEASURED_REVIEW_ONLY"}
+        and all(
+            isinstance(payload.get(section), dict) and bool(payload[section])
+            for section in evidence_sections
+        )
+        and not _contains_placeholder(payload)
+    )
+
+
+def _audit_artifacts_match_manifest(
+    audit_dir: Path, manifest: dict[str, Any]
+) -> bool:
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return False
+    required = {
+        "source_stl": "source.stl",
+        "reconstruction_stl": "reconstruction.stl",
+        "heatmap": "heatmap.json",
+        "geometric_manifest": "geometric-manifest.json",
+    }
+    for artifact_id, expected_name in required.items():
+        record = artifacts.get(artifact_id)
+        if not isinstance(record, dict) or record.get("file_name") != expected_name:
+            return False
+        path = audit_dir / expected_name
+        if not path.is_file() or path.stat().st_size != record.get("size_bytes"):
+            return False
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if not hmac.compare_digest(digest, str(record.get("sha256", ""))):
+            return False
+    return True
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _manifest_digest_matches_status(
+    manifest_path: Path, status: Mapping[str, Any]
+) -> bool:
+    expected = status.get("manifest_sha256")
+    return bool(
+        _is_sha256(expected)
+        and hmac.compare_digest(_file_sha256(manifest_path), str(expected))
     )
 
 

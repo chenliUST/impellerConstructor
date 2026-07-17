@@ -168,6 +168,24 @@ def test_root_lift_can_use_exact_authenticated_boundary_point_pairs():
     assert all("footprint_sample_xyz_mm" in item for item in result.span_direction_evidence)
 
 
+def test_attachment_decomposes_local_width_and_lift_against_support_normals():
+    footprint, retained, evidence = _source_fixture("root")
+    evidence = _boundary_normal_evidence(footprint, retained, evidence)
+
+    result = measure_root_attachment(
+        footprint,
+        retained,
+        support_normal_directions_xyz=[(0.0, 0.0, 1.0)] * len(retained),
+        **evidence,
+    )
+
+    assert result.lift_mm == pytest.approx(1.4)
+    assert result.lift_samples_mm == pytest.approx([1.4] * len(retained))
+    assert result.attachment_width_mm == pytest.approx(0.35)
+    assert result.width_samples_mm == pytest.approx([0.35] * len(retained))
+    assert result.width_method == "paired_boundary_support_normal_decomposition"
+
+
 def test_attachment_rejects_termination_edge_reused_as_other_boundary_evidence():
     footprint, retained, evidence = _source_fixture("root")
     overlap_id = evidence["footprint_source_edge_ids"][0]

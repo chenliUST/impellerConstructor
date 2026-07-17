@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+# ruff: noqa: E402
+
 from copy import deepcopy
+import math
 import sys
 from pathlib import Path
 
@@ -12,7 +15,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
-from part_rule_synthesis.impeller_v11_blade_to_blade_loop import build_v11_blade_to_blade_loop_family
+from part_rule_synthesis.impeller_v11_2_canonical import evaluate_nurbs_curve
+from part_rule_synthesis.impeller_v11_blade_to_blade_loop import (
+    build_v11_blade_to_blade_loop_family,
+    map_v11_domain_sample,
+)
 
 ACTIVE_V11_PRESETS = [
     "radial_open_reference_v1_1",
@@ -81,6 +88,72 @@ def test_active_span_policy_reports_pointwise_infeasible_offsets():
     assert metrics["offset_feasibility_status"] == "FAIL"
 
 
+def test_v116_local_root_lift_field_changes_the_actual_active_span_boundary():
+    runtime, parameters = _runtime("radial_open_reference_v1_1")
+    defaults = _defaults_with_canonical(runtime)
+    canonical = defaults["canonical_nurbs_parameterization"]
+    canonical["canonical_input_source"] = (
+        "v116_adaptive_step_reconstruction_extension"
+    )
+    canonical["adaptive_reconstruction_extension"] = {"status": "PASS"}
+    canonical["active_span_policy"]["root_offset"].update(
+        {
+            "mode": "v116_measured_streamwise_field",
+            "local_size_field": {
+                "kind": "nurbs_curve",
+                "degree": 1,
+                "knots": [0.0, 0.0, 1.0, 1.0],
+                "weights": [1.0, 1.0],
+                "control_points": [[0.0, 6.0, 4.0], [1.0, 6.0, 12.0]],
+                "components": ["u", "width_mm", "lift_mm"],
+            },
+        }
+    )
+    s0, s1 = defaults["main_streamwise_interval_s"]
+
+    start = map_v11_domain_sample(parameters, defaults, {"s": s0, "q": 0.0, "h": 0.0})
+    end = map_v11_domain_sample(parameters, defaults, {"s": s1, "q": 0.0, "h": 0.0})
+    hub_authority = canonical["support_profiles"]["hub_profile"]
+    hub_start = evaluate_nurbs_curve(hub_authority, s0)
+    hub_end = evaluate_nurbs_curve(hub_authority, s1)
+
+    assert math.dist(start, [hub_start[0], 0.0, hub_start[1]]) == pytest.approx(4.0, abs=1.0e-5)
+    assert math.dist(end, [hub_end[0], 0.0, hub_end[1]]) == pytest.approx(12.0, abs=1.0e-5)
+    metrics = build_v11_blade_to_blade_loop_family(parameters, defaults)["active_span_policy_metrics"]
+    assert metrics["resolved_root_offset_min_mm"] == pytest.approx(4.0)
+    assert metrics["resolved_root_offset_max_mm"] == pytest.approx(12.0)
+
+
+def test_v116_local_root_lift_field_is_ignored_without_adaptive_opt_in():
+    runtime, parameters = _runtime("radial_open_reference_v1_1")
+    defaults = _defaults_with_canonical(runtime)
+    canonical = defaults["canonical_nurbs_parameterization"]
+    expected = canonical["active_span_policy"]["root_offset"][
+        "resolved_constant_mm"
+    ]
+    canonical["active_span_policy"]["root_offset"].update(
+        {
+            "mode": "v116_measured_streamwise_field",
+            "local_size_field": {
+                "kind": "nurbs_curve",
+                "degree": 1,
+                "knots": [0.0, 0.0, 1.0, 1.0],
+                "weights": [1.0, 1.0],
+                "control_points": [[0.0, 6.0, 2.0], [1.0, 6.0, 30.0]],
+                "components": ["u", "width_mm", "lift_mm"],
+            },
+        }
+    )
+
+    metrics = build_v11_blade_to_blade_loop_family(
+        parameters,
+        defaults,
+    )["active_span_policy_metrics"]
+
+    assert metrics["resolved_root_offset_min_mm"] == pytest.approx(expected)
+    assert metrics["resolved_root_offset_max_mm"] == pytest.approx(expected)
+
+
 @pytest.mark.parametrize(
     ("field_name", "payload"),
     [
@@ -115,3 +188,15 @@ def _assert_point_sequences_match(actual, expected):
     assert len(actual) == len(expected)
     for actual_point, expected_point in zip(actual, expected):
         assert actual_point == pytest.approx(expected_point)
+
+
+def _profile_point(points, s):
+    scaled = float(s) * (len(points) - 1)
+    left_index = min(int(scaled), len(points) - 1)
+    right_index = min(left_index + 1, len(points) - 1)
+    fraction = scaled - left_index
+    return [
+        points[left_index][axis]
+        + (points[right_index][axis] - points[left_index][axis]) * fraction
+        for axis in range(2)
+    ]
