@@ -28,10 +28,18 @@ export function auditStageRows(status) {
   }));
 }
 
-export function auditArtifactUrls(apiBase, auditId) {
+export function auditArtifactUrls(apiBase, auditId, manifest = null) {
   if (!auditId) return {};
   const root = `${String(apiBase || "").replace(/\/+$/, "")}/api/step-reconstruction-audits/${encodeURIComponent(auditId)}/artifacts`;
-  return { source: `${root}/source.stl`, reconstruction: `${root}/reconstruction.stl`, heatmap: `${root}/heatmap.json` };
+  const urls = {
+    source: `${root}/source.stl`,
+    reconstruction: `${root}/reconstruction.stl`,
+    heatmap: `${root}/heatmap.json`,
+  };
+  if (asRecord(manifest?.artifacts).geometric_manifest) {
+    urls.geometricManifest = `${root}/geometric-manifest.json`;
+  }
+  return urls;
 }
 
 export function comparisonViewportRects(width, height) {
@@ -47,8 +55,10 @@ export function comparisonViewportRects(width, height) {
 }
 
 export function heatmapLegend(manifest) {
-  const metrics = asRecord(manifest?.comparison?.bidirectional);
-  return [["Min", metrics.minimum_mm], ["Median", metrics.median_mm], ["P95", metrics.p95_mm], ["Max", metrics.maximum_mm]]
+  const metrics = asRecord(
+    manifest?.comparison?.reconstruction_to_corresponding_source,
+  );
+  return [["Triangle-centroid min", metrics.minimum_mm], ["Triangle-centroid median", metrics.median_mm], ["Triangle-centroid P95", metrics.p95_mm], ["Triangle-centroid max", metrics.maximum_mm]]
     .filter(([, value]) => finite(value)).map(([label, value]) => ({ label, value }));
 }
 
@@ -84,6 +94,12 @@ export function stepInspectionModel(manifest, selection = {}) {
   const unavailableReason = selectedLoop ? null : stationUnavailableReason(loops, populationId, requestedStation);
   return {
     auditId: root.audit_id || "",
+    comparisonPhaseDeg: finite(root?.comparison_alignment?.rotation_about_axis_deg)
+      ? Number(root.comparison_alignment.rotation_about_axis_deg)
+      : 0,
+    reconstructionVariant: String(
+      asRecord(root.reconstruction).reconstruction_variant || "V1.1.2"
+    ),
     axis: asRecord(root.frame).axis || asRecord(axisFirst.canonical_frame).axis || null,
     support: activeSupport,
     supportGeometry: supportOverlayEvidence(activeSupport, topology),
@@ -142,8 +158,11 @@ export function selectedInspectionProvenance(model) {
 export function reportSummaryRows(manifest, inspection) {
   const source = asRecord(manifest?.source);
   const semantics = asRecord(manifest?.semantics);
-  const comparison = asRecord(manifest?.comparison?.bidirectional);
+  const comparison = asRecord(
+    manifest?.comparison?.reconstruction_to_corresponding_source,
+  );
   const alignment = asRecord(manifest?.comparison_alignment);
+  const comparisonScope = asRecord(manifest?.comparison_scope);
   const periodic = asRecord(manifest?.parameter_mapping?.periodic_provenance);
   const acceptance = asRecord(manifest?.acceptance_evaluation);
   const globalPromotable = manifest?.promotable;
@@ -157,11 +176,16 @@ export function reportSummaryRows(manifest, inspection) {
     { id: "blade_population", label: "Blade population", value: `${display(semantics.main_blade_count, 0)} main + ${display(semantics.splitter_blade_count, 0)} splitter` },
     { id: "geometry_authority", label: "Geometry authority", value: display(manifest?.canonical_geometry_version) },
     { id: "support_topology", label: "Support topology", value: display(inspection?.topology) },
+    {
+      id: "comparison_scope",
+      label: "Corresponding-surface scope",
+      value: `${display(comparisonScope.status)}${asArray(comparisonScope.missing_required_roles).length ? ` / missing ${asArray(comparisonScope.missing_required_roles).join(", ")}` : ""}`,
+    },
     { id: "periodic_provenance", label: "Periodic provenance", value: periodicSummary(periodic) },
     { id: "periodic_phase", label: "Periodic phase alignment", value: `${number(alignment.rotation_about_axis_deg)} deg about confirmed axis` },
     { id: "phase_rms", label: "Phase-search RMS", value: `${number(alignment.objective_rms_before_mm)} -> ${number(alignment.objective_rms_after_mm)} mm` },
-    { id: "rms", label: "RMS deviation", value: `${number(comparison.rms_mm)} mm` },
-    { id: "p95", label: "P95 deviation", value: `${number(comparison.p95_mm)} mm` },
+    { id: "rms", label: "Triangle-centroid RMS reconstruction -> source", value: `${number(comparison.rms_mm)} mm` },
+    { id: "p95", label: "Triangle-centroid P95 reconstruction -> source", value: `${number(comparison.p95_mm)} mm` },
   ];
 }
 
@@ -171,7 +195,21 @@ function periodicSummary(periodic) {
   return display(periodic.status || periodic.method || periodic.population_count);
 }
 
-export function unsupportedSourceFeatures(manifest) { return asRecords(manifest?.parameter_mapping?.unsupported_source_features); }
+export function unsupportedSourceFeatures(manifest) {
+  const scoped = asRecords(manifest?.comparison_scope?.excluded_surfaces).map((record) => ({
+    ...record,
+    feature: record.feature || record.semantic_role || record.source_role_hint || record.reason,
+  }));
+  const legacy = asRecords(manifest?.parameter_mapping?.unsupported_source_features);
+  const records = [...scoped, ...legacy];
+  const seen = new Set();
+  return records.filter((record, index) => {
+    const key = record.source_face_id || record.feature || `unsupported-${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 export function attachmentReportRows(manifest) {
   const mapping = asRecord(manifest?.parameter_mapping);
@@ -217,12 +255,12 @@ export function heatmapTriangleSelection(payload, semanticRegion, aliases = []) 
   if (!semanticRegion || semanticRegion === "all") return { indexes: all, mode: "all", filterable: true, message: "Showing all heatmap triangles." };
   const requested = new Set(unique([semanticRegion, ...asArray(aliases)]));
   const membership = firstArray(root, ["triangle_source_region_ids", "triangle_region_ids", "triangle_regions", "triangle_metadata"]);
-  if (membership?.some(hasRegionMembership)) return filterResult(membership.slice(0, triangles.length).flatMap((value, index) => membershipMatches(value, requested) ? [index] : []), semanticRegion, "triangle metadata");
+  if (membership?.some(hasRegionMembership)) return filterResult(membership.slice(0, triangles.length).flatMap((value, index) => membershipMatches(value, requested) ? [index] : []), semanticRegion, "triangle metadata", all);
   const regions = [root.regions, root.regional_records, root.semantic_regions].find(Array.isArray);
   const record = asRecords(regions).find((candidate) => regionAliases(candidate).some((id) => requested.has(id)));
   const indexes = firstArray(record, ["triangle_indices", "triangle_indexes", "triangleIndexes", "triangles"]);
-  if (indexes) return filterResult(indexes.filter((index) => Number.isInteger(index) && index >= 0 && index < triangles.length), semanticRegion, "regional records");
-  if (triangles.some((triangle) => membershipRegionAliases(asRecord(triangle)).length)) return filterResult(triangles.flatMap((triangle, index) => membershipRegionAliases(asRecord(triangle)).some((id) => requested.has(id)) ? [index] : []), semanticRegion, "triangle records");
+  if (indexes) return filterResult(indexes.filter((index) => Number.isInteger(index) && index >= 0 && index < triangles.length), semanticRegion, "regional records", all);
+  if (triangles.some((triangle) => membershipRegionAliases(asRecord(triangle)).length)) return filterResult(triangles.flatMap((triangle, index) => membershipRegionAliases(asRecord(triangle)).some((id) => requested.has(id)) ? [index] : []), semanticRegion, "triangle records", all);
   return { indexes: all, mode: "evidence-only", filterable: false, message: `${semanticRegion} is evidence-only; this heatmap artifact has no triangle-to-region membership and cannot be filtered.` };
 }
 
@@ -341,7 +379,12 @@ function inspectionMetricRows({ support, selectedLoop, selectedMappingTerms }) {
 function regionalDeviationRecords(manifest) {
   const mappingRegions = asRecord(manifest.parameter_mapping?.regional_deviation).regions;
   const axisRegions = asRecord(manifest.axis_first_section_reconstruction?.regional_deviation).regions;
-  return asRecords(mappingRegions).length ? asRecords(mappingRegions) : asRecords(axisRegions).length ? asRecords(axisRegions) : asRecords(manifest.comparison?.regions);
+  const candidates = [mappingRegions, axisRegions, manifest.comparison?.regions];
+  for (const candidate of candidates) {
+    const records = normalizedRegionRecords(candidate);
+    if (records.length) return records;
+  }
+  return [];
 }
 function populationOf(record) { return String(record?.population || record?.family || record?.blade_population || record?.population_id || ""); }
 function stationId(record) { const value = record?.span_station_id ?? record?.station_id ?? record?.h ?? record?.span_fraction; return value === undefined || value === null ? "" : String(value); }
@@ -353,7 +396,18 @@ function regionAliases(record) { return unique([record.source_region_id, record.
 function membershipMatches(value, requested) { return isRecord(value) ? membershipRegionAliases(value).some((id) => requested.has(id)) : requested.has(String(value)); }
 function hasRegionMembership(value) { return isRecord(value) ? membershipRegionAliases(value).length > 0 : value !== null && value !== undefined && String(value) !== ""; }
 function membershipRegionAliases(record) { const metadata = asRecord(record.metadata); const provenance = asRecord(record.provenance); return unique([record.source_region_id, record.region_id, record.semantic_role, record.semantic_region, record.region, metadata.source_region_id, metadata.region_id, metadata.semantic_role, provenance.source_region_id, provenance.region_id]); }
-function filterResult(indexes, semanticRegion, source) { return { indexes, mode: "filtered", filterable: true, message: `${semanticRegion} filtered by ${source} (${indexes.length} triangles).` }; }
+function filterResult(indexes, semanticRegion, source, all) {
+  if (!indexes.length) return { indexes: all, mode: "evidence-only", filterable: false, message: `${semanticRegion} has comparison evidence but no matching heatmap triangles.` };
+  return { indexes, mode: "filtered", filterable: true, message: `${semanticRegion} filtered by ${source} (${indexes.length} triangles).` };
+}
+function normalizedRegionRecords(value) {
+  if (Array.isArray(value)) return asRecords(value);
+  return Object.entries(asRecord(value)).map(([id, record]) => ({
+    region_id: id,
+    semantic_role: id,
+    ...asRecord(record),
+  }));
+}
 function firstArray(record, keys) { for (const key of keys) if (Array.isArray(record?.[key])) return record[key]; return null; }
 function mappingCoordinateFrame(term) { const frame = asRecord(term.frame); return term.coordinate_frame || term.coordinate_system || frame.coordinate_frame || frame.coordinate_system || null; }
 function mappingMethod(term) { return term.measurement_method || term.method || asRecord(term.fit_evidence).method || null; }

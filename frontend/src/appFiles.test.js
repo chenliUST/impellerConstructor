@@ -18,14 +18,25 @@ describe("frontend application files", () => {
     const mainSource = readFileSync(resolve(root, "src/main.js"), "utf-8");
     const appSource = readFileSync(resolve(root, "src/App.js"), "utf-8");
     const viewerSource = readFileSync(resolve(root, "src/components/ModelViewer.js"), "utf-8");
+    const stepWorkspaceSource = readFileSync(
+      resolve(root, "src/components/StepReconstructionWorkspace.js"),
+      "utf-8",
+    );
 
-    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.15"/);
-    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.15"/);
-    assert.match(appSource, /from "\.\/apiClient\.js\?v=1\.1\.9"/);
+    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.17"/);
+    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.17"/);
+    assert.match(appSource, /from "\.\/apiClient\.js\?v=1\.1\.10"/);
     assert.match(appSource, /from "\.\/appModel\.js\?v=1\.1\.11"/);
     assert.match(appSource, /from "\.\/workspaceModel\.js\?v=1\.1\.5"/);
     assert.match(appSource, /from "\.\/components\/ModelViewer\.js\?v=1\.1\.8"/);
     assert.match(appSource, /from "\.\/components\/ReviewEngineeringDrawing\.js\?v=1\.1\.5\.1"/);
+    assert.match(
+      appSource,
+      /from "\.\/components\/StepReconstructionWorkspace\.js\?v=1\.1\.6-r13_3"/,
+    );
+    assert.match(stepWorkspaceSource, /from "\.\.\/apiClient\.js\?v=1\.1\.10"/);
+    assert.match(stepWorkspaceSource, /stepReconstructionModel\.js\?v=1\.1\.6-r13_2/);
+    assert.match(stepWorkspaceSource, /StepComparisonScene\.js\?v=1\.1\.6-r22/);
     assert.match(viewerSource, /from "\.\.\/meshOverlayModel\.js\?v=1\.1\.5"/);
     assert.match(viewerSource, /from "\.\.\/workspaceModel\.js\?v=1\.1\.5"/);
     assert.match(readFileSync(resolve(root, "src/apiClient.js"), "utf-8"), /from "\.\/appModel\.js\?v=1\.1\.9"/);
@@ -58,6 +69,8 @@ describe("frontend application files", () => {
       "src/components/ParameterPanel.js",
       "src/components/ParameterInspectionWorkspace.js",
       "src/components/ProfileCurveEditor.js",
+      "src/components/StepComparisonScene.js",
+      "src/components/StepReconstructionWorkspace.js",
     ];
 
     for (const file of runtimeFiles) {

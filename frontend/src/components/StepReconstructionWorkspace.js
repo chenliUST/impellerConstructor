@@ -4,7 +4,7 @@ import {
   createStepReconstructionAudit,
   stepReconstructionAuditManifest,
   stepReconstructionAuditStatus,
-} from "../apiClient.js?v=1.1.6";
+} from "../apiClient.js?v=1.1.10";
 import {
   auditArtifactUrls,
   auditInProgress,
@@ -19,8 +19,8 @@ import {
   stepOverlayOptions,
   terminalAuditStatus,
   unsupportedSourceFeatures,
-} from "../stepReconstructionModel.js?v=1.1.6-r6";
-import { StepComparisonScene } from "./StepComparisonScene.js?v=1.1.6-r20";
+} from "../stepReconstructionModel.js?v=1.1.6-r13_2";
+import { StepComparisonScene } from "./StepComparisonScene.js?v=1.1.6-r22";
 
 const h = React.createElement;
 
@@ -36,7 +36,10 @@ export function StepReconstructionWorkspace({ apiBase, initialAuditId = "", init
   const [semanticRegion, setSemanticRegion] = useState("all");
   const [regionFilterStatus, setRegionFilterStatus] = useState({ mode: "unknown", filterable: null, message: "Region membership will be checked against the heatmap artifact." });
   const [overlays, setOverlays] = useState(defaultStepOverlayVisibility);
-  const artifactUrls = useMemo(() => auditArtifactUrls(apiBase, manifest?.audit_id || auditId), [apiBase, auditId, manifest?.audit_id]);
+  const artifactUrls = useMemo(
+    () => auditArtifactUrls(apiBase, manifest?.audit_id || auditId, manifest),
+    [apiBase, auditId, manifest],
+  );
   const reportRows = useMemo(() => parameterDifferenceRows(manifest), [manifest]);
   const legend = useMemo(() => heatmapLegend(manifest), [manifest]);
   const inspection = useMemo(() => stepInspectionModel(manifest, selection), [manifest, selection]);
@@ -49,29 +52,54 @@ export function StepReconstructionWorkspace({ apiBase, initialAuditId = "", init
   const actionLabel = uploading ? "Uploading..." : status?.status === "QUEUED" ? "Queued" : status?.status === "RUNNING" ? "Reconstructing..." : "Reconstruct";
 
   useEffect(() => {
-    if (!auditId || manifest?.audit_id === auditId || terminalAuditStatus(status)) return undefined;
+    if (!auditId || manifest?.audit_id === auditId) return undefined;
     let cancelled = false;
+    let timer = null;
+    let controller = null;
+    let consecutiveFailures = 0;
+    const schedule = (delay = 1200) => {
+      if (!cancelled) timer = window.setTimeout(refreshAudit, delay);
+    };
     async function refreshAudit() {
+      controller = new AbortController();
       try {
-        const next = await stepReconstructionAuditStatus(apiBase, auditId);
+        const next = await stepReconstructionAuditStatus(apiBase, auditId, { signal: controller.signal });
         let resolved = null;
         if (next.status === "PASS") {
-          resolved = await stepReconstructionAuditManifest(apiBase, auditId);
+          resolved = await stepReconstructionAuditManifest(apiBase, auditId, { signal: controller.signal });
         }
         if (cancelled) return;
+        consecutiveFailures = 0;
+        setError("");
         setStatus(next);
         if (resolved) setManifest(resolved);
+        if (!terminalAuditStatus(next)) schedule();
       } catch (caught) {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
+        if (cancelled || caught?.name === "AbortError") return;
+        if (caught?.status === 404 || caught?.status === 410) {
+          setAuditId("");
+          setStatus(null);
+          setError(`Saved STEP audit ${auditId} is not available in the current backend. Select the source STEP and click Reconstruct to start a new audit.`);
+          removeStepAuditDeepLink(auditId);
+          return;
+        }
+        consecutiveFailures += 1;
+        const message = caught instanceof Error ? caught.message : String(caught);
+        if (consecutiveFailures >= 3) {
+          setError(`${message}. Audit polling stopped after 3 consecutive failures.`);
+          return;
+        }
+        setError(`${message}. Retrying audit status (${consecutiveFailures}/3).`);
+        schedule(1200 * consecutiveFailures);
       }
     }
     void refreshAudit();
-    const timer = window.setInterval(refreshAudit, 1200);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== null) window.clearTimeout(timer);
+      controller?.abort();
     };
-  }, [apiBase, auditId, manifest?.audit_id, status?.status]);
+  }, [apiBase, auditId, manifest?.audit_id]);
 
   useEffect(() => {
     if (!manifest) return;
@@ -143,8 +171,11 @@ export function StepReconstructionWorkspace({ apiBase, initialAuditId = "", init
             setRegionFilterStatus({ mode: "unknown", filterable: null, message: "Region membership will be checked against the heatmap artifact." });
           },
         }) : null,
-        legend.length ? h("div", { className: "heatmap-legend" }, legend.map((row) => h("div", { key: row.label }, h("span", null, row.label), h("strong", null, formatNumber(row.value))))) : null,
-        readout ? h("p", { className: "heatmap-readout" }, `Cursor deviation ${formatNumber(readout.error_mm)} mm`) : null,
+        legend.length ? h("section", { className: "heatmap-legend", "aria-label": "Triangle-centroid reconstruction to source metrics" },
+          h("h4", null, "Triangle-centroid reconstruction -> source metrics"),
+          legend.map((row) => h("div", { key: row.label }, h("span", null, row.label), h("strong", null, `${formatNumber(row.value)} mm`))),
+        ) : null,
+        readout ? h("p", { className: "heatmap-readout" }, `Vertex-interpolated reconstruction -> source deviation ${formatNumber(readout.error_mm)} mm`) : null,
         manifest ? h(ReportSummary, { manifest, inspection }) : h("p", null, "Numeric evidence becomes available after all reconstruction stages pass."),
         reportRows.length ? h("div", { className: "step-parameter-table-wrap" }, h("table", { className: "step-parameter-table" },
           h("thead", null, h("tr", null, ["Parameter", "Source", "Mapped", "Rebuilt", "Delta", "Measure C", "Map C"].map((label) => h("th", { key: label }, label)))),
@@ -153,12 +184,22 @@ export function StepReconstructionWorkspace({ apiBase, initialAuditId = "", init
           ))),
         )) : null,
         unsupportedFeatures.length ? h("section", { className: "unsupported-feature-list" },
-          h("h4", null, "Unsupported source features"),
-          unsupportedFeatures.map((item, index) => h("p", { key: item.feature || index }, stageLabel(item.feature, "Unnamed source feature"))),
+          h("h4", null, `Unsupported source features (${unsupportedFeatures.length})`),
+          unsupportedFeatures.map((item, index) => h("p", { key: item.source_face_id || item.feature || index },
+            `${item.source_face_id || stageLabel(item.feature, "Unnamed source feature")} / ${stageLabel(item.reason, "excluded from deviation")}`,
+          )),
         ) : null,
       ),
     ),
   );
+}
+
+function removeStepAuditDeepLink(auditId) {
+  if (!globalThis.window?.location || !globalThis.window?.history) return;
+  const url = new URL(globalThis.window.location.href);
+  if (url.searchParams.get("stepAudit") !== auditId) return;
+  url.searchParams.delete("stepAudit");
+  globalThis.window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 function InspectionControls({ inspection, overlays, semanticRegion, regionOptions, regionFilterStatus, onSelection, onOverlays, onSemanticRegion }) {

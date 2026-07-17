@@ -6,7 +6,7 @@ import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import {
   heatmapTriangleSelection,
   inspectionPolylinePoints,
-} from "../stepReconstructionModel.js?v=1.1.6-r6";
+} from "../stepReconstructionModel.js?v=1.1.6-r13_2";
 
 const h = React.createElement;
 const defaultRuntime = { THREE, OrbitControls, STLLoader };
@@ -16,7 +16,18 @@ export function StepComparisonScene({ artifactUrls, inspection, overlays, semant
   const sourcePaneRef = useRef(null);
   const reconstructionPaneRef = useRef(null);
   const heatmapPaneRef = useRef(null);
+  const sessionRef = useRef(null);
+  const latestRef = useRef(null);
   const [status, setStatus] = useState("Waiting for a completed reconstruction audit.");
+  const [heatmapLegend, setHeatmapLegend] = useState(null);
+  latestRef.current = {
+    inspection,
+    overlays,
+    semanticRegion,
+    semanticRegionAliases,
+    onHeatmapReadout,
+    onRegionFilterStatus,
+  };
 
   useEffect(() => {
     if (!artifactUrls?.source || !artifactUrls?.reconstruction || !artifactUrls?.heatmap) return undefined;
@@ -42,55 +53,156 @@ export function StepComparisonScene({ artifactUrls, inspection, overlays, semant
     controls.dampingFactor = 0.08;
     const paneBounds = Object.fromEntries(Object.keys(scenes).map((sceneId) => [sceneId, new Three.Box3()]));
     const raycaster = new Three.Raycaster();
-    const loadedSceneIds = new Set();
     let heatmapMesh = null;
+    let heatmapBase = null;
+    let heatmapFilterData = null;
+    const overlayGroups = { source: null, reconstruction: null };
+    const paneStates = { source: "loading", reconstruction: "loading", heatmap: "loading" };
+    const paneErrors = { source: null, reconstruction: null, heatmap: null };
+    const fetchController = new AbortController();
     let disposed = false;
     let frameId = 0;
+    setHeatmapLegend(null);
+    setStatus("Loaded 0 of 3 comparison panes");
 
-    const registerObject = (sceneId, object) => {
+    const updateLoadStatus = () => {
+      const failures = Object.entries(paneErrors).filter(([, error]) => error);
+      if (failures.length) {
+        setStatus(failures.map(([pane, error]) => `${pane}: ${error}`).join(" | "));
+        return;
+      }
+      const loaded = Object.values(paneStates).filter((state) => state === "loaded").length;
+      setStatus(loaded >= 3
+        ? "Source, reconstruction and deviation heatmap loaded"
+        : `Loaded ${loaded} of 3 comparison panes`);
+    };
+
+    const markLoadError = (sceneId, error) => {
+      paneStates[sceneId] = "failed";
+      paneErrors[sceneId] = error?.message || String(error || `${sceneId} failed to load`);
+      updateLoadStatus();
+    };
+
+    const registerObject = (sceneId, object, markLoaded = true) => {
       scenes[sceneId].add(object);
       paneBounds[sceneId].expandByObject(object);
       frameComparisonCamera(Three, cameras[sceneId], sceneId === "source" ? controls : null, paneBounds[sceneId]);
-      loadedSceneIds.add(sceneId);
-      if (loadedSceneIds.size >= 3) {
-        setStatus("Source, reconstruction and deviation heatmap loaded");
-      } else {
-        setStatus(`Loaded ${loadedSceneIds.size} of 3 comparison panes`);
+      if (markLoaded) {
+        paneStates[sceneId] = "loaded";
+        paneErrors[sceneId] = null;
+        updateLoadStatus();
       }
     };
 
+    const replaceOverlays = () => {
+      for (const pane of ["source", "reconstruction"]) {
+        if (overlayGroups[pane]) {
+          scenes[pane].remove(overlayGroups[pane]);
+          disposeScene(overlayGroups[pane]);
+        }
+        const group = new Three.Group();
+        group.userData.overlayKind = "inspection-overlays";
+        const current = latestRef.current || {};
+        addInspectionOverlays(
+          Three,
+          group,
+          current.inspection,
+          current.overlays,
+          pane,
+        );
+        overlayGroups[pane] = group;
+        scenes[pane].add(group);
+      }
+    };
+
+    const replaceHeatmap = (payload = null) => {
+      if (disposed) return;
+      const isNewArtifact = Array.isArray(payload?.vertices);
+      if (isNewArtifact) heatmapFilterData = heatmapFilterPayload(payload);
+      if (!heatmapFilterData) return;
+      const current = latestRef.current || {};
+      const selection = heatmapTriangleSelection(
+        heatmapFilterData,
+        current.semanticRegion,
+        current.semanticRegionAliases,
+      );
+      if (isNewArtifact) {
+        if (heatmapMesh) {
+          scenes.heatmap.remove(heatmapMesh);
+          disposeScene(heatmapMesh);
+        }
+        heatmapMesh = heatmapObject(Three, payload, selection.indexes);
+        registerObject("heatmap", heatmapMesh);
+        setHeatmapLegend(payload?.legend || null);
+      } else if (heatmapMesh) {
+        applyHeatmapSelection(
+          heatmapMesh.geometry,
+          heatmapFilterData.triangles,
+          selection.indexes,
+        );
+      }
+      current.onRegionFilterStatus?.(selection);
+    };
+
+    sessionRef.current = { replaceOverlays, replaceHeatmap };
+    replaceOverlays();
+
     const loader = new Loader();
-    loader.load(artifactUrls.source, (geometry) => {
-      if (disposed) return geometry.dispose();
-      registerObject("source", neutralMesh(Three, geometry));
-      addInspectionOverlays(Three, scenes.source, inspection, overlays, "source");
-    }, undefined, (error) => {
-      if (disposed) return;
-      setStatus(error?.message || "Source STL failed to load");
-    });
-    loader.load(artifactUrls.reconstruction, (geometry) => {
-      if (disposed) return geometry.dispose();
-      registerObject("reconstruction", neutralMesh(Three, geometry));
-      addInspectionOverlays(Three, scenes.reconstruction, inspection, overlays, "reconstruction");
-    }, undefined, (error) => {
-      if (disposed) return;
-      setStatus(error?.message || "Reconstruction STL failed to load");
-    });
-    fetch(artifactUrls.heatmap)
+    const loadStl = (sceneId, url, failureMessage) => {
+      fetch(url, { signal: fetchController.signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`${response.status} ${failureMessage}`);
+          return response.arrayBuffer();
+        })
+        .then((buffer) => {
+          if (disposed || fetchController.signal.aborted) return;
+          const geometry = loader.parse(buffer);
+          if (disposed) return geometry.dispose();
+          registerObject(sceneId, neutralMesh(Three, geometry));
+        })
+        .catch((error) => {
+          if (disposed || error?.name === "AbortError") return;
+          markLoadError(sceneId, error || new Error(failureMessage));
+        });
+    };
+    loadStl("source", artifactUrls.source, "Source STL failed to load");
+    if (artifactUrls.geometricManifest) {
+      fetch(artifactUrls.geometricManifest, { signal: fetchController.signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`${response.status} Geometric Manifest failed to load`);
+          return response.json();
+        })
+        .then((payload) => {
+          if (disposed) return;
+          registerObject("reconstruction", geometricManifestObject(Three, payload));
+          if (heatmapBase) {
+            scenes.heatmap.remove(heatmapBase);
+            disposeScene(heatmapBase);
+          }
+          heatmapBase = geometricManifestObject(Three, payload, {
+            mode: "heatmap-neutral-base",
+          });
+          registerObject("heatmap", heatmapBase, false);
+        })
+        .catch((error) => {
+          if (disposed || error?.name === "AbortError") return;
+          markLoadError("reconstruction", error);
+        });
+    } else {
+      loadStl("reconstruction", artifactUrls.reconstruction, "Reconstruction STL failed to load");
+    }
+    fetch(artifactUrls.heatmap, { signal: fetchController.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`${response.status} heatmap failed to load`);
         return response.json();
       })
       .then((payload) => {
         if (disposed) return;
-        const selection = heatmapTriangleSelection(payload, semanticRegion, semanticRegionAliases);
-        heatmapMesh = heatmapObject(Three, payload, selection.indexes);
-        registerObject("heatmap", heatmapMesh);
-        onRegionFilterStatus?.(selection);
+        replaceHeatmap(payload);
       })
       .catch((error) => {
-        if (disposed) return;
-        setStatus(error instanceof Error ? error.message : String(error));
+        if (disposed || error?.name === "AbortError") return;
+        markLoadError("heatmap", error);
       });
 
     const resize = () => Object.entries(renderers).forEach(([sceneId, renderer]) => {
@@ -119,7 +231,8 @@ export function StepComparisonScene({ artifactUrls, inspection, overlays, semant
     animate();
 
     const pointerMove = (event) => {
-      if (!heatmapMesh || !onHeatmapReadout) return;
+      const readout = latestRef.current?.onHeatmapReadout;
+      if (!heatmapMesh || !readout) return;
       const canvasRect = renderers.heatmap.domElement.getBoundingClientRect();
       const pointer = new Three.Vector2(
         ((event.clientX - canvasRect.left) / canvasRect.width) * 2 - 1,
@@ -129,13 +242,15 @@ export function StepComparisonScene({ artifactUrls, inspection, overlays, semant
       const hit = raycaster.intersectObject(heatmapMesh, false)[0];
       if (!hit?.face) return;
       const errors = heatmapMesh.geometry.getAttribute("errorMm");
-      const error = errors?.getX(hit.face.a);
-      onHeatmapReadout({ error_mm: error, point_mm: hit.point.toArray() });
+      const error = interpolateFaceAttribute(Three, heatmapMesh, hit, errors);
+      readout({ error_mm: error, point_mm: hit.point.toArray() });
     };
     renderers.heatmap.domElement.addEventListener("pointermove", pointerMove);
 
     return () => {
       disposed = true;
+      fetchController.abort();
+      if (sessionRef.current?.replaceHeatmap === replaceHeatmap) sessionRef.current = null;
       window.cancelAnimationFrame(frameId);
       observer.disconnect();
       renderers.heatmap.domElement.removeEventListener("pointermove", pointerMove);
@@ -149,12 +264,23 @@ export function StepComparisonScene({ artifactUrls, inspection, overlays, semant
         if (renderer.domElement.parentNode === pane) pane.removeChild(renderer.domElement);
       });
     };
-  }, [artifactUrls?.source, artifactUrls?.reconstruction, artifactUrls?.heatmap, inspection, overlays, semanticRegion, semanticRegionAliases, onHeatmapReadout, onRegionFilterStatus, runtime]);
+  }, [artifactUrls?.source, artifactUrls?.reconstruction, artifactUrls?.heatmap, artifactUrls?.geometricManifest, runtime]);
+
+  useEffect(() => {
+    sessionRef.current?.replaceOverlays();
+  }, [inspection, overlays]);
+
+  useEffect(() => {
+    sessionRef.current?.replaceHeatmap();
+  }, [semanticRegion, semanticRegionAliases]);
 
   return h("div", { className: "step-comparison-scene", ref: containerRef, "data-testid": "step-comparison-scene" },
     h("div", { className: "comparison-pane source", ref: sourcePaneRef }, h("span", { className: "comparison-pane-label" }, "SOURCE STEP")),
-    h("div", { className: "comparison-pane reconstruction", ref: reconstructionPaneRef }, h("span", { className: "comparison-pane-label" }, "V1.1.2 RECONSTRUCTION")),
-    h("div", { className: "comparison-pane heatmap", ref: heatmapPaneRef }, h("span", { className: "comparison-pane-label" }, "DEVIATION HEATMAP")),
+    h("div", { className: "comparison-pane reconstruction", ref: reconstructionPaneRef }, h("span", { className: "comparison-pane-label" }, `${inspection?.reconstructionVariant || "V1.1.2"} RECONSTRUCTION`)),
+    h("div", { className: "comparison-pane heatmap", ref: heatmapPaneRef },
+      h("span", { className: "comparison-pane-label" }, "DEVIATION HEATMAP"),
+      h(HeatmapColorBar, { legend: heatmapLegend }),
+    ),
     h("p", { className: "comparison-load-status", role: "status" }, status),
   );
 }
@@ -174,6 +300,140 @@ function neutralMesh(Three, geometry) {
   return new Three.Mesh(geometry, new Three.MeshStandardMaterial({ color: "#e8ecea", roughness: 0.72, metalness: 0.05, side: Three.DoubleSide }));
 }
 
+export function geometricManifestObject(Three, payload, options = {}) {
+  const group = new Three.Group();
+  const neutralBase = options.mode === "heatmap-neutral-base";
+  group.userData.overlayKind = neutralBase
+    ? "heatmap-neutral-base"
+    : "geometric-manifest";
+  const surfaces = Array.isArray(payload?.surfaces) ? payload.surfaces : [];
+  for (const surface of surfaces) {
+    const grid = rectangularUvGrid(surface?.uv_grid);
+    if (!grid) continue;
+    const rows = grid.length;
+    const columns = grid[0].length;
+    const points = grid.flat();
+    const geometry = new Three.BufferGeometry();
+    geometry.setAttribute("position", new Three.Float32BufferAttribute(points.flat(), 3));
+    const indices = [];
+    for (let row = 0; row < rows - 1; row += 1) {
+      for (let column = 0; column < columns - 1; column += 1) {
+        const a = row * columns + column;
+        const b = a + 1;
+        const c = (row + 1) * columns + column;
+        const d = c + 1;
+        indices.push(a, c, b, b, c, d);
+      }
+    }
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const color = neutralBase
+      ? "#d9dddb"
+      : surface?.display?.color || manifestSurfaceColor(surface?.role);
+    if (!neutralBase) {
+      const depthMesh = new Three.Mesh(geometry.clone(), new Three.MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: true,
+        depthTest: true,
+        side: Three.DoubleSide,
+      }));
+      depthMesh.userData = {
+        overlayKind: "geometric-manifest-depth",
+        surfaceId: surface?.id,
+        surfaceRole: surface?.role,
+      };
+      depthMesh.renderOrder = 0;
+      group.add(depthMesh);
+    }
+    const mesh = new Three.Mesh(geometry, new Three.MeshStandardMaterial({
+      color,
+      roughness: 0.72,
+      metalness: 0.02,
+      transparent: !neutralBase,
+      opacity: neutralBase ? 1.0 : 0.42,
+      depthWrite: neutralBase,
+      depthTest: true,
+      side: Three.DoubleSide,
+    }));
+    mesh.renderOrder = neutralBase ? 0 : 1;
+    mesh.userData = {
+      overlayKind: neutralBase
+        ? "heatmap-neutral-surface"
+        : "geometric-manifest-surface",
+      surfaceId: surface?.id,
+      surfaceRole: surface?.role,
+      comparisonDisposition: surface?.comparison?.disposition || null,
+    };
+    group.add(mesh);
+    if (!neutralBase) {
+      const wireMaterial = new Three.LineBasicMaterial({ color: surface?.display?.wire_color || "#263d37", transparent: true, opacity: 0.72, depthTest: true });
+      const wires = manifestUvSegments(Three, grid, wireMaterial, surface);
+      wires.renderOrder = 2;
+      group.add(wires);
+    }
+  }
+  if (!group.children.length) throw new Error("Geometric Manifest contains no renderable UV surfaces");
+  return group;
+}
+
+function rectangularUvGrid(value) {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const columns = Array.isArray(value[0]) ? value[0].length : 0;
+  if (columns < 2) return null;
+  const grid = value.map((row) => Array.isArray(row) ? row.filter(validManifestPoint).map((point) => point.slice(0, 3).map(Number)) : []);
+  return grid.every((row) => row.length === columns) ? grid : null;
+}
+
+function validManifestPoint(point) {
+  return Array.isArray(point) && point.length >= 3 && point.slice(0, 3).every((value) => Number.isFinite(Number(value)));
+}
+
+function manifestUvSegments(Three, grid, material, surface) {
+  const segmentPoints = [];
+  for (const row of grid) {
+    for (let index = 0; index < row.length - 1; index += 1) {
+      segmentPoints.push(new Three.Vector3(...row[index]), new Three.Vector3(...row[index + 1]));
+    }
+  }
+  for (let column = 0; column < grid[0].length; column += 1) {
+    for (let row = 0; row < grid.length - 1; row += 1) {
+      segmentPoints.push(
+        new Three.Vector3(...grid[row][column]),
+        new Three.Vector3(...grid[row + 1][column]),
+      );
+    }
+  }
+  const lines = new Three.LineSegments(
+    new Three.BufferGeometry().setFromPoints(segmentPoints),
+    material,
+  );
+  lines.userData = { overlayKind: "geometric-manifest-uv", surfaceId: surface?.id, surfaceRole: surface?.role };
+  return lines;
+}
+
+function manifestSurfaceColor(role) {
+  if (["blade_pressure", "blade_suction", "hub_support", "shroud_support"].includes(role)) return "#759b7d";
+  return "#e0b33e";
+}
+
+function HeatmapColorBar({ legend }) {
+  if (!legend) return null;
+  const values = [
+    ["MIN", legend.minimum_mm],
+    ["COLOR MAX (P95)", legend.clip_p95_mm ?? legend.p95_mm],
+  ].filter(([, value]) => Number.isFinite(Number(value)));
+  if (!values.length) return null;
+  return h("div", { className: "heatmap-colorbar", "data-testid": "heatmap-colorbar" },
+    h("div", { className: "heatmap-colorbar-gradient" }),
+    h("div", { className: "heatmap-colorbar-values" },
+      values.map(([label, value]) => h("span", { key: label }, `${label} ${Number(value).toFixed(3)} mm`)),
+    ),
+    Number.isFinite(Number(legend.maximum_mm))
+      ? h("span", { className: "heatmap-colorbar-clipped-max" }, `DATA MAX ${Number(legend.maximum_mm).toFixed(3)} mm (clipped)`)
+      : null,
+  );
+}
+
 function heatmapObject(Three, payload, included) {
   const positions = Array.isArray(payload?.vertices) ? payload.vertices : [];
   const colors = Array.isArray(payload?.colors_rgb) ? payload.colors_rgb : [];
@@ -181,11 +441,44 @@ function heatmapObject(Three, payload, included) {
   const triangles = Array.isArray(payload?.triangles) ? payload.triangles : [];
   const geometry = new Three.BufferGeometry();
   geometry.setAttribute("position", new Three.Float32BufferAttribute(positions.flat(), 3));
-  geometry.setAttribute("color", new Three.Float32BufferAttribute(colors.flat(), 3));
+  const linearColors = colors.flatMap((rgb) => {
+    const color = new Three.Color().setRGB(
+      Number(rgb?.[0]) || 0,
+      Number(rgb?.[1]) || 0,
+      Number(rgb?.[2]) || 0,
+      Three.SRGBColorSpace,
+    );
+    return color.toArray();
+  });
+  geometry.setAttribute("color", new Three.Float32BufferAttribute(linearColors, 3));
   geometry.setAttribute("errorMm", new Three.Float32BufferAttribute(errors, 1));
-  geometry.setIndex(included.flatMap((index) => triangleVertexIndexes(triangles[index])));
-  geometry.computeVertexNormals();
-  return new Three.Mesh(geometry, new Three.MeshStandardMaterial({ vertexColors: true, roughness: 0.76, metalness: 0, side: Three.DoubleSide }));
+  const fullIndexes = triangles.flatMap(triangleVertexIndexes);
+  const IndexArray = positions.length > 65535 ? Uint32Array : Uint16Array;
+  const indexAttribute = new Three.BufferAttribute(new IndexArray(fullIndexes.length), 1);
+  indexAttribute.setUsage(Three.DynamicDrawUsage);
+  geometry.setIndex(indexAttribute);
+  applyHeatmapSelection(geometry, triangles, included);
+  return new Three.Mesh(geometry, new Three.MeshBasicMaterial({
+    vertexColors: true,
+    side: Three.DoubleSide,
+    toneMapped: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  }));
+}
+
+function applyHeatmapSelection(geometry, triangles, included) {
+  const indexes = included.flatMap((index) => triangleVertexIndexes(triangles[index]));
+  const attribute = geometry.getIndex();
+  if (!attribute || indexes.length > attribute.array.length) {
+    throw new Error("Heatmap selection exceeds the immutable index capacity");
+  }
+  attribute.array.set(indexes, 0);
+  attribute.clearUpdateRanges?.();
+  attribute.addUpdateRange?.(0, indexes.length);
+  attribute.needsUpdate = true;
+  geometry.setDrawRange(0, indexes.length);
 }
 
 function triangleVertexIndexes(triangle) {
@@ -195,8 +488,41 @@ function triangleVertexIndexes(triangle) {
   return Array.isArray(indexes) ? indexes.filter(validTriangleIndex) : [];
 }
 
+function heatmapFilterPayload(payload) {
+  const keys = [
+    "triangles",
+    "triangle_source_region_ids",
+    "triangle_region_ids",
+    "triangle_regions",
+    "triangle_metadata",
+    "regions",
+    "regional_records",
+    "semantic_regions",
+  ];
+  return Object.fromEntries(
+    keys.filter((key) => payload?.[key] !== undefined).map((key) => [key, payload[key]]),
+  );
+}
+
 function validTriangleIndex(value) {
   return Number.isInteger(value) && value >= 0;
+}
+
+function interpolateFaceAttribute(Three, mesh, hit, attribute) {
+  if (!hit?.face || !attribute) return null;
+  const barycentric = hit.barycoord?.clone?.() || new Three.Vector3();
+  if (!hit.barycoord) {
+    const positions = mesh.geometry.getAttribute("position");
+    const first = new Three.Vector3().fromBufferAttribute(positions, hit.face.a);
+    const second = new Three.Vector3().fromBufferAttribute(positions, hit.face.b);
+    const third = new Three.Vector3().fromBufferAttribute(positions, hit.face.c);
+    Three.Triangle.getBarycoord(hit.point, first, second, third, barycentric);
+  }
+  return (
+    barycentric.x * attribute.getX(hit.face.a)
+    + barycentric.y * attribute.getX(hit.face.b)
+    + barycentric.z * attribute.getX(hit.face.c)
+  );
 }
 
 function addInspectionOverlays(Three, scene, inspection, overlays, pane) {
@@ -214,7 +540,14 @@ function addInspectionOverlays(Three, scene, inspection, overlays, pane) {
     addRzEvidence(Three, scene, inspection.supportGeometry?.openTip, "#52635e", true, "open-tip-reference");
   }
   if (overlays?.spanSurfaces) addSpanSurfaces(Three, scene, inspection.stations);
-  if (overlays?.representativeBlade) addRepresentativeEvidence(Three, scene, inspection.representative);
+  if (overlays?.representativeBlade) {
+    addRepresentativeEvidence(
+      Three,
+      scene,
+      inspection.representative,
+      inspection.comparisonPhaseDeg,
+    );
+  }
 }
 
 function axisOverlay(Three, axis) {
@@ -281,21 +614,32 @@ function addSpanSurfaces(Three, scene, stations) {
   }
 }
 
-function addRepresentativeEvidence(Three, scene, representative) {
+function addRepresentativeEvidence(Three, scene, representative, phaseDeg = 0) {
   const loops = Array.isArray(representative?.section_loops) ? representative.section_loops : [];
   if (loops.length) {
-    loops.forEach((loop) => addPointEvidence(Three, scene, loop, "#005ea8", "representative-blade-evidence"));
+    loops.forEach((loop) => {
+      const line = addPointEvidence(Three, scene, loop, "#005ea8", "representative-blade-evidence");
+      applyPeriodicPhase(line, phaseDeg);
+    });
     return;
   }
-  addPointEvidence(Three, scene, representative, "#005ea8", "representative-blade-evidence");
+  const line = addPointEvidence(Three, scene, representative, "#005ea8", "representative-blade-evidence");
+  applyPeriodicPhase(line, phaseDeg);
 }
 
 function addPointEvidence(Three, scene, evidence, color, overlayKind) {
   const points = pointTable(evidence);
-  if (points.length < 2) return;
+  if (points.length < 2) return null;
   const line = new Three.Line(new Three.BufferGeometry().setFromPoints(points.map((point) => vectorFrom(Three, point))), new Three.LineBasicMaterial({ color }));
   line.userData.overlayKind = overlayKind;
   scene.add(line);
+  return line;
+}
+
+function applyPeriodicPhase(object, phaseDeg) {
+  if (!object || !Number.isFinite(Number(phaseDeg))) return;
+  object.rotation.z = Number(phaseDeg) * Math.PI / 180;
+  object.userData.periodicPhaseAppliedDeg = Number(phaseDeg);
 }
 
 function pointTable(evidence) {

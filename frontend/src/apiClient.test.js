@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 
-import { instantiateImpeller, instantiatePresetImpeller } from "./apiClient.js";
+import {
+  instantiateImpeller,
+  instantiatePresetImpeller,
+  stepReconstructionAuditStatus,
+} from "./apiClient.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -101,5 +105,19 @@ describe("impeller API client", () => {
     );
 
     assert.deepEqual(requestBody.blade_to_blade_loop_family_overrides, bladeToBladeLoopFamilyOverrides);
+  });
+
+  test("STEP audit request errors retain the HTTP status for terminal polling decisions", async () => {
+    globalThis.fetch = async () => new Response(
+      JSON.stringify({ detail: "unknown STEP reconstruction audit" }),
+      { status: 404, headers: { "Content-Type": "application/json" } },
+    );
+
+    await assert.rejects(
+      stepReconstructionAuditStatus("http://api.test", "missing-audit"),
+      (error) => error instanceof Error
+        && error.status === 404
+        && /unknown STEP reconstruction audit/.test(error.message),
+    );
   });
 });

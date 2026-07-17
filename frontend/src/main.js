@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 
-import { App } from "./App.js?v=1.1.15";
+import { App } from "./App.js?v=1.1.17";
 
 const h = React.createElement;
 

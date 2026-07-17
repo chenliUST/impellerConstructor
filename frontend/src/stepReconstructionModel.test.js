@@ -3,15 +3,92 @@ import { describe, test } from "node:test";
 
 import {
   attachmentReportRows,
+  auditArtifactUrls,
   comparisonViewportRects,
   defaultStepOverlayVisibility,
+  heatmapLegend,
   inspectionPolylinePoints,
+  heatmapTriangleSelection,
   reportSummaryRows,
+  semanticRegionOptions,
   selectedInspectionProvenance,
   stepInspectionModel,
+  unsupportedSourceFeatures,
 } from "./stepReconstructionModel.js";
 
 describe("STEP reconstruction model", () => {
+  test("exposes comparison phase and scoped unsupported source faces", () => {
+    const manifest = task8Manifest("open");
+    manifest.comparison_alignment = { rotation_about_axis_deg: -10.625 };
+    manifest.reconstruction = {
+      reconstruction_variant: "v1.1.6_adaptive_review_extension_r1",
+    };
+    manifest.comparison_scope = {
+      excluded_surfaces: [{
+        source_face_id: "source-face-9",
+        semantic_role: "source_material_boundary",
+        reason: "unsupported_spline_or_keyway",
+      }],
+    };
+
+    assert.equal(stepInspectionModel(manifest).comparisonPhaseDeg, -10.625);
+    assert.equal(
+      stepInspectionModel(manifest).reconstructionVariant,
+      "v1.1.6_adaptive_review_extension_r1",
+    );
+    assert.deepEqual(
+      unsupportedSourceFeatures(manifest).map((record) => record.source_face_id),
+      ["source-face-9"],
+    );
+  });
+
+  test("binds declared R8 Geometric Manifest and preserves legacy STL fallback", () => {
+    const urls = auditArtifactUrls("http://127.0.0.1:8061/", "step-audit-abc", {
+      artifacts: { geometric_manifest: { file_name: "geometric-manifest.json" } },
+    });
+    assert.equal(urls.geometricManifest, "http://127.0.0.1:8061/api/step-reconstruction-audits/step-audit-abc/artifacts/geometric-manifest.json");
+    assert.equal(
+      auditArtifactUrls("http://127.0.0.1:8061/", "legacy-audit").geometricManifest,
+      undefined,
+    );
+    assert.deepEqual(heatmapLegend({ comparison: { reconstruction_to_corresponding_source: { minimum_mm: 0.1, median_mm: 0.2, p95_mm: 0.3, maximum_mm: 0.4 } } }), [
+      { label: "Triangle-centroid min", value: 0.1 },
+      { label: "Triangle-centroid median", value: 0.2 },
+      { label: "Triangle-centroid P95", value: 0.3 },
+      { label: "Triangle-centroid max", value: 0.4 },
+    ]);
+    assert.deepEqual(
+      heatmapLegend({ comparison: { bidirectional: { minimum_mm: 99 } } }),
+      [],
+    );
+  });
+
+  test("normalizes object-valued R8 comparison regions and never selects zero triangles", () => {
+    const options = semanticRegionOptions({
+      comparison: {
+        regions: {
+          blade_sides: { reconstruction_triangle_count: 2 },
+          blade_root_attachment: { reconstruction_triangle_count: 1 },
+        },
+      },
+    });
+    assert.deepEqual(options.map((option) => option.id), [
+      "all",
+      "blade_sides",
+      "blade_root_attachment",
+    ]);
+    const selection = heatmapTriangleSelection(
+      {
+        triangles: [[0, 1, 2]],
+        triangle_regions: ["blade_sides"],
+      },
+      "blade_root_attachment",
+      ["blade_root_attachment"],
+    );
+    assert.equal(selection.mode, "evidence-only");
+    assert.deepEqual(selection.indexes, [0]);
+  });
+
   test("keeps the three renderer viewports in a stable comparison grid", () => {
     assert.deepEqual(comparisonViewportRects(1001, 801), {
       source: { x: 0, y: 400, width: 500, height: 401 },

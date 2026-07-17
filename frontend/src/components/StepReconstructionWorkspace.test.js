@@ -36,6 +36,68 @@ describe("STEP reconstruction workspace", () => {
     });
   });
 
+  test("keeps audit polling serial and aborts the in-flight status request on unmount", async () => {
+    await withDom(async (container) => {
+      const requests = [];
+      let intervalCalls = 0;
+      window.setInterval = () => {
+        intervalCalls += 1;
+        return 1;
+      };
+      globalThis.fetch = (_url, options = {}) => new Promise((_resolve, reject) => {
+        requests.push({ signal: options.signal, reject });
+      });
+      const root = createRoot(container);
+      await act(async () => root.render(React.createElement(StepReconstructionWorkspace, {
+        apiBase: "http://example.test",
+        initialAuditId: "serial-poll-audit",
+        SceneComponent: () => React.createElement("div", null, "unused scene"),
+      })));
+      await act(async () => Promise.resolve());
+      assert.equal(requests.length, 1);
+      assert.equal(intervalCalls, 0);
+      assert.equal(requests[0].signal.aborted, false);
+      await act(async () => root.unmount());
+      assert.equal(requests[0].signal.aborted, true);
+    });
+  });
+
+  test("stops polling and removes a stale deep-link after a missing audit response", async () => {
+    await withDom(async (container) => {
+      window.history.replaceState({}, "", "/?stepAudit=missing-audit");
+      let requests = 0;
+      let retrySchedules = 0;
+      const realSetTimeout = window.setTimeout.bind(window);
+      window.setTimeout = (callback, delay, ...args) => {
+        if (delay >= 1200) {
+          retrySchedules += 1;
+          return 1;
+        }
+        return realSetTimeout(callback, delay, ...args);
+      };
+      globalThis.fetch = async () => {
+        requests += 1;
+        return new Response(
+          JSON.stringify({ detail: "unknown STEP reconstruction audit" }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        );
+      };
+      const root = createRoot(container);
+      await act(async () => root.render(React.createElement(StepReconstructionWorkspace, {
+        apiBase: "http://example.test",
+        initialAuditId: "missing-audit",
+        SceneComponent: () => React.createElement("div", null, "unused scene"),
+      })));
+      await act(async () => new Promise((resolve) => realSetTimeout(resolve, 20)));
+      assert.equal(requests, 1);
+      assert.equal(retrySchedules, 0);
+      assert.equal(window.location.search, "");
+      assert.match(container.textContent, /is not available in the current backend/);
+      assert.equal(container.querySelector(".step-audit-toolbar code"), null);
+      await act(async () => root.unmount());
+    });
+  });
+
   test("renders incomplete evidence without a white screen and exposes unavailable station evidence", async () => {
     await withDom(async (container) => {
       const stale = { ...manifest(), parameter_mapping: { source_section_loops: [] } };

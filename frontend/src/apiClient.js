@@ -93,17 +93,17 @@ export async function createStepReconstructionAudit(apiBase, file) {
   );
 }
 
-export async function stepReconstructionAuditStatus(apiBase, auditId) {
+export async function stepReconstructionAuditStatus(apiBase, auditId, options = {}) {
   return requestJson(
     `${normalizeBase(apiBase)}/api/step-reconstruction-audits/${encodeURIComponent(auditId)}`,
-    { method: "GET" },
+    { method: "GET", signal: options.signal },
   );
 }
 
-export async function stepReconstructionAuditManifest(apiBase, auditId) {
+export async function stepReconstructionAuditManifest(apiBase, auditId, options = {}) {
   return requestJson(
     `${normalizeBase(apiBase)}/api/step-reconstruction-audits/${encodeURIComponent(auditId)}/manifest`,
-    { method: "GET" },
+    { method: "GET", signal: options.signal },
   );
 }
 
@@ -122,7 +122,9 @@ async function requestJson(url, options) {
   if (!response.ok) {
     const detail = payload.detail || response.statusText || "API request failed";
     const message = Array.isArray(detail) ? detail.map((item) => item.msg).join("; ") : String(detail);
-    throw new Error(`${response.status} ${message}`);
+    const error = new Error(`${response.status} ${message}`);
+    error.status = response.status;
+    throw error;
   }
 
   return payload;

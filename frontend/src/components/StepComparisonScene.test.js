@@ -5,12 +5,72 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import * as THREE from "three";
 
-import { StepComparisonScene } from "./StepComparisonScene.js";
+import { geometricManifestObject, StepComparisonScene } from "./StepComparisonScene.js";
 import { stepInspectionModel } from "../stepReconstructionModel.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("STEP comparison scene", () => {
+  test("renders Geometric Manifest shade and only row/column UV iso-lines", () => {
+    const group = geometricManifestObject(THREE, {
+      surfaces: [{
+        id: "blade-pressure-1", role: "blade_pressure", display: { color: "#73977a" },
+        uv_grid: [
+          [[0, 0, 0], [1, 0, 0], [2, 0, 0]],
+          [[0, 1, 0], [1, 1, 0.2], [2, 1, 0]],
+        ],
+      }],
+    });
+    const shade = group.children.filter((object) => object.userData?.overlayKind === "geometric-manifest-surface");
+    const depth = group.children.filter((object) => object.userData?.overlayKind === "geometric-manifest-depth");
+    const uvLines = group.children.filter((object) => object.userData?.overlayKind === "geometric-manifest-uv");
+    assert.equal(shade.length, 1);
+    assert.equal(shade[0].material.transparent, true);
+    assert.equal(shade[0].material.depthWrite, false);
+    assert.equal(depth.length, 1);
+    assert.equal(depth[0].material.colorWrite, false);
+    assert.equal(depth[0].material.depthWrite, true);
+    assert.equal(uvLines.length, 1);
+    assert.equal(uvLines[0].isLineSegments, true);
+    assert.equal(uvLines[0].geometry.getAttribute("position").count, 14);
+  });
+
+  test("renders a complete opaque neutral manifest base behind heatmap colors", () => {
+    const group = geometricManifestObject(THREE, {
+      surfaces: [{
+        id: "mounting-bore", role: "mounting_bore",
+        comparison: { disposition: "EXCLUDED_NOT_EVALUATED" },
+        uv_grid: [
+          [[0, 0, 0], [1, 0, 0]],
+          [[0, 1, 0], [1, 1, 0]],
+        ],
+      }],
+    }, { mode: "heatmap-neutral-base" });
+    const neutral = group.children.filter((object) => object.userData?.overlayKind === "heatmap-neutral-surface");
+    const uvLines = group.children.filter((object) => object.userData?.overlayKind === "geometric-manifest-uv");
+    assert.equal(neutral.length, 1);
+    assert.equal(neutral[0].material.transparent, false);
+    assert.equal(neutral[0].material.depthWrite, true);
+    assert.equal(neutral[0].userData.comparisonDisposition, "EXCLUDED_NOT_EVALUATED");
+    assert.equal(uvLines.length, 0);
+  });
+
+  test("shows an explicit millimetric heatmap color bar", async () => {
+    await withScene(async ({ container, runtime, setHeatmap }) => {
+      setHeatmap({
+        triangles: [[0, 1, 2]], vertices: vertices(), colors_rgb: colors(), errors_mm: [0.1, 0.2, 0.3],
+        legend: { minimum_mm: 0.1, clip_p95_mm: 0.28, maximum_mm: 0.3, units: "mm" },
+      });
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime)));
+      await flush();
+      const colorbar = container.querySelector("[data-testid='heatmap-colorbar']");
+      assert.match(colorbar.textContent, /COLOR MAX \(P95\) 0\.280 mm/);
+      assert.match(colorbar.textContent, /DATA MAX 0\.300 mm \(clipped\)/);
+      await act(async () => root.unmount());
+    });
+  });
+
   test("uses one native-DPR renderer per comparison pane and releases all resources on unmount", async () => {
     await withScene(async ({ container, runtime }) => {
       const root = createRoot(container);
@@ -58,6 +118,56 @@ describe("STEP comparison scene", () => {
     });
   });
 
+  test("changes heatmap region by mutating one fixed-capacity index buffer", async () => {
+    await withScene(async ({ container, runtime, setHeatmap }) => {
+      setHeatmap({
+        triangles: [[0, 1, 2], [0, 2, 3]],
+        vertices: vertices(),
+        colors_rgb: colors(),
+        errors_mm: [0.1, 0.2, 0.3, 0.4],
+        triangle_region_ids: ["blade", "hub"],
+      });
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime)));
+      await flush();
+      const mesh = heatmapMesh(runtime.renderers[2]);
+      assert.equal(mesh.geometry.getIndex().count, 6);
+      assert.equal(mesh.geometry.drawRange.count, 6);
+      assert.equal(mesh.material.isMeshBasicMaterial, true);
+      const indexAttribute = mesh.geometry.getIndex();
+      assert.equal(indexAttribute.usage, THREE.DynamicDrawUsage);
+
+      await act(async () => root.render(sceneElement(runtime, {
+        semanticRegion: "blade",
+        semanticRegionAliases: ["blade"],
+      })));
+      await flush();
+      assert.equal(runtime.renderers.length, 3);
+      assert.equal(heatmapMesh(runtime.renderers[2]), mesh);
+      assert.equal(mesh.geometry.getIndex(), indexAttribute);
+      assert.equal(mesh.geometry.getIndex().count, 6);
+      assert.equal(mesh.geometry.drawRange.count, 3);
+      assert.deepEqual(indexAttribute.updateRanges.at(-1), { start: 0, count: 3 });
+      await act(async () => root.unmount());
+    });
+  });
+
+  test("converts persisted sRGB heatmap colors to linear display values", async () => {
+    await withScene(async ({ container, runtime, setHeatmap }) => {
+      setHeatmap({
+        triangles: [[0, 1, 2]], vertices: vertices(),
+        colors_rgb: [[0.5, 0.5, 0.5], [0, 0, 0], [1, 1, 1], [0, 0, 0]],
+        errors_mm: [0.1, 0.2, 0.3, 0.4],
+      });
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime)));
+      await flush();
+      const color = heatmapMesh(runtime.renderers[2]).geometry.getAttribute("color");
+      assert.ok(Math.abs(color.getX(0) - 0.214041) < 0.00001);
+      await act(async () => root.unmount());
+    });
+  });
+
   test("keeps open-tip evidence hidden by default, draws it dashed when enabled, and shades closed shroud material", async () => {
     await withScene(async ({ container, runtime }) => {
       const root = createRoot(container);
@@ -72,8 +182,9 @@ describe("STEP comparison scene", () => {
       await act(async () => root.render(sceneElement(runtime, { inspection: task8Inspection("closed"), overlays: overlayState({ tipSupport: true }) })));
       await flush();
       assert.equal(overlayCount(runtime.renderers, "closed-shroud-material"), 2);
-      assert.equal(overlayCount(runtime.renderers.at(-3), "closed-shroud-material"), 0);
-      assert.equal(overlayCount(runtime.renderers.at(-2), "closed-shroud-material"), 2);
+      assert.equal(runtime.renderers.length, 3);
+      assert.equal(overlayCount(runtime.renderers[0], "closed-shroud-material"), 0);
+      assert.equal(overlayCount(runtime.renderers[1], "closed-shroud-material"), 2);
       assert.ok(overlayObjects(runtime.renderers, "closed-shroud-material").every((object) => object.material?.isMeshStandardMaterial));
       assert.ok(overlayObjects(runtime.renderers, "closed-shroud-material").every((object) => object.rotation.x === Math.PI / 2));
       assert.deepEqual([...new Set(overlayObjects(runtime.renderers, "closed-shroud-material").map((object) => object.userData.profileIndex))].sort(), [0, 1]);
@@ -107,6 +218,61 @@ describe("STEP comparison scene", () => {
     });
   });
 
+  test("keeps source-derived reconstruction overlays in the already aligned frame", async () => {
+    await withScene(async ({ container, runtime }) => {
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime, {
+        inspection: { ...task8Inspection("open"), comparisonPhaseDeg: 17.5 },
+        overlays: overlayState({ selectedLoop: true }),
+      })));
+      await flush();
+      const groups = overlayObjects(runtime.renderers, "inspection-overlays");
+      assert.equal(groups.length, 2);
+      assert.ok(groups.every((group) => group.rotation.z === 0));
+      await act(async () => root.unmount());
+    });
+  });
+
+  test("applies the comparison phase to source-derived representative loops", async () => {
+    await withScene(async ({ container, runtime }) => {
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime, {
+        inspection: { ...task8Inspection("open"), comparisonPhaseDeg: -10.625 },
+        overlays: overlayState({ representativeBlade: true }),
+      })));
+      await flush();
+      const lines = overlayObjects(runtime.renderers[1], "representative-blade-evidence");
+      assert.ok(lines.length > 0);
+      assert.ok(lines.every((line) => Math.abs(line.rotation.z - (-10.625 * Math.PI / 180)) < 1.0e-12));
+      assert.ok(lines.every((line) => line.userData.periodicPhaseAppliedDeg === -10.625));
+      await act(async () => root.unmount());
+    });
+  });
+
+  test("keeps a pane-specific manifest failure visible after heatmap success", async () => {
+    await withScene(async ({ container, runtime }) => {
+      globalThis.fetch = async (url) => ({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+        json: async () => String(url).includes("geometric-manifest")
+          ? { surfaces: [] }
+          : { triangles: [[0, 1, 2]], vertices: vertices(), colors_rgb: colors(), errors_mm: [0.1, 0.2, 0.3] },
+      });
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime, {
+        artifactUrls: {
+          source: "/source.stl",
+          reconstruction: "/reconstruction.stl",
+          heatmap: "/heatmap.json",
+          geometricManifest: "/geometric-manifest.json",
+        },
+      })));
+      await flush();
+      assert.match(container.querySelector("[role='status']").textContent, /reconstruction: Geometric Manifest contains no renderable UV surfaces/);
+      await act(async () => root.unmount());
+    });
+  });
+
   test("keeps STEP and reconstructed shade free of triangulation edge clutter", async () => {
     await withScene(async ({ container, runtime }) => {
       const root = createRoot(container);
@@ -124,9 +290,13 @@ describe("STEP comparison scene", () => {
 
   test("ignores stale load failures after switching audits", async () => {
     await withScene(async ({ container }) => {
-      const runtime = mockRuntime(container.ownerDocument, { deferLoads: true });
-      const heatmapRejectors = [];
-      globalThis.fetch = () => new Promise((_resolve, reject) => heatmapRejectors.push(reject));
+      const runtime = mockRuntime(container.ownerDocument);
+      const rejectors = [];
+      const fetchSignals = [];
+      globalThis.fetch = (_url, options = {}) => {
+        fetchSignals.push(options.signal);
+        return new Promise((_resolve, reject) => rejectors.push(reject));
+      };
       const root = createRoot(container);
 
       await act(async () => root.render(sceneElement(runtime, {
@@ -138,15 +308,44 @@ describe("STEP comparison scene", () => {
       })));
       await flush();
 
-      assert.equal(runtime.loadErrors.length, 4);
-      assert.equal(heatmapRejectors.length, 2);
+      assert.equal(rejectors.length, 6);
+      assert.ok(fetchSignals.slice(0, 3).every((signal) => signal.aborted));
+      assert.ok(fetchSignals.slice(3).every((signal) => !signal.aborted));
+      assert.match(container.querySelector("[role='status']").textContent, /Loaded 0 of 3/);
       await act(async () => {
-        runtime.loadErrors[0](new Error("stale source failure"));
-        runtime.loadErrors[1](new Error("stale reconstruction failure"));
-        heatmapRejectors[0](new Error("stale heatmap failure"));
+        rejectors[0](new Error("stale source failure"));
+        rejectors[1](new Error("stale reconstruction failure"));
+        rejectors[2](new Error("stale heatmap failure"));
         await Promise.resolve();
       });
       assert.doesNotMatch(container.querySelector("[role='status']").textContent, /stale .* failure/);
+      await act(async () => root.unmount());
+    });
+  });
+
+  test("does not parse a stale STL buffer after an audit switch", async () => {
+    await withScene(async ({ container }) => {
+      const runtime = mockRuntime(container.ownerDocument);
+      const requests = [];
+      globalThis.fetch = (_url, options = {}) => new Promise((resolve, reject) => {
+        requests.push({ resolve, reject, signal: options.signal });
+      });
+      const root = createRoot(container);
+      await act(async () => root.render(sceneElement(runtime, {
+        artifactUrls: { source: "/audit-a/source.stl", reconstruction: "/audit-a/reconstruction.stl", heatmap: "/audit-a/heatmap.json" },
+      })));
+      await flush();
+      await act(async () => root.render(sceneElement(runtime, {
+        artifactUrls: { source: "/audit-b/source.stl", reconstruction: "/audit-b/reconstruction.stl", heatmap: "/audit-b/heatmap.json" },
+      })));
+      await flush();
+
+      await act(async () => {
+        requests[0].resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      assert.equal(runtime.parseCalls.count, 0);
       await act(async () => root.unmount());
     });
   });
@@ -182,6 +381,14 @@ function overlayObjects(renderer, kind) {
   return objects;
 }
 
+function heatmapMesh(renderer) {
+  let result = null;
+  renderer.rendered.at(-1).scene.traverse((object) => {
+    if (object.geometry?.getAttribute?.("errorMm")) result = object;
+  });
+  return result;
+}
+
 async function withScene(run) {
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { url: "http://example.test" });
   const previous = { window: globalThis.window, document: globalThis.document, ResizeObserver: globalThis.ResizeObserver, fetch: globalThis.fetch };
@@ -192,15 +399,19 @@ async function withScene(run) {
   dom.window.requestAnimationFrame = () => 17;
   dom.window.cancelAnimationFrame = () => {};
   globalThis.ResizeObserver = class { observe() {} disconnect() {} };
-  globalThis.fetch = async () => ({ ok: true, json: async () => heatmap.value });
+  globalThis.fetch = async (url) => ({
+    ok: true,
+    arrayBuffer: async () => new ArrayBuffer(8),
+    json: async () => String(url).endsWith(".json") ? heatmap.value : {},
+  });
   const runtime = mockRuntime(dom.window.document);
   try { await run({ container: dom.window.document.getElementById("root"), runtime, statuses, setHeatmap: (value) => { heatmap.value = value; } }); } finally { Object.assign(globalThis, previous); dom.window.close(); }
 }
 
-function mockRuntime(document, { deferLoads = false } = {}) {
+function mockRuntime(document) {
   const renderers = [];
   const controls = [];
-  const loadErrors = [];
+  const parseCalls = { count: 0 };
   class Renderer {
     constructor() {
       this.domElement = document.createElement("canvas");
@@ -227,17 +438,14 @@ function mockRuntime(document, { deferLoads = false } = {}) {
     dispose() { this.disposed = true; }
   }
   class Loader {
-    load(_url, onLoad, _onProgress, onError) {
-      if (deferLoads) {
-        loadErrors.push(onError);
-        return;
-      }
+    parse() {
+      parseCalls.count += 1;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices().flat(), 3));
-      onLoad(geometry);
+      return geometry;
     }
   }
-  return { THREE: { ...THREE, WebGLRenderer: Renderer }, OrbitControls: Controls, STLLoader: Loader, renderers, controls, loadErrors };
+  return { THREE: { ...THREE, WebGLRenderer: Renderer }, OrbitControls: Controls, STLLoader: Loader, renderers, controls, parseCalls };
 }
 
 function vertices() { return [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]]; }
