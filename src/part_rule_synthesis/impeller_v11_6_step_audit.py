@@ -24,6 +24,9 @@ import numpy as np
 from part_rule_synthesis.impeller_dsl_resources import load_impeller_dsl_bundle
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
 from part_rule_synthesis.impeller_transition_policies import resolve_transition_policies
+from part_rule_synthesis.impeller_geometry_validation import (
+    build_geometry_validation_report,
+)
 from part_rule_synthesis.impeller_v11_2_canonical import clamped_uniform_knots
 from part_rule_synthesis.impeller_v11_6_comparison_scope import (
     COMPARISON_SCOPE_CONTRACT_ID,
@@ -33,6 +36,11 @@ from part_rule_synthesis import impeller_v11_6_source_frame as source_frame
 from part_rule_synthesis import impeller_v11_6_periodic_blades as periodic_blades
 from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as axis_first_pipeline
 from part_rule_synthesis import impeller_v11_6_pattern_reconstruction as pattern_reconstruction
+from part_rule_synthesis import impeller_v11_6_section_curve_surfaces as section_curve_surfaces
+from part_rule_synthesis.impeller_v11_6_section_overlay import (
+    SectionOverlayError,
+    build_section_overlay_contract,
+)
 from part_rule_synthesis.impeller_v11_6_deviation import (
     DEVIATION_CHECKPOINT_REVISION,
     TriangleMesh,
@@ -51,7 +59,7 @@ from part_rule_synthesis.service import RuleSynthesisService
 AUDIT_CONTRACT_ID = "impeller_v1_1_6_step_reconstruction_audit"
 AUDIT_RUNTIME_VERSION = "1.1.6"
 CANONICAL_GEOMETRY_VERSION = "1.1.2"
-AUDIT_IMPLEMENTATION_REVISION = "axis_first_triangle_surface_r15_3"
+AUDIT_IMPLEMENTATION_REVISION = "axis_first_attachment_patch_complex_r16_24"
 SOURCE_REVIEW_LINEAR_TOLERANCE_MM = 0.06
 SOURCE_REVIEW_ANGULAR_TOLERANCE_RAD = 0.08
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -68,6 +76,7 @@ AUDIT_STAGES = (
     "hub_reconstructed",
     "blade_surfaces_reconstructed",
     "edge_closures_reconstructed",
+    "comparison_preprocessing",
     "deviation_measured",
     "complete",
 )
@@ -87,6 +96,8 @@ FAILURE_REASONS = {
     "v116_step_alignment_failed",
     "v116_step_deviation_failed",
     "v116_step_comparison_scope_failed",
+    "v116_direct_curve_section_conformance_failed",
+    "v116_unexplained_common_z_cutoff",
     "v116_step_ocp_unavailable",
     "v116_step_queue_full",
     "v116_audit_persistence_failed",
@@ -97,10 +108,12 @@ FAILURE_REASONS = {
     "v116_source_sampling_budget_exceeded",
     "v116_source_sampling_extrema_not_converged",
     "v116_hub_support_classification_failed",
+    "v116_hub_support_circumferential_coverage_incomplete",
     "v116_hub_profile_fit_failed",
     "v116_tip_reference_inference_failed",
     "v116_shroud_topology_ambiguous",
     "v116_span_surface_ordering_failed",
+    "v116_active_span_carrier_invalid",
     "v116_periodic_population_ambiguous",
     "v116_periodic_face_signature_contract_invalid",
     "v116_representative_blade_selection_failed",
@@ -416,8 +429,25 @@ class StepReconstructionAuditService:
         reconstruction_stl = audit_dir / "reconstruction.stl"
         shutil.copyfile(reconstruction["stl_path"], reconstruction_stl)
 
-        started = time.perf_counter()
         try:
+            preprocessing_started = time.perf_counter()
+            preprocessing_peak_working_set_bytes = _current_process_working_set_bytes()
+
+            def sample_preprocessing_memory() -> None:
+                nonlocal preprocessing_peak_working_set_bytes
+                current = _current_process_working_set_bytes()
+                preprocessing_peak_working_set_bytes = max(
+                    preprocessing_peak_working_set_bytes,
+                    current,
+                )
+
+            preprocessing_step_count = 7
+            self._set_comparison_preprocessing_progress(
+                audit_id,
+                completed_step_count=0,
+                total_step_count=preprocessing_step_count,
+                detail="comparison_scope_validating",
+            )
             comparison_scope = copy.deepcopy(mapping.get("comparison_scope", {}))
             if (
                 not isinstance(comparison_scope, Mapping)
@@ -436,8 +466,30 @@ class StepReconstructionAuditService:
                 comparison_scope,
                 frame["source_to_canonical_matrix"],
             )
+            self._set_comparison_preprocessing_progress(
+                audit_id,
+                completed_step_count=1,
+                total_step_count=preprocessing_step_count,
+                detail="source_regions_built",
+            )
+            material_surface_meshes = _material_surface_triangle_meshes(
+                reconstruction["surface_graph"]
+            )
+            material_surface_mesh_count = len(material_surface_meshes)
+            material_triangle_count = sum(
+                len(mesh.triangles) for mesh in material_surface_meshes.values()
+            )
+            sample_preprocessing_memory()
+            self._set_comparison_preprocessing_progress(
+                audit_id,
+                completed_step_count=2,
+                total_step_count=preprocessing_step_count,
+                detail="material_surfaces_triangulated",
+            )
             reconstruction_regions = _reconstruction_comparison_region_meshes(
-                reconstruction["surface_graph"], comparison_scope
+                reconstruction["surface_graph"],
+                comparison_scope,
+                surface_meshes=material_surface_meshes,
             )
             surface_ledger = build_reconstruction_surface_comparison_ledger(
                 reconstruction["surface_graph"], comparison_scope
@@ -448,14 +500,36 @@ class StepReconstructionAuditService:
             comparison_scope["surface_coverage_complete"] = bool(
                 surface_ledger.get("comparison_coverage_complete")
             )
+            sample_preprocessing_memory()
+            self._set_comparison_preprocessing_progress(
+                audit_id,
+                completed_step_count=3,
+                total_step_count=preprocessing_step_count,
+                detail="reconstruction_regions_and_ledger_built",
+            )
             _, comparison_alignment = resolve_periodic_phase_alignment(
                 combine_triangle_meshes(list(source_regions.values())),
                 combine_triangle_meshes(list(reconstruction_regions.values())),
                 int(semantics["main_blade_count"]),
             )
+            self._set_comparison_preprocessing_progress(
+                audit_id,
+                completed_step_count=4,
+                total_step_count=preprocessing_step_count,
+                detail="periodic_phase_aligned",
+            )
             alignment_matrix = _rotation_about_z_matrix(
                 float(comparison_alignment["rotation_about_axis_deg"])
             )
+            try:
+                section_overlay_contract = build_section_overlay_contract(
+                    mapping,
+                    reconstruction["surface_graph"],
+                    generated_to_comparison_matrix=alignment_matrix,
+                )
+                _validate_section_overlay_conformance(section_overlay_contract)
+            except SectionOverlayError as exc:
+                raise StepAuditError(exc.reason, str(exc)) from exc
             reconstruction_mesh = transform_mesh(
                 reconstruction_mesh, alignment_matrix
             )
@@ -463,18 +537,30 @@ class StepReconstructionAuditService:
                 role: transform_mesh(reconstructed, alignment_matrix)
                 for role, reconstructed in reconstruction_regions.items()
             }
+            del reconstruction_regions
             _, instance_alignment = _phase_aligned_comparison_regions(
                 source_regions,
                 aligned_reconstruction_regions,
                 comparison_scope,
             )
             comparison_alignment["periodic_instance_alignment"] = instance_alignment
+            self._set_comparison_preprocessing_progress(
+                audit_id,
+                completed_step_count=5,
+                total_step_count=preprocessing_step_count,
+                detail="section_overlay_and_instances_aligned",
+            )
+            del aligned_reconstruction_regions
             aligned_surface_meshes = {
                 surface_id: transform_mesh(mesh, alignment_matrix)
                 for surface_id, mesh in _reconstruction_surface_comparison_meshes(
-                    reconstruction["surface_graph"], surface_ledger
+                    reconstruction["surface_graph"],
+                    surface_ledger,
+                    surface_meshes=material_surface_meshes,
                 ).items()
             }
+            del material_surface_meshes
+            sample_preprocessing_memory()
             surface_pairs, surface_ledger = _surface_comparison_pairs(
                 source_regions,
                 aligned_surface_meshes,
@@ -485,6 +571,13 @@ class StepReconstructionAuditService:
             comparison_scope["reconstruction_surface_ledger"] = copy.deepcopy(
                 surface_ledger
             )
+            sample_preprocessing_memory()
+            self._set_comparison_preprocessing_progress(
+                audit_id,
+                completed_step_count=6,
+                total_step_count=preprocessing_step_count,
+                detail="corresponding_surface_pairs_built",
+            )
             write_binary_stl(
                 reconstruction_stl,
                 reconstruction_mesh,
@@ -493,8 +586,29 @@ class StepReconstructionAuditService:
                     "in V1.1.6 corresponding-surface phase"
                 ),
             )
+            self._set_comparison_preprocessing_progress(
+                audit_id,
+                completed_step_count=preprocessing_step_count,
+                total_step_count=preprocessing_step_count,
+                detail="comparison_preprocessing_complete",
+            )
+            self._complete_reconstruction_stage(
+                audit_id,
+                stage_records,
+                "comparison_preprocessing",
+                (time.perf_counter() - preprocessing_started) * 1000.0,
+                {
+                    "source_region_count": len(source_regions),
+                    "material_surface_mesh_count": material_surface_mesh_count,
+                    "material_triangle_count": material_triangle_count,
+                    "comparison_surface_pair_count": len(surface_pairs),
+                    "triangulation_reuse": "one_material_surface_mesh_cache",
+                    "peak_working_set_bytes": preprocessing_peak_working_set_bytes,
+                },
+            )
             deviation_execution: dict[str, Any] = {}
             deviation_workers = _configured_deviation_max_workers()
+            deviation_started = time.perf_counter()
             self._set_deviation_progress(
                 audit_id,
                 {
@@ -512,6 +626,12 @@ class StepReconstructionAuditService:
                 query_workers=1,
                 max_workers=deviation_workers,
                 checkpoint_dir=self.deviation_checkpoint_root,
+                periodic_equivalence_groups=surface_ledger.get(
+                    "periodic_equivalence_groups"
+                ),
+                periodic_equivalence_authority=surface_ledger.get(
+                    "periodic_equivalence_authority"
+                ),
             )
             comparison["scope"] = copy.deepcopy(comparison_scope)
             comparison["surface_ledger"] = copy.deepcopy(surface_ledger)
@@ -539,7 +659,7 @@ class StepReconstructionAuditService:
             audit_id,
             stage_records,
             "deviation_measured",
-            (time.perf_counter() - started) * 1000.0,
+            (time.perf_counter() - deviation_started) * 1000.0,
             {
                 "reconstruction_to_corresponding_source": comparison[
                     "reconstruction_to_corresponding_source"
@@ -627,6 +747,7 @@ class StepReconstructionAuditService:
             "parameter_mapping": mapping,
             "reconstruction": reconstruction["manifest"],
             "comparison_alignment": comparison_alignment,
+            "section_overlay_contract": section_overlay_contract,
             "comparison_scope": copy.deepcopy(comparison_scope),
             "comparison": comparison,
             "acceptance_evaluation": acceptance_evaluation,
@@ -701,7 +822,7 @@ class StepReconstructionAuditService:
         if total <= 0 or completed < 0 or completed > total:
             raise ValueError("surface deviation progress is outside its bounds")
         status = self.status(audit_id)
-        status["current_stage"] = "surface_deviation"
+        status["current_stage"] = "deviation_measured"
         status["progress"] = {
             "phase": "surface_deviation",
             "completed_surface_count": completed,
@@ -711,6 +832,31 @@ class StepReconstructionAuditService:
             "last_surface_duration_ms": round(
                 float(progress.get("duration_ms", 0.0)), 3
             ),
+            "updated_at": _now(),
+        }
+        status["worker_owner"] = self._worker_owner("RUNNING")
+        self._write_status(audit_id, status)
+
+    def _set_comparison_preprocessing_progress(
+        self,
+        audit_id: str,
+        *,
+        completed_step_count: int,
+        total_step_count: int,
+        detail: str,
+    ) -> None:
+        completed = int(completed_step_count)
+        total = int(total_step_count)
+        if total <= 0 or completed < 0 or completed > total:
+            raise ValueError("comparison preprocessing progress is outside its bounds")
+        status = self.status(audit_id)
+        status["current_stage"] = "comparison_preprocessing"
+        status["progress"] = {
+            "phase": "comparison_preprocessing",
+            "completed_step_count": completed,
+            "total_step_count": total,
+            "fraction_complete": round(completed / total, 6),
+            "detail": str(detail),
             "updated_at": _now(),
         }
         status["worker_owner"] = self._worker_owner("RUNNING")
@@ -1121,6 +1267,38 @@ def fit_profile_controls(samples: list[list[float]], *, control_count: int = 6, 
     return [[round(float(value), 6) for value in point] for point in controls], round(residual, 6)
 
 
+def _validate_section_overlay_conformance(contract: dict[str, Any]) -> None:
+    failures = []
+    for station in contract.get("station_residuals", ()):
+        tolerance = float(station.get("source_tolerance_mm", 0.0))
+        gate = max(2.0 * tolerance, 0.10)
+        for role, residual in station.get("role_residuals", {}).items():
+            observed = float(residual.get("hausdorff_max_mm", math.inf))
+            if not math.isfinite(observed) or observed > gate + 1.0e-12:
+                failures.append(
+                    {
+                        "population": str(station.get("population", "")),
+                        "active_h": float(station.get("active_h", 0.0)),
+                        "curve_role": str(role),
+                        "hausdorff_max_mm": observed,
+                        "gate_mm": gate,
+                        "source_tolerance_mm": tolerance,
+                    }
+                )
+    contract["conformance_gate"] = {
+        "status": "PASS" if not failures else "FAIL",
+        "criterion": "bidirectional_polyline_hausdorff_le_max_2x_source_tolerance_or_0_10_mm",
+        "failure_count": len(failures),
+        "failures": failures,
+    }
+    if failures:
+        raise StepAuditError(
+            "v116_direct_curve_section_conformance_failed",
+            "generated direct surfaces do not interpolate authoritative STEP sections",
+            {"conformance_gate": copy.deepcopy(contract["conformance_gate"])},
+        )
+
+
 def reconstruct_with_current_v11(
     audit_dir: Path,
     mapping: dict[str, Any],
@@ -1132,11 +1310,22 @@ def reconstruct_with_current_v11(
     canonical = _validated_mapping_canonical_payload(mapping)
     defaults = copy.deepcopy(mapping["resolved_blade_to_blade_loop_family_defaults"])
     adaptive_extension = defaults.get("v116_step_reconstruction_extension")
+    direct_network = mapping.get("section_provenance", {}).get(
+        "direct_section_curve_network"
+    )
     reconstruction_variant = (
-        "v1.1.6_adaptive_review_extension_r1"
-        if isinstance(adaptive_extension, Mapping)
-        and adaptive_extension.get("status") == "PASS"
-        else "frozen_v1.1.2_review_baseline"
+        "v1.1.6_direct_section_curve_network_r16_1"
+        if isinstance(direct_network, Mapping)
+        and direct_network.get("status") == "PASS"
+        else (
+            "v1.1.6_adaptive_review_extension_r1"
+            if isinstance(adaptive_extension, Mapping)
+            and adaptive_extension.get("status") == "PASS"
+            else "frozen_v1.1.2_review_baseline"
+        )
+    )
+    direct_reconstruction = (
+        reconstruction_variant == "v1.1.6_direct_section_curve_network_r16_1"
     )
     _apply_bounded_audit_sampling(defaults)
     parameters = copy.deepcopy(mapping["parameters"])
@@ -1184,35 +1373,45 @@ def reconstruct_with_current_v11(
         ("blade_surfaces_reconstructed", "blade_surfaces", True),
         ("edge_closures_reconstructed", "edge_closures", True),
     )
-    final_run = None
     stage_manifests = []
-    for audit_stage, geometry_stage, review_only in stages:
-        started = time.perf_counter()
-        try:
-            run = service.instantiate(engine_id, {}, geometry_stage=geometry_stage, review_only=review_only)
-        except Exception as exc:  # noqa: BLE001
-            reason = getattr(exc, "reason", None)
-            if reason == "v116_hub_closure_endpoint_semantics_failed":
-                raise StepAuditError(reason, str(exc)) from exc
-            raise StepAuditError(
-                "v116_step_reconstruction_validation_failed",
-                f"existing V1.1.2 constructor failed at {geometry_stage}: {exc}",
-            ) from exc
-        duration = (time.perf_counter() - started) * 1000.0
+    started = time.perf_counter()
+    try:
+        final_run = service.instantiate(
+            engine_id,
+            {},
+            geometry_stage="edge_closures",
+            review_only=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        reason = getattr(exc, "reason", None)
+        if reason == "v116_hub_closure_endpoint_semantics_failed":
+            raise StepAuditError(reason, str(exc)) from exc
+        raise StepAuditError(
+            "v116_step_reconstruction_validation_failed",
+            f"existing V1.1.2 constructor failed at edge_closures: {exc}",
+        ) from exc
+    full_graph_duration = (time.perf_counter() - started) * 1000.0
+    for stage_index, (audit_stage, geometry_stage, _review_only) in enumerate(stages):
+        duration = full_graph_duration if stage_index == len(stages) - 1 else 0.0
         stage_payload = {
-            "run_id": run.run_id,
-            "generation_id": run.manifest.get("generation_id"),
+            "run_id": final_run.run_id,
+            "generation_id": final_run.manifest.get("generation_id"),
             "geometry_stage": geometry_stage,
-            "geometry_validation_status": run.manifest.get("geometry_validation_status"),
-            "input_hash": run.manifest.get("operation_graph_hash"),
+            "resolved_geometry_stage": "edge_closures",
+            "execution_mode": "single_full_graph_pass",
+            "geometry_validation_status": final_run.manifest.get(
+                "geometry_validation_status"
+            ),
+            "input_hash": final_run.manifest.get("operation_graph_hash"),
         }
         stage_manifests.append(stage_payload)
         stage_callback(audit_stage, duration, stage_payload)
-        final_run = run
-    assert final_run is not None
     if final_run.manifest.get("geometry_patch_version") != CANONICAL_GEOMETRY_VERSION:
         raise StepAuditError("v116_step_reconstruction_validation_failed", "constructor changed geometry patch version")
-    if final_run.manifest.get("geometry_validation_status") not in {"PASS", None}:
+    if (
+        not direct_reconstruction
+        and final_run.manifest.get("geometry_validation_status") not in {"PASS", None}
+    ):
         validation_report = copy.deepcopy(
             final_run.manifest.get("geometry_validation_report", {})
         )
@@ -1225,6 +1424,62 @@ def reconstruct_with_current_v11(
             },
         )
     surface_graph = final_run.manifest.get("geometry", {}).get("surface_graph", {})
+    direct_validation_report = None
+    if direct_reconstruction:
+        direct_replacement_started = time.perf_counter()
+        section_curve_surfaces._emit_r16_timing(
+            "audit_enter_direct_replacement",
+            direct_replacement_started,
+        )
+        try:
+            surface_graph, direct_surface_manifest = (
+                section_curve_surfaces.replace_blade_surfaces_with_direct_section_curves(
+                    surface_graph,
+                    mapping,
+                )
+            )
+        except section_curve_surfaces.DirectSectionSurfaceError as exc:
+            reason = (
+                exc.reason
+                if exc.reason in FAILURE_REASONS
+                else "v116_step_reconstruction_validation_failed"
+            )
+            raise StepAuditError(
+                reason,
+                f"R16 direct section-curve reconstruction failed: {exc}",
+                {"upstream_reason": exc.reason, **copy.deepcopy(exc.details)},
+            ) from exc
+        section_curve_surfaces._emit_r16_timing(
+            "audit_exit_direct_replacement",
+            direct_replacement_started,
+        )
+        direct_validation_started = time.perf_counter()
+        direct_validation_report = build_geometry_validation_report(
+            parameters=parameters,
+            facets=runtime.get("facets", {}),
+            transition_policies=runtime.get("transition_policy_defaults", {}),
+            surface_graph=surface_graph,
+            capability_matrix_id=runtime.get(
+                "kernel_capability_matrix_id",
+                "impeller_v1_1_kernel_capabilities",
+            ),
+        )
+        section_curve_surfaces._emit_r16_timing(
+            "audit_direct_geometry_validation",
+            direct_validation_started,
+        )
+        if direct_validation_report.get("geometry_validation_status") != "PASS":
+            raise StepAuditError(
+                "v116_step_reconstruction_validation_failed",
+                "R16 direct section-curve graph failed final geometry validation",
+                {"geometry_validation_report": direct_validation_report},
+            )
+    else:
+        direct_surface_manifest = {
+            "status": "NOT_APPLICABLE",
+            "reason": "direct_section_curve_network_not_authorized",
+        }
+    pattern_validation_started = time.perf_counter()
     try:
         surface_graph, pattern_manifest = (
             pattern_reconstruction.validate_mapped_pattern_reconstruction(
@@ -1240,8 +1495,17 @@ def reconstruct_with_current_v11(
             f"V1.1.6 periodic/material reconstruction failed: {exc}",
             {"upstream_reason": exc.reason, **copy.deepcopy(exc.details)},
         ) from exc
+    section_curve_surfaces._emit_r16_timing(
+        "audit_pattern_material_validation",
+        pattern_validation_started,
+    )
     stl_path = audit_dir / "reconstruction-runtime.stl"
+    stl_started = time.perf_counter()
     _write_surface_graph_stl(surface_graph, stl_path)
+    section_curve_surfaces._emit_r16_timing(
+        "audit_reconstruction_stl",
+        stl_started,
+    )
     summary = {
         "authority": "review_grade_step_reconstruction",
         "base_geometry_version": CANONICAL_GEOMETRY_VERSION,
@@ -1249,13 +1513,21 @@ def reconstruct_with_current_v11(
         "geometry_version": final_run.manifest.get("geometry_version"),
         "geometry_patch_version": final_run.manifest.get("geometry_patch_version"),
         "runtime_release_version": AUDIT_RUNTIME_VERSION,
-        "geometry_validation_status": final_run.manifest.get("geometry_validation_status"),
+        "geometry_validation_status": (
+            direct_validation_report.get("geometry_validation_status")
+            if direct_validation_report is not None
+            else final_run.manifest.get("geometry_validation_status")
+        ),
+        "geometry_validation_report": copy.deepcopy(direct_validation_report),
         "run_id": final_run.run_id,
         "generation_id": final_run.manifest.get("generation_id"),
         "constructor_stages": stage_manifests,
         "parameters": final_run.manifest.get("parameters", {}),
         "surface_count": len(surface_graph.get("surfaces", [])),
         "pattern_material_contract": axis_first_pipeline._jsonable(pattern_manifest),
+        "direct_section_curve_surface_contract": axis_first_pipeline._jsonable(
+            direct_surface_manifest
+        ),
     }
     return {
         "manifest": summary,
@@ -1447,40 +1719,76 @@ def _apply_bounded_audit_sampling(defaults: dict[str, Any]) -> None:
 
 
 def _write_surface_graph_stl(surface_graph: dict[str, Any], path: Path) -> None:
-    from part_rule_synthesis.impeller_surface_graph_export import triangulate_surface_graph
-
-    triangulation = triangulate_surface_graph(
-        _material_export_surface_graph(surface_graph),
-        view_id="cad_review_360",
-    )
-    triangles = triangulation.get("triangles", [])
-    if not triangles:
+    surface_meshes = _material_surface_triangle_meshes(surface_graph)
+    if not surface_meshes:
         raise StepAuditError("v116_step_reconstruction_validation_failed", "surface graph produced no review triangles")
-    vertices: list[list[float]] = []
-    triangle_indices: list[list[int]] = []
-    normals: list[list[float]] = []
-    for triangle in triangles:
-        start = len(vertices)
-        vertices.extend([[float(value) for value in point] for point in triangle["points"]])
-        triangle_indices.append([start, start + 1, start + 2])
-        normals.append([float(value) for value in triangle["normal"]])
-    mesh = TriangleMesh(
-        vertices=np.asarray(vertices, dtype=float),
-        triangles=np.asarray(triangle_indices, dtype=np.int32),
-        normals=np.asarray(normals, dtype=float),
-    )
+    mesh = combine_triangle_meshes(list(surface_meshes.values()))
     write_binary_stl(path, mesh, label="V1.1.2 surface graph review reconstruction")
 
 
 def _material_export_surface_graph(surface_graph: Mapping[str, Any]) -> dict[str, Any]:
-    graph = copy.deepcopy(dict(surface_graph))
+    graph = dict(surface_graph)
     graph["surfaces"] = [
         surface
-        for surface in graph.get("surfaces", [])
+        for surface in surface_graph.get("surfaces", [])
         if surface.get("export_default") != "excluded"
         and surface.get("material") is not False
     ]
     return graph
+
+
+def _material_surface_triangle_meshes(
+    surface_graph: Mapping[str, Any],
+) -> dict[str, TriangleMesh]:
+    """Triangulate every material surface once and retain its semantic identity."""
+
+    result = {}
+    for surface in _material_export_surface_graph(surface_graph).get("surfaces", ()):
+        surface_id = str(surface.get("id") or surface.get("surface_graph_id") or "")
+        mesh = _surface_uv_grid_triangle_mesh(surface)
+        if surface_id and mesh is not None:
+            result[surface_id] = mesh
+    if not result:
+        raise ValueError("supported reconstruction surfaces produced no triangles")
+    return result
+
+
+def _surface_uv_grid_triangle_mesh(
+    surface: Mapping[str, Any],
+) -> TriangleMesh | None:
+    grid = surface.get("uv_grid")
+    if not isinstance(grid, list) or len(grid) < 2:
+        return None
+    if not isinstance(grid[0], list) or len(grid[0]) < 2:
+        return None
+    v_count = len(grid[0])
+    if any(not isinstance(row, list) or len(row) != v_count for row in grid):
+        return None
+    vertices = np.asarray(grid, dtype=float).reshape(-1, 3)
+    triangle_indices = []
+    for u_index in range(len(grid) - 1):
+        for v_index in range(v_count - 1):
+            a = u_index * v_count + v_index
+            b = (u_index + 1) * v_count + v_index
+            c = (u_index + 1) * v_count + v_index + 1
+            d = u_index * v_count + v_index + 1
+            triangle_indices.extend(((a, b, d), (b, c, d)))
+    triangles = np.asarray(triangle_indices, dtype=np.int32)
+    first = vertices[triangles[:, 0]]
+    second = vertices[triangles[:, 1]]
+    third = vertices[triangles[:, 2]]
+    raw_normals = np.cross(second - first, third - first)
+    lengths = np.linalg.norm(raw_normals, axis=1)
+    retained = lengths > 1.0e-9
+    if not np.any(retained):
+        return None
+    triangles = triangles[retained]
+    normals = raw_normals[retained] / lengths[retained, None]
+    return TriangleMesh(
+        vertices,
+        triangles,
+        normals,
+    )
 
 
 def _write_geometric_manifest(
@@ -1609,7 +1917,10 @@ def _source_comparison_region_meshes(
 
 
 def _reconstruction_comparison_region_meshes(
-    surface_graph: Mapping[str, Any], comparison_scope: Mapping[str, Any]
+    surface_graph: Mapping[str, Any],
+    comparison_scope: Mapping[str, Any],
+    *,
+    surface_meshes: Mapping[str, TriangleMesh] | None = None,
 ) -> dict[str, TriangleMesh]:
     region_records = {}
     for record in comparison_scope.get("included_surfaces", ()):
@@ -1617,6 +1928,12 @@ def _reconstruction_comparison_region_meshes(
             record.get("comparison_region_id") or record["reconstruction_role"]
         )
         region_records.setdefault(region_id, record)
+    material_surfaces = list(
+        _material_export_surface_graph(surface_graph).get("surfaces", ())
+    )
+    mesh_by_surface_id = dict(
+        surface_meshes or _material_surface_triangle_meshes(surface_graph)
+    )
     result = {}
     for region_id, record in sorted(region_records.items()):
         role = str(record["reconstruction_role"])
@@ -1625,9 +1942,7 @@ def _reconstruction_comparison_region_meshes(
         blade_pair_index = record.get("reconstruction_blade_pair_index")
         selected = [
             surface
-            for surface in _material_export_surface_graph(surface_graph).get(
-                "surfaces", ()
-            )
+            for surface in material_surfaces
             if _surface_matches_comparison_role(surface, role)
             and (
                 blade_pair_index is None
@@ -1654,14 +1969,28 @@ def _reconstruction_comparison_region_meshes(
                     "reconstruction_blade_pair_index": blade_pair_index,
                 },
             )
-        graph = copy.deepcopy(dict(surface_graph))
-        graph["surfaces"] = copy.deepcopy(selected)
-        result[region_id] = _surface_graph_triangle_mesh(graph)
+        selected_ids = [str(surface.get("id", "")) for surface in selected]
+        missing_meshes = sorted(set(selected_ids) - set(mesh_by_surface_id))
+        if missing_meshes:
+            raise StepAuditError(
+                "v116_step_comparison_scope_failed",
+                f"V1.1.2 reconstruction surfaces for region {region_id} have no triangles",
+                {
+                    "comparison_region_id": region_id,
+                    "missing_surface_ids": missing_meshes,
+                },
+            )
+        result[region_id] = combine_triangle_meshes(
+            [mesh_by_surface_id[surface_id] for surface_id in selected_ids]
+        )
     return result
 
 
 def _reconstruction_surface_comparison_meshes(
-    surface_graph: Mapping[str, Any], surface_ledger: Mapping[str, Any]
+    surface_graph: Mapping[str, Any],
+    surface_ledger: Mapping[str, Any],
+    *,
+    surface_meshes: Mapping[str, TriangleMesh] | None = None,
 ) -> dict[str, TriangleMesh]:
     evaluated_ids = {
         str(record["surface_id"])
@@ -1681,12 +2010,20 @@ def _reconstruction_surface_comparison_meshes(
             "surface ledger references unavailable reconstruction surfaces",
             {"missing_surface_ids": missing},
         )
-    result = {}
-    for surface_id in sorted(evaluated_ids):
-        graph = copy.deepcopy(dict(surface_graph))
-        graph["surfaces"] = [copy.deepcopy(material_surfaces[surface_id])]
-        result[surface_id] = _surface_graph_triangle_mesh(graph)
-    return result
+    mesh_by_surface_id = dict(
+        surface_meshes or _material_surface_triangle_meshes(surface_graph)
+    )
+    missing_meshes = sorted(evaluated_ids - set(mesh_by_surface_id))
+    if missing_meshes:
+        raise StepAuditError(
+            "v116_step_comparison_scope_failed",
+            "surface ledger references reconstruction surfaces without triangles",
+            {"missing_surface_ids": missing_meshes},
+        )
+    return {
+        surface_id: mesh_by_surface_id[surface_id]
+        for surface_id in sorted(evaluated_ids)
+    }
 
 
 def _surface_comparison_pairs(
@@ -1710,7 +2047,9 @@ def _surface_comparison_pairs(
         source_faces_by_region[region_id].append(str(record["source_face_id"]))
 
     updated_records = []
-    pairs: dict[str, tuple[TriangleMesh, TriangleMesh]] = {}
+    reconstruction_meshes_by_source_region: dict[str, list[TriangleMesh]] = (
+        defaultdict(list)
+    )
     for raw_record in surface_ledger.get("surfaces", ()):
         record = copy.deepcopy(dict(raw_record))
         if record.get("disposition") != "EVALUATED":
@@ -1736,11 +2075,21 @@ def _surface_comparison_pairs(
             continue
         record["aligned_source_comparison_region_id"] = source_region_id
         record["source_face_ids"] = sorted(source_faces_by_region[source_region_id])
-        pairs[surface_id] = (
-            source_regions[source_region_id],
-            reconstruction_surfaces[surface_id],
+        record["comparison_pair_id"] = source_region_id
+        reconstruction_meshes_by_source_region[source_region_id].append(
+            reconstruction_surfaces[surface_id]
         )
         updated_records.append(record)
+
+    pairs = {
+        source_region_id: (
+            source_regions[source_region_id],
+            combine_triangle_meshes(reconstruction_meshes),
+        )
+        for source_region_id, reconstruction_meshes in sorted(
+            reconstruction_meshes_by_source_region.items()
+        )
+    }
 
     updated = copy.deepcopy(dict(surface_ledger))
     updated["surfaces"] = updated_records
@@ -1755,6 +2104,25 @@ def _surface_comparison_pairs(
         record.get("disposition") == "FAILED_UNRESOLVED"
         for record in updated_records
     )
+    updated["evaluated_comparison_region_count"] = len(pairs)
+    periodic_equivalence_groups = _periodic_equivalence_groups(
+        pairs,
+        comparison_scope,
+    )
+    updated["periodic_equivalence_groups"] = periodic_equivalence_groups
+    updated["periodic_equivalence_authority"] = (
+        _periodic_equivalence_authority(
+            periodic_equivalence_groups,
+            comparison_scope,
+        )
+    )
+    updated["periodic_equivalence_candidate_count"] = sum(
+        role != representative
+        for role, representative in periodic_equivalence_groups.items()
+    )
+    updated["comparison_pair_scope"] = (
+        "semantic_source_region_to_union_of_all_corresponding_material_patches"
+    )
     updated["comparison_coverage_complete"] = (
         updated["unresolved_surface_count"] == 0
     )
@@ -1764,10 +2132,105 @@ def _surface_comparison_pairs(
     if not pairs:
         raise StepAuditError(
             "v116_step_comparison_scope_failed",
-            "surface comparison ledger contains no evaluated surface pairs",
+            "surface comparison ledger contains no evaluated semantic region pairs",
             {"surface_ledger": updated},
         )
     return pairs, updated
+
+
+def _periodic_equivalence_groups(
+    pairs: Mapping[str, Any], comparison_scope: Mapping[str, Any]
+) -> dict[str, str]:
+    records_by_region: dict[str, dict[str, Any]] = {}
+    for raw_record in comparison_scope.get("included_surfaces", ()):
+        if not isinstance(raw_record, Mapping):
+            continue
+        region_id = str(
+            raw_record.get("comparison_region_id")
+            or raw_record.get("reconstruction_role")
+            or ""
+        )
+        if not region_id or region_id not in pairs:
+            continue
+        records_by_region.setdefault(region_id, dict(raw_record))
+    grouped: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
+    for region_id, record in records_by_region.items():
+        if record.get("periodic_instance_id") in {None, ""}:
+            continue
+        group = (
+            str(record.get("periodic_population", "periodic")),
+            str(record.get("reconstruction_role", "surface")),
+        )
+        grouped[group].append(
+            (int(record.get("periodic_lattice_index", 0)), region_id)
+        )
+    result = {}
+    for members in grouped.values():
+        ordered = sorted(members)
+        representative = ordered[0][1]
+        for _lattice_index, region_id in ordered:
+            result[region_id] = representative
+    return result
+
+
+def _periodic_equivalence_authority(
+    groups: Mapping[str, str], comparison_scope: Mapping[str, Any]
+) -> dict[str, dict[str, Any]]:
+    records = {
+        str(record.get("comparison_region_id") or record.get("reconstruction_role")): record
+        for record in comparison_scope.get("included_surfaces", ())
+        if isinstance(record, Mapping)
+    }
+    result: dict[str, dict[str, Any]] = {}
+    for role, representative in sorted(groups.items()):
+        if role == representative:
+            continue
+        candidate_record = records.get(role)
+        representative_record = records.get(representative)
+        if not isinstance(candidate_record, Mapping) or not isinstance(
+            representative_record, Mapping
+        ):
+            continue
+        candidate_transform = np.asarray(
+            candidate_record.get("periodic_transform_from_representative"),
+            dtype=float,
+        )
+        representative_transform = np.asarray(
+            representative_record.get("periodic_transform_from_representative"),
+            dtype=float,
+        )
+        if (
+            candidate_transform.shape != (4, 4)
+            or representative_transform.shape != (4, 4)
+            or np.any(~np.isfinite(candidate_transform))
+            or np.any(~np.isfinite(representative_transform))
+        ):
+            continue
+        try:
+            candidate_from_representative = (
+                candidate_transform @ np.linalg.inv(representative_transform)
+            )
+        except np.linalg.LinAlgError:
+            continue
+        residual_bound = float(
+            candidate_record.get("periodic_residual_to_representative_mm", math.inf)
+        ) + float(
+            representative_record.get(
+                "periodic_residual_to_representative_mm", math.inf
+            )
+        )
+        if not math.isfinite(residual_bound):
+            continue
+        result[role] = {
+            "authority": "authenticated_step_periodic_topology_component",
+            "representative_role": representative,
+            "candidate_from_representative_matrix": (
+                candidate_from_representative.tolist()
+            ),
+            "source_periodic_residual_bound_mm": residual_bound,
+            "source_periodic_residual_tolerance_mm": 0.001,
+        }
+    return result
 
 
 def _paired_comparison_regions(
@@ -3045,6 +3508,40 @@ def _configured_deviation_max_workers() -> int:
     return max(1, min(requested, MAX_DEVIATION_MAX_WORKERS, available))
 
 
+def _current_process_working_set_bytes() -> int:
+    if os.name != "nt":
+        return 0
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        process = ctypes.windll.kernel32.GetCurrentProcess()
+        success = ctypes.windll.psapi.GetProcessMemoryInfo(
+            process,
+            ctypes.byref(counters),
+            counters.cb,
+        )
+        return int(counters.WorkingSetSize) if success else 0
+    except (AttributeError, OSError, ValueError):
+        return 0
+
+
 def _stage_summary(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -3067,6 +3564,12 @@ def _stage_summary(value: Any) -> dict[str, Any]:
         "geometry_validation_status",
         "bidirectional",
         "execution_diagnostics",
+        "source_region_count",
+        "material_surface_mesh_count",
+        "material_triangle_count",
+        "comparison_surface_pair_count",
+        "triangulation_reuse",
+        "peak_working_set_bytes",
     )
     return {key: value[key] for key in preferred if key in value}
 

@@ -31,6 +31,11 @@ _COLLISION_FIDELITY = "sampled_v112_uv_grid_not_cad_certified"
 _BLADE_CLASSES = ("main", "splitter")
 _SHROUD_ROLES = frozenset({"shroud_support", "closed_shroud_attachment"})
 _SHA256_LENGTH = 64
+_COLLISION_RADIAL_CELL_COUNT = 64
+_COLLISION_AXIAL_CELL_COUNT = 16
+_COLLISION_REFINEMENT_DIVISIONS = 8
+_COLLISION_TRIANGLE_HASH_CELL_MM = 1.0
+_COLLISION_TRIANGLE_TOLERANCE_MM = 1.0e-7
 
 
 class PatternReconstructionError(ValueError):
@@ -101,6 +106,7 @@ def validate_mapped_pattern_reconstruction(
         trusted_source_topology_manifest=source_manifest,
         trusted_periodic_partition_manifest=trusted_periodic,
         trusted_material_support_manifest=trusted_material,
+        _validated_graph=graph,
     )
 
 
@@ -159,7 +165,6 @@ def _mapped_periodic_evidence(
         )
 
     by_class: dict[str, dict[str, Any]] = {}
-    collision_populations = []
     digest_populations = []
     for raw_population in populations:
         population = dict(_mapping(raw_population, "mapped periodic population"))
@@ -176,14 +181,16 @@ def _mapped_periodic_evidence(
                 f"mapped {blade_class} population has no instances",
             )
         sealed_instances = []
-        collision_instances = []
         for raw_instance in instances:
             instance = copy.deepcopy(dict(_mapping(raw_instance, "mapped instance")))
             index = _nonnegative_int(
                 instance.get("lattice_index"), f"mapped {blade_class} lattice index"
             )
             try:
-                envelope = _surface_family_envelope(generated[blade_class][index])
+                envelope = _surface_family_envelope(
+                    generated[blade_class][index],
+                    include_collision_geometry=False,
+                )
             except KeyError as exc:
                 raise PatternReconstructionError(
                     "v116_pattern_count_mismatch",
@@ -213,13 +220,6 @@ def _mapped_periodic_evidence(
             instance["radial_support_range_mm"] = list(envelope["radial_range_mm"])
             instance["axial_support_range_mm"] = list(envelope["axial_range_mm"])
             sealed_instances.append(instance)
-            collision_instances.append(
-                {
-                    "population_id": blade_class,
-                    "source_component_id": instance["source_component_id"],
-                    "collision_samples": envelope["collision_samples"],
-                }
-            )
         sealed_instances.sort(key=lambda item: item["lattice_index"])
         population["instances"] = sealed_instances
         representative = dict(
@@ -244,9 +244,6 @@ def _mapped_periodic_evidence(
         )
         population["representative"] = representative
         by_class[blade_class] = population
-        collision_populations.append(
-            {"population_id": blade_class, "instances": collision_instances}
-        )
         digest_populations.append(_periodic_digest_population(population))
 
     periodic["populations"] = [
@@ -260,10 +257,16 @@ def _mapped_periodic_evidence(
         ).get("tolerance_deg"),
         "mapped collision tolerance",
     )
-    periodic["collision_diagnostics"] = _measure_graph_collision_diagnostics(
-        collision_populations,
-        collision_tolerance_deg=collision_tolerance,
-    )
+    periodic["collision_diagnostics"] = {
+        "collision_status": "PENDING_GENERATED_GRAPH_VALIDATION",
+        "collision_free": None,
+        "collision_count": 0,
+        "collisions": [],
+        "tolerance_deg": collision_tolerance,
+        "measurement_authority": (
+            "deferred_to_single_validate_populations_generated_graph_pass"
+        ),
+    }
     source_ids = sorted(
         face_id
         for population in periodic["populations"]
@@ -662,11 +665,13 @@ def validate_and_decorate_pattern_reconstruction(
     trusted_source_topology_manifest: Mapping[str, Any],
     trusted_periodic_partition_manifest: Mapping[str, Any],
     trusted_material_support_manifest: Mapping[str, Any],
+    _validated_graph: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Mapping[str, Any]]:
     """Validate Task9 periodic/material evidence against a completed V1.1.2 graph.
 
-    Geometry is never constructed here. The returned graph is a deep copy whose
-    existing blade surfaces are decorated with measured population provenance.
+    Geometry is never constructed here. The returned graph uses copy-on-write
+    surface records whose existing blade surfaces are decorated with measured
+    population provenance. Large immutable geometry arrays remain shared.
     The second return value is recursively immutable. Source identity crosses an
     explicit trust boundary through a canonical ``load_step_source`` topology
     subset. Solid identity is derived from source SHA, solid topology/measurements,
@@ -675,7 +680,11 @@ def validate_and_decorate_pattern_reconstruction(
     CAD/B-Rep intersection certification.
     """
 
-    graph = _completed_v112_graph(surface_graph)
+    graph = (
+        _validated_graph
+        if _validated_graph is not None
+        else _completed_v112_graph(surface_graph)
+    )
     periodic = _mapping(periodic_population_evidence, "periodic_population_evidence")
     trusted_source = _trusted_source_topology(trusted_source_topology_manifest)
     trusted_periodic = _trusted_periodic_partition(
@@ -729,13 +738,15 @@ def validate_and_decorate_pattern_reconstruction(
         trusted_material=trusted_material,
     )
 
-    decorated = copy.deepcopy(graph)
+    decorated = _copy_surface_graph_for_pattern_decoration(graph)
     decorated_by_id = {
         surface.get("id"): surface for surface in decorated.get("surfaces", [])
     }
     for surface_id, binding in surface_bindings.items():
         surface = decorated_by_id[surface_id]
         surface["periodic_pattern_binding"] = copy.deepcopy(binding)
+        if _is_non_material_topological_seam(surface):
+            continue
         surface["material"] = True
         surface["render_default"] = "material"
         surface["export_default"] = "included"
@@ -798,8 +809,34 @@ def validate_and_decorate_pattern_reconstruction(
     return decorated, _freeze(manifest_payload)
 
 
+def _copy_surface_graph_for_pattern_decoration(
+    surface_graph: Mapping[str, Any],
+) -> dict[str, Any]:
+    decorated = dict(surface_graph)
+    decorated["surfaces"] = []
+    for raw_surface in surface_graph.get("surfaces", ()):
+        surface = dict(raw_surface)
+        display = raw_surface.get("display")
+        if isinstance(display, Mapping):
+            surface["display"] = copy.deepcopy(dict(display))
+        decorated["surfaces"].append(surface)
+    return decorated
+
+
+def _is_non_material_topological_seam(surface: Mapping[str, Any]) -> bool:
+    source = surface.get("source")
+    return bool(
+        surface.get("material") is False
+        and surface.get("export_default") == "excluded"
+        and surface.get("fidelity") == "topological_shared_seam_no_finite_face"
+        and isinstance(source, Mapping)
+        and source.get("authority") == "authenticated_step_shared_seam"
+    )
+
+
 def _completed_v112_graph(surface_graph: Mapping[str, Any]) -> dict[str, Any]:
-    graph = copy.deepcopy(_mapping(surface_graph, "surface_graph"))
+    candidate = _mapping(surface_graph, "surface_graph")
+    graph = candidate if isinstance(candidate, dict) else dict(candidate)
     failures = validate_v11_surface_graph(graph)
     if (
         graph.get("geometry_patch_version") != _GEOMETRY_PATCH_VERSION
@@ -2083,6 +2120,9 @@ def _validate_population(
                 "radial_support_range_mm": generated_envelope["radial_range_mm"],
                 "axial_support_range_mm": generated_envelope["axial_range_mm"],
                 "collision_samples": generated_envelope["collision_samples"],
+                "collision_surface_grids": generated_envelope[
+                    "collision_surface_grids"
+                ],
             }
         )
         maximum_residual = 0.0
@@ -2128,7 +2168,12 @@ def _validate_population(
                 "generated_collision_envelope": {
                     key: value
                     for key, value in generated_envelope.items()
-                    if key not in {"collision_cells", "collision_samples"}
+                    if key
+                    not in {
+                        "collision_cells",
+                        "collision_samples",
+                        "collision_surface_grids",
+                    }
                 },
                 "component_digest_sha256": component_provenance[
                     "component_digest_sha256"
@@ -2315,7 +2360,16 @@ def _trusted_component_digest_basis(
 
 def _surface_family_envelope(
     families: Mapping[tuple[str, str], Mapping[str, Any]],
+    *,
+    include_collision_geometry: bool = True,
 ) -> dict[str, Any]:
+    collision_surfaces = [
+        surface
+        for surface in families.values()
+        if surface.get("material") is not False
+        if surface.get("role")
+        not in {"root_to_hub_attachment", "closed_shroud_attachment"}
+    ]
     points = [
         [float(coordinate) for coordinate in point]
         for surface in families.values()
@@ -2347,15 +2401,15 @@ def _surface_family_envelope(
     start = angles[(gap_index + 1) % len(angles)]
     span = max(0.0, 360.0 - largest_gap)
     center = (start + 0.5 * span) % 360.0
-    collision_cells = _collision_cells(
-        [
-            surface
-            for surface in families.values()
-            if surface.get("role")
-            not in {"root_to_hub_attachment", "closed_shroud_attachment"}
-        ]
+    collision_samples = _collision_samples(collision_surfaces)
+    collision_radii = [sample["radius_mm"] for sample in collision_samples]
+    collision_axial = [sample["axial_mm"] for sample in collision_samples]
+    collision_cells = _collision_cells_from_samples(
+        collision_samples,
+        radial_range_mm=(min(collision_radii), max(collision_radii)),
+        axial_range_mm=(min(collision_axial), max(collision_axial)),
     )
-    return {
+    envelope = {
         "method": "authoritative_v112_blade_surface_uv_grid_circular_envelope",
         "center_angle_deg": center,
         "start_angle_deg": start,
@@ -2370,15 +2424,18 @@ def _surface_family_envelope(
         ],
         "point_count": len(points),
         "collision_cells": collision_cells,
-        "collision_samples": _collision_samples(
-            [
-                surface
-                for surface in families.values()
-                if surface.get("role")
-                not in {"root_to_hub_attachment", "closed_shroud_attachment"}
-            ]
-        ),
+        "collision_samples": None,
+        "collision_surface_grids": None,
     }
+    if include_collision_geometry:
+        envelope["collision_samples"] = collision_samples
+        envelope["collision_surface_grids"] = [
+            surface["uv_grid"] for surface in collision_surfaces
+        ]
+    else:
+        envelope.pop("collision_samples")
+        envelope.pop("collision_surface_grids")
+    return envelope
 
 
 def _collision_cells(surfaces: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -2419,25 +2476,20 @@ def _collision_cells_from_samples(
 ) -> list[dict[str, Any]]:
     r_min, r_max = radial_range_mm
     z_min, z_max = axial_range_mm
-    radial_count = 64
-    axial_count = 16
-    grouped: dict[tuple[int, int], list[float]] = defaultdict(list)
-    for sample in samples:
-        radius = float(sample["radius_mm"])
-        axial = float(sample["axial_mm"])
-        radial_index = min(
-            radial_count - 1,
-            int((radius - r_min) / max(r_max - r_min, 1.0e-12) * radial_count),
-        )
-        axial_index = min(
-            axial_count - 1,
-            int((axial - z_min) / max(z_max - z_min, 1.0e-12) * axial_count),
-        )
-        grouped[(radial_index, axial_index)].append(float(sample["angle_deg"]) % 360.0)
+    radial_count = _COLLISION_RADIAL_CELL_COUNT
+    axial_count = _COLLISION_AXIAL_CELL_COUNT
+    grouped = _collision_sample_groups(
+        samples,
+        radial_range_mm=radial_range_mm,
+        axial_range_mm=axial_range_mm,
+        radial_count=radial_count,
+        axial_count=axial_count,
+    )
     radial_step = (r_max - r_min) / radial_count
     axial_step = (z_max - z_min) / axial_count
     cells = []
-    for cell_index, cell_angles in sorted(grouped.items()):
+    for cell_index, cell_samples in sorted(grouped.items()):
+        cell_angles = [float(sample["angle_deg"]) for sample in cell_samples]
         center, span = _circular_angle_envelope(cell_angles)
         cells.append(
             {
@@ -2459,6 +2511,304 @@ def _collision_cells_from_samples(
             }
         )
     return cells
+
+
+def _collision_sample_groups(
+    samples: Sequence[Mapping[str, float]],
+    *,
+    radial_range_mm: tuple[float, float],
+    axial_range_mm: tuple[float, float],
+    radial_count: int,
+    axial_count: int,
+) -> dict[tuple[int, int], list[Mapping[str, float]]]:
+    r_min, r_max = radial_range_mm
+    z_min, z_max = axial_range_mm
+    grouped: dict[tuple[int, int], list[Mapping[str, float]]] = defaultdict(list)
+    for sample in samples:
+        radial_index = _collision_axis_cell_index(
+            float(sample["radius_mm"]), r_min, r_max, radial_count
+        )
+        axial_index = _collision_axis_cell_index(
+            float(sample["axial_mm"]), z_min, z_max, axial_count
+        )
+        grouped[(radial_index, axial_index)].append(sample)
+    return grouped
+
+
+def _collision_axis_cell_index(
+    value: float, lower: float, upper: float, count: int
+) -> int:
+    normalized = (value - lower) / max(upper - lower, 1.0e-12)
+    return min(count - 1, max(0, int(normalized * count)))
+
+
+def _collision_cell_interval(
+    index: int, lower: float, upper: float, count: int
+) -> tuple[float, float]:
+    step = (upper - lower) / count
+    return (
+        lower + index * step,
+        upper if index == count - 1 else lower + (index + 1) * step,
+    )
+
+
+def _cell_angular_clearance(
+    first_samples: Sequence[Mapping[str, float]],
+    second_samples: Sequence[Mapping[str, float]],
+) -> float:
+    first_center, first_span = _circular_angle_envelope(
+        [float(sample["angle_deg"]) for sample in first_samples]
+    )
+    second_center, second_span = _circular_angle_envelope(
+        [float(sample["angle_deg"]) for sample in second_samples]
+    )
+    return _angle_distance(first_center, second_center) - 0.5 * (
+        first_span + second_span
+    )
+
+
+def _refined_collision_cell(
+    first_samples: Sequence[Mapping[str, float]],
+    second_samples: Sequence[Mapping[str, float]],
+    *,
+    coarse_cell_index: tuple[int, int],
+    radial_range_mm: tuple[float, float],
+    axial_range_mm: tuple[float, float],
+    collision_tolerance_deg: float,
+) -> dict[str, Any] | None:
+    radial_interval = _collision_cell_interval(
+        coarse_cell_index[0],
+        radial_range_mm[0],
+        radial_range_mm[1],
+        _COLLISION_RADIAL_CELL_COUNT,
+    )
+    axial_interval = _collision_cell_interval(
+        coarse_cell_index[1],
+        axial_range_mm[0],
+        axial_range_mm[1],
+        _COLLISION_AXIAL_CELL_COUNT,
+    )
+    first_groups = _collision_sample_groups(
+        first_samples,
+        radial_range_mm=radial_interval,
+        axial_range_mm=axial_interval,
+        radial_count=_COLLISION_REFINEMENT_DIVISIONS,
+        axial_count=_COLLISION_REFINEMENT_DIVISIONS,
+    )
+    second_groups = _collision_sample_groups(
+        second_samples,
+        radial_range_mm=radial_interval,
+        axial_range_mm=axial_interval,
+        radial_count=_COLLISION_REFINEMENT_DIVISIONS,
+        axial_count=_COLLISION_REFINEMENT_DIVISIONS,
+    )
+    best: dict[str, Any] | None = None
+    for refined_index in first_groups.keys() & second_groups.keys():
+        clearance = _cell_angular_clearance(
+            first_groups[refined_index], second_groups[refined_index]
+        )
+        if clearance <= collision_tolerance_deg and (
+            best is None or clearance < best["angular_clearance_deg"]
+        ):
+            best = {
+                "refined_cell_index": list(refined_index),
+                "angular_clearance_deg": clearance,
+            }
+    return best
+
+
+def _surface_grid_triangles(
+    grids: Sequence[Sequence[Sequence[Sequence[float]]]],
+) -> list[tuple[tuple[float, float, float], ...]]:
+    triangles: list[tuple[tuple[float, float, float], ...]] = []
+    for grid in grids:
+        if len(grid) < 2:
+            continue
+        column_count = min(len(row) for row in grid)
+        if column_count < 2:
+            continue
+        for row_index in range(len(grid) - 1):
+            for column_index in range(column_count - 1):
+                first = _point3(grid[row_index][column_index])
+                second = _point3(grid[row_index + 1][column_index])
+                third = _point3(grid[row_index + 1][column_index + 1])
+                fourth = _point3(grid[row_index][column_index + 1])
+                for triangle in ((first, second, third), (first, third, fourth)):
+                    if _vector_length_squared(
+                        _vector_cross(
+                            _vector_subtract(triangle[1], triangle[0]),
+                            _vector_subtract(triangle[2], triangle[0]),
+                        )
+                    ) > 1.0e-20:
+                        triangles.append(triangle)
+    return triangles
+
+
+def _point3(value: Sequence[float]) -> tuple[float, float, float]:
+    return (float(value[0]), float(value[1]), float(value[2]))
+
+
+def _vector_subtract(
+    first: Sequence[float], second: Sequence[float]
+) -> tuple[float, float, float]:
+    return (
+        float(first[0]) - float(second[0]),
+        float(first[1]) - float(second[1]),
+        float(first[2]) - float(second[2]),
+    )
+
+
+def _vector_cross(
+    first: Sequence[float], second: Sequence[float]
+) -> tuple[float, float, float]:
+    return (
+        float(first[1]) * float(second[2])
+        - float(first[2]) * float(second[1]),
+        float(first[2]) * float(second[0])
+        - float(first[0]) * float(second[2]),
+        float(first[0]) * float(second[1])
+        - float(first[1]) * float(second[0]),
+    )
+
+
+def _vector_dot(first: Sequence[float], second: Sequence[float]) -> float:
+    return sum(float(left) * float(right) for left, right in zip(first, second))
+
+
+def _vector_length_squared(value: Sequence[float]) -> float:
+    return _vector_dot(value, value)
+
+
+def _triangle_aabb(
+    triangle: Sequence[Sequence[float]],
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    return (
+        tuple(min(float(point[axis]) for point in triangle) for axis in range(3)),
+        tuple(max(float(point[axis]) for point in triangle) for axis in range(3)),
+    )
+
+
+def _aabbs_overlap(
+    first: tuple[Sequence[float], Sequence[float]],
+    second: tuple[Sequence[float], Sequence[float]],
+    *,
+    tolerance_mm: float,
+) -> bool:
+    return all(
+        first[0][axis] <= second[1][axis] + tolerance_mm
+        and second[0][axis] <= first[1][axis] + tolerance_mm
+        for axis in range(3)
+    )
+
+
+def _triangle_hash_cells(
+    bounds: tuple[Sequence[float], Sequence[float]],
+) -> list[tuple[int, int, int]]:
+    lower = [
+        math.floor(
+            (float(bounds[0][axis]) - _COLLISION_TRIANGLE_TOLERANCE_MM)
+            / _COLLISION_TRIANGLE_HASH_CELL_MM
+        )
+        for axis in range(3)
+    ]
+    upper = [
+        math.floor(
+            (float(bounds[1][axis]) + _COLLISION_TRIANGLE_TOLERANCE_MM)
+            / _COLLISION_TRIANGLE_HASH_CELL_MM
+        )
+        for axis in range(3)
+    ]
+    return [
+        (x_index, y_index, z_index)
+        for x_index in range(lower[0], upper[0] + 1)
+        for y_index in range(lower[1], upper[1] + 1)
+        for z_index in range(lower[2], upper[2] + 1)
+    ]
+
+
+def _triangles_intersect(
+    first: Sequence[Sequence[float]],
+    second: Sequence[Sequence[float]],
+    *,
+    tolerance_mm: float,
+) -> bool:
+    first_edges = [
+        _vector_subtract(first[(index + 1) % 3], first[index])
+        for index in range(3)
+    ]
+    second_edges = [
+        _vector_subtract(second[(index + 1) % 3], second[index])
+        for index in range(3)
+    ]
+    first_normal = _vector_cross(first_edges[0], first_edges[1])
+    second_normal = _vector_cross(second_edges[0], second_edges[1])
+    axes = [first_normal, second_normal]
+    axes.extend(
+        _vector_cross(first_edge, second_edge)
+        for first_edge in first_edges
+        for second_edge in second_edges
+    )
+    axes.extend(_vector_cross(first_normal, edge) for edge in first_edges)
+    axes.extend(_vector_cross(second_normal, edge) for edge in second_edges)
+    for axis in axes:
+        axis_length_squared = _vector_length_squared(axis)
+        if axis_length_squared <= 1.0e-24:
+            continue
+        first_projection = [_vector_dot(point, axis) for point in first]
+        second_projection = [_vector_dot(point, axis) for point in second]
+        margin = tolerance_mm * math.sqrt(axis_length_squared)
+        if (
+            max(first_projection) < min(second_projection) - margin
+            or max(second_projection) < min(first_projection) - margin
+        ):
+            return False
+    return True
+
+
+def _triangle_mesh_intersection(
+    first_triangles: Sequence[tuple[tuple[float, float, float], ...]],
+    second_triangles: Sequence[tuple[tuple[float, float, float], ...]],
+) -> tuple[dict[str, int] | None, int]:
+    second_bounds = [_triangle_aabb(triangle) for triangle in second_triangles]
+    second_hash: dict[tuple[int, int, int], list[int]] = defaultdict(list)
+    for triangle_index, bounds in enumerate(second_bounds):
+        for cell in _triangle_hash_cells(bounds):
+            second_hash[cell].append(triangle_index)
+
+    triangle_test_count = 0
+    tested_pairs: set[tuple[int, int]] = set()
+    for first_index, first_triangle in enumerate(first_triangles):
+        first_bounds = _triangle_aabb(first_triangle)
+        candidate_indexes = {
+            second_index
+            for cell in _triangle_hash_cells(first_bounds)
+            for second_index in second_hash.get(cell, ())
+        }
+        for second_index in candidate_indexes:
+            pair = (first_index, second_index)
+            if pair in tested_pairs:
+                continue
+            tested_pairs.add(pair)
+            if not _aabbs_overlap(
+                first_bounds,
+                second_bounds[second_index],
+                tolerance_mm=_COLLISION_TRIANGLE_TOLERANCE_MM,
+            ):
+                continue
+            triangle_test_count += 1
+            if _triangles_intersect(
+                first_triangle,
+                second_triangles[second_index],
+                tolerance_mm=_COLLISION_TRIANGLE_TOLERANCE_MM,
+            ):
+                return (
+                    {
+                        "first_triangle_index": first_index,
+                        "second_triangle_index": second_index,
+                    },
+                    triangle_test_count,
+                )
+    return None, triangle_test_count
 
 
 def _circular_angle_envelope(angles: Sequence[float]) -> tuple[float, float]:
@@ -2493,6 +2843,16 @@ def _measure_graph_collision_diagnostics(
     axial_values = [float(sample["axial_mm"]) for sample in samples]
     radial_range = (min(radial_values), max(radial_values))
     axial_range = (min(axial_values), max(axial_values))
+    sample_groups_by_component = {
+        instance["source_component_id"]: _collision_sample_groups(
+            instance["collision_samples"],
+            radial_range_mm=radial_range,
+            axial_range_mm=axial_range,
+            radial_count=_COLLISION_RADIAL_CELL_COUNT,
+            axial_count=_COLLISION_AXIAL_CELL_COUNT,
+        )
+        for instance in instances
+    }
     cells_by_component = {
         instance["source_component_id"]: {
             tuple(cell["cell_index"]): cell
@@ -2504,13 +2864,25 @@ def _measure_graph_collision_diagnostics(
         }
         for instance in instances
     }
+    triangles_by_component = {
+        instance["source_component_id"]: _surface_grid_triangles(
+            instance.get("collision_surface_grids", ())
+        )
+        for instance in instances
+    }
     collisions = []
+    broad_phase_candidate_count = 0
+    refined_candidate_count = 0
+    triangle_instance_pair_count = 0
+    triangle_test_count = 0
+    point_fallback_pair_count = 0
     for first_index, first in enumerate(instances):
         first_cells = cells_by_component[first["source_component_id"]]
+        first_groups = sample_groups_by_component[first["source_component_id"]]
         for second in instances[first_index + 1 :]:
             second_cells = cells_by_component[second["source_component_id"]]
-            minimum_clearance = math.inf
-            collision_cell = None
+            second_groups = sample_groups_by_component[second["source_component_id"]]
+            broad_candidates = []
             for cell_index in first_cells.keys() & second_cells.keys():
                 first_cell = first_cells[cell_index]
                 second_cell = second_cells[cell_index]
@@ -2520,32 +2892,108 @@ def _measure_graph_collision_diagnostics(
                 clearance = separation - 0.5 * (
                     first_cell["span_deg"] + second_cell["span_deg"]
                 )
-                if clearance < minimum_clearance:
-                    minimum_clearance = clearance
+                if clearance > collision_tolerance_deg:
+                    continue
+                broad_phase_candidate_count += 1
+                broad_candidates.append((cell_index, clearance))
+            if not broad_candidates:
+                continue
+
+            first_triangles = triangles_by_component[first["source_component_id"]]
+            second_triangles = triangles_by_component[second["source_component_id"]]
+            if first_triangles and second_triangles:
+                triangle_instance_pair_count += 1
+                intersection, tested_count = _triangle_mesh_intersection(
+                    first_triangles, second_triangles
+                )
+                triangle_test_count += tested_count
+                if intersection is None:
+                    continue
+                refined_candidate_count += 1
+                collision_cell, coarse_clearance = min(
+                    broad_candidates, key=lambda item: item[1]
+                )
+                collisions.append(
+                    {
+                        "first_source_component_id": first[
+                            "source_component_id"
+                        ],
+                        "second_source_component_id": second[
+                            "source_component_id"
+                        ],
+                        "cell_index": list(collision_cell),
+                        "coarse_angular_clearance_deg": coarse_clearance,
+                        "angular_clearance_deg": coarse_clearance,
+                        "narrow_phase": "triangle_sat",
+                        **intersection,
+                    }
+                )
+                continue
+
+            point_fallback_pair_count += 1
+            minimum_clearance = math.inf
+            collision_cell = None
+            refined_cell = None
+            coarse_clearance = math.inf
+            for cell_index, clearance in broad_candidates:
+                refined = _refined_collision_cell(
+                    first_groups[cell_index],
+                    second_groups[cell_index],
+                    coarse_cell_index=cell_index,
+                    radial_range_mm=radial_range,
+                    axial_range_mm=axial_range,
+                    collision_tolerance_deg=collision_tolerance_deg,
+                )
+                if refined is None:
+                    continue
+                refined_candidate_count += 1
+                if refined["angular_clearance_deg"] < minimum_clearance:
+                    minimum_clearance = refined["angular_clearance_deg"]
+                    coarse_clearance = clearance
                     collision_cell = cell_index
+                    refined_cell = refined["refined_cell_index"]
             if minimum_clearance <= collision_tolerance_deg:
                 collisions.append(
                     {
                         "first_source_component_id": first["source_component_id"],
                         "second_source_component_id": second["source_component_id"],
                         "cell_index": list(collision_cell),
+                        "refined_cell_index": refined_cell,
+                        "coarse_angular_clearance_deg": coarse_clearance,
                         "angular_clearance_deg": minimum_clearance,
+                        "narrow_phase": "adaptive_sample_cell",
                     }
                 )
+    if triangle_instance_pair_count and not point_fallback_pair_count:
+        narrow_phase_method = "sampled_uv_triangle_sat"
+    elif triangle_instance_pair_count:
+        narrow_phase_method = "sampled_uv_triangle_sat_with_point_cell_fallback"
+    else:
+        narrow_phase_method = "adaptive_cylindrical_sample_cells"
     return {
-        "method": "authoritative_v112_uv_grid_global_radial_axial_angular_cells",
+        "method": (
+            "authoritative_v112_uv_grid_global_radial_axial_angular_cells_"
+            "with_3d_narrow_phase"
+        ),
         "fidelity": _COLLISION_FIDELITY,
+        "narrow_phase_method": narrow_phase_method,
         "collision_free": not collisions,
         "collision_count": len(collisions),
         "collisions": collisions,
+        "broad_phase_candidate_count": broad_phase_candidate_count,
+        "refined_candidate_count": refined_candidate_count,
+        "triangle_instance_pair_count": triangle_instance_pair_count,
+        "triangle_test_count": triangle_test_count,
+        "point_fallback_pair_count": point_fallback_pair_count,
         "tolerance_deg": collision_tolerance_deg,
         "scope": "blade_material_surfaces_excluding_support_joining_attachments",
         "physical_grid": {
             "coordinate_frame": "canonical_cylindrical_r_z",
             "radial_range_mm": list(radial_range),
             "axial_range_mm": list(axial_range),
-            "radial_cell_count": 64,
-            "axial_cell_count": 16,
+            "radial_cell_count": _COLLISION_RADIAL_CELL_COUNT,
+            "axial_cell_count": _COLLISION_AXIAL_CELL_COUNT,
+            "local_refinement_divisions": _COLLISION_REFINEMENT_DIVISIONS,
         },
     }
 
@@ -3032,6 +3480,8 @@ def _decorate_material_surfaces(graph: dict[str, Any], material: Mapping[str, An
             surface["export_default"] = "excluded"
             surface["construction_metadata"] = True
             surface.setdefault("display", {})["visible_by_default"] = False
+        elif _is_non_material_topological_seam(surface):
+            continue
         elif surface.get("blade_class") in _BLADE_CLASSES:
             surface["material"] = True
             surface["render_default"] = "material"

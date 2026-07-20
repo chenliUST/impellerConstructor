@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+import part_rule_synthesis.impeller_v11_6_pattern_reconstruction as pattern_reconstruction
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -26,9 +28,11 @@ from part_rule_synthesis.impeller_v11_3_parameter_inspection import (
     build_parameter_inspection_contract,
     parameter_inspection_generation_id,
 )
+from part_rule_synthesis.impeller_v10_topology_graph import build_v10_topology_graph
 from part_rule_synthesis.impeller_v11_6_pattern_reconstruction import (
     PatternReconstructionError,
     _measure_graph_collision_diagnostics,
+    _surface_family_envelope,
     validate_and_decorate_pattern_reconstruction,
     validate_mapped_pattern_reconstruction,
 )
@@ -958,6 +962,67 @@ def test_open_n_plus_zero_decorates_every_blade_surface_and_freezes_manifest():
         manifest["pattern"]["populations"][0]["count"] = 99
 
 
+def test_pattern_decoration_copy_on_write_does_not_clone_dense_geometry():
+    grid = [[[float(u), float(v), 0.0] for v in range(97)] for u in range(49)]
+    graph = {
+        "surfaces": [
+            {
+                "id": "blade_0_pressure_surface",
+                "uv_grid": grid,
+                "display": {"visible_by_default": True},
+            }
+        ]
+    }
+
+    decorated = pattern_reconstruction._copy_surface_graph_for_pattern_decoration(
+        graph
+    )
+
+    assert decorated is not graph
+    assert decorated["surfaces"] is not graph["surfaces"]
+    assert decorated["surfaces"][0] is not graph["surfaces"][0]
+    assert decorated["surfaces"][0]["display"] is not graph["surfaces"][0]["display"]
+    assert decorated["surfaces"][0]["uv_grid"] is grid
+
+
+def test_pattern_decoration_preserves_non_material_topological_seams():
+    graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
+    seam = next(
+        surface
+        for surface in graph["surfaces"]
+        if surface.get("blade_class") == "main"
+        and surface.get("blade_pair_index") == 0
+        and surface.get("role") == "blade_leading_edge"
+    )
+    seam["material"] = False
+    seam["render_default"] = "hidden"
+    seam["export_default"] = "excluded"
+    seam["source"] = {"authority": "authenticated_step_shared_seam"}
+    seam["fidelity"] = "topological_shared_seam_no_finite_face"
+    graph["topology_graph"] = build_v10_topology_graph(graph["surfaces"])
+    graph["parameter_inspection"] = build_parameter_inspection_contract(graph)
+    graph["generation_id"] = graph["parameter_inspection"]["generation_id"]
+    periodic, support, trusted_authority = _open_case(graph)
+
+    decorated, _manifest = _validate_case(
+        graph, periodic, support, trusted_authority
+    )
+
+    decorated_seam = next(
+        surface
+        for surface in decorated["surfaces"]
+        if surface.get("id") == seam["id"]
+    )
+    assert decorated_seam["periodic_pattern_binding"]["population_id"] == "main"
+    assert decorated_seam["material"] is False
+    assert decorated_seam["render_default"] == "hidden"
+    assert decorated_seam["export_default"] == "excluded"
+    assert decorated_seam["source"]["authority"] == (
+        "authenticated_step_shared_seam"
+    )
+    assert decorated_seam["fidelity"] == "topological_shared_seam_no_finite_face"
+
+
 def test_open_tip_reference_may_be_fitted_from_periodic_material_tip_cap():
     graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
     periodic = _periodic_evidence(graph)
@@ -1016,7 +1081,7 @@ def _task8_authority(mapping: dict, source_manifest: dict):
     )
 
 
-def test_mapped_adapter_seals_task8_population_and_material_evidence():
+def test_mapped_adapter_seals_task8_population_and_material_evidence(monkeypatch):
     graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
     periodic = _periodic_evidence(graph)
     support = _open_support(periodic)
@@ -1025,6 +1090,19 @@ def test_mapped_adapter_seals_task8_population_and_material_evidence():
         periodic,
         _trusted_material_partition(support, source_manifest),
         source_manifest,
+    )
+    completion_calls = 0
+    original_completion = pattern_reconstruction._completed_v112_graph
+
+    def count_completion(surface_graph):
+        nonlocal completion_calls
+        completion_calls += 1
+        return original_completion(surface_graph)
+
+    monkeypatch.setattr(
+        pattern_reconstruction,
+        "_completed_v112_graph",
+        count_completion,
     )
 
     decorated, manifest = validate_mapped_pattern_reconstruction(
@@ -1039,6 +1117,41 @@ def test_mapped_adapter_seals_task8_population_and_material_evidence():
     assert manifest["pattern"]["splitter_blade_count"] == 0
     assert manifest["material"]["material_shroud"] is None
     assert decorated["v1_1_6_pattern_material"]["status"] == "PASS"
+    assert completion_calls == 1
+
+
+def test_mapped_adapter_measures_generated_collision_only_once(monkeypatch):
+    graph = copy.deepcopy(_runtime_graph("public_rocket_turbopump_inducer_v1_1"))
+    periodic = _periodic_evidence(graph)
+    support = _open_support(periodic)
+    source_manifest = _trusted_source_manifest(periodic, support)
+    mapping = _task8_mapping(
+        periodic,
+        _trusted_material_partition(support, source_manifest),
+        source_manifest,
+    )
+    original = pattern_reconstruction._measure_graph_collision_diagnostics
+    call_count = 0
+
+    def measured_once(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pattern_reconstruction,
+        "_measure_graph_collision_diagnostics",
+        measured_once,
+    )
+
+    validate_mapped_pattern_reconstruction(
+        graph,
+        mapping,
+        source_manifest,
+        task8_recovery_authority=_task8_authority(mapping, source_manifest),
+    )
+
+    assert call_count == 1
 
 
 def test_mapped_adapter_rejects_task8_source_collision_before_graph_collision():
@@ -1374,6 +1487,166 @@ def test_global_collision_grid_detects_true_physical_sample_overlap():
     assert diagnostics["collision_free"] is False
     assert diagnostics["collision_count"] == 1
     assert diagnostics["collisions"][0]["cell_index"] == [0, 0]
+
+
+def test_collision_broad_phase_refines_separated_samples_inside_one_coarse_cell():
+    populations = [
+        {
+            "instances": [
+                {
+                    "source_component_id": "component-a",
+                    "collision_samples": [
+                        {"radius_mm": 0.0, "axial_mm": 0.0, "angle_deg": 0.0},
+                        {"radius_mm": 0.10, "axial_mm": 15.10, "angle_deg": 0.0},
+                        {"radius_mm": 0.10, "axial_mm": 15.90, "angle_deg": 20.0},
+                    ],
+                },
+                {
+                    "source_component_id": "component-b",
+                    "collision_samples": [
+                        {"radius_mm": 64.0, "axial_mm": 16.0, "angle_deg": 100.0},
+                        {"radius_mm": 0.90, "axial_mm": 15.10, "angle_deg": 10.0},
+                        {"radius_mm": 0.90, "axial_mm": 15.90, "angle_deg": 10.0},
+                    ],
+                },
+            ]
+        }
+    ]
+
+    diagnostics = _measure_graph_collision_diagnostics(
+        populations, collision_tolerance_deg=1.0e-6
+    )
+
+    assert diagnostics["collision_free"] is True
+    assert diagnostics["collision_count"] == 0
+    assert diagnostics["broad_phase_candidate_count"] == 1
+    assert diagnostics["refined_candidate_count"] == 0
+
+
+def test_collision_narrow_phase_rejects_projected_overlap_between_separated_surfaces():
+    first_grid = [
+        [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0]],
+        [[10.0, 1.0, 0.0], [11.0, 1.0, 0.0]],
+    ]
+    second_grid = [
+        [[10.0, 0.0, 0.05], [11.0, 0.0, 0.05]],
+        [[10.0, 1.0, 0.05], [11.0, 1.0, 0.05]],
+    ]
+    populations = [
+        {
+            "instances": [
+                {
+                    "source_component_id": "component-a",
+                    "collision_samples": [
+                        {"radius_mm": 0.0, "axial_mm": -8.0, "angle_deg": 180.0}
+                    ]
+                    + [
+                        {
+                            "radius_mm": math.hypot(point[0], point[1]),
+                            "axial_mm": point[2],
+                            "angle_deg": math.degrees(math.atan2(point[1], point[0])),
+                        }
+                        for row in first_grid
+                        for point in row
+                    ],
+                    "collision_surface_grids": [first_grid],
+                },
+                {
+                    "source_component_id": "component-b",
+                    "collision_samples": [
+                        {"radius_mm": 20.0, "axial_mm": 8.0, "angle_deg": 180.0}
+                    ]
+                    + [
+                        {
+                            "radius_mm": math.hypot(point[0], point[1]),
+                            "axial_mm": point[2],
+                            "angle_deg": math.degrees(math.atan2(point[1], point[0])),
+                        }
+                        for row in second_grid
+                        for point in row
+                    ],
+                    "collision_surface_grids": [second_grid],
+                },
+            ]
+        }
+    ]
+
+    diagnostics = _measure_graph_collision_diagnostics(
+        populations, collision_tolerance_deg=1.0e-6
+    )
+
+    assert diagnostics["collision_free"] is True
+    assert diagnostics["collision_count"] == 0
+    assert diagnostics["narrow_phase_method"] == "sampled_uv_triangle_sat"
+
+
+def test_collision_narrow_phase_detects_intersecting_surface_triangles():
+    grid = [
+        [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0]],
+        [[10.0, 1.0, 0.0], [11.0, 1.0, 0.0]],
+    ]
+    samples = [
+        {
+            "radius_mm": math.hypot(point[0], point[1]),
+            "axial_mm": point[2],
+            "angle_deg": math.degrees(math.atan2(point[1], point[0])),
+        }
+        for row in grid
+        for point in row
+    ]
+    populations = [
+        {
+            "instances": [
+                {
+                    "source_component_id": "component-a",
+                    "collision_samples": samples,
+                    "collision_surface_grids": [grid],
+                },
+                {
+                    "source_component_id": "component-b",
+                    "collision_samples": samples,
+                    "collision_surface_grids": [grid],
+                },
+            ]
+        }
+    ]
+
+    diagnostics = _measure_graph_collision_diagnostics(
+        populations, collision_tolerance_deg=1.0e-6
+    )
+
+    assert diagnostics["collision_free"] is False
+    assert diagnostics["collision_count"] == 1
+    assert diagnostics["collisions"][0]["narrow_phase"] == "triangle_sat"
+
+
+def test_collision_envelope_excludes_non_material_sharp_seam_placeholders():
+    material_grid = [
+        [[10.0, 0.0, 0.0], [11.0, 0.0, 0.0]],
+        [[10.0, 1.0, 0.0], [11.0, 1.0, 0.0]],
+    ]
+    placeholder_grid = [
+        [[10.0, -10.0, 0.0], [11.0, -10.0, 0.0]],
+        [[10.0, 10.0, 0.0], [11.0, 10.0, 0.0]],
+    ]
+    envelope = _surface_family_envelope(
+        {
+            ("blade_pressure", "side"): {
+                "role": "blade_pressure",
+                "material": True,
+                "uv_grid": material_grid,
+            },
+            ("blade_leading_edge", "sharp_seam"): {
+                "role": "blade_leading_edge",
+                "material": False,
+                "export_default": "excluded",
+                "uv_grid": placeholder_grid,
+            },
+        }
+    )
+
+    assert len(envelope["collision_samples"]) == 4
+    assert len(envelope["collision_surface_grids"]) == 1
 
 
 def test_well_formed_face_signature_mutation_is_recomputed_from_trusted_face():

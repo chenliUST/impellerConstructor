@@ -22,6 +22,7 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as pipeline
+from part_rule_synthesis import impeller_v11_6_section_curve_authority as section_curve_authority
 from part_rule_synthesis.impeller_v11_6_v112_mapping import (
     MEASUREMENT_SCHEMA_VERSION,
     V112MappingError,
@@ -33,6 +34,237 @@ from step_fixtures import (
     write_axis_first_representable_step,
 )
 from part_rule_synthesis import impeller_v11_6_step_audit as step_audit
+
+
+def test_direct_side_curve_geometry_survives_camber_normal_thickness_miss(
+    monkeypatch,
+):
+    frame = pipeline.section_recovery.LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    parameter = np.linspace(0.0, 1.0, 41)
+    side_a = np.column_stack(
+        [10.0 * parameter, -0.45 + 0.35 * np.sin(2.0 * np.pi * parameter)]
+    )
+    side_b = np.column_stack(
+        [10.0 * parameter, 0.45 + 0.30 * np.sin(2.0 * np.pi * parameter + 0.3)]
+    )
+
+    def edge(edge_id, role, points):
+        xyz = np.column_stack([points, np.zeros(len(points))])
+        return pipeline.section_recovery.SectionEdge(
+            edge_id=edge_id,
+            points_xyz_mm=tuple(tuple(point) for point in xyz),
+            source_face_ids=(f"{role}_face",),
+            source_roles=(role,),
+            provenance_available=True,
+            source_curve_exact=True,
+        )
+
+    loop = pipeline.section_recovery.select_authenticated_open_side_pair(
+        (edge("side_a", "side_a", side_a), edge("side_b", "side_b", side_b)),
+        source_tolerance_mm=1.0e-6,
+        local_frame=frame,
+    )
+    decomposition = (
+        pipeline.section_recovery.decompose_authenticated_open_side_pair(loop)
+    )
+    original_normal_hits = pipeline.section_recovery._opposite_side_normal_hits
+
+    def reject_normal_hits(*_args, **_kwargs):
+        raise pipeline.section_recovery.SectionRecoveryError(
+            "v116_thickness_field_invalid",
+            "synthetic camber-normal miss",
+        )
+
+    monkeypatch.setattr(
+        pipeline.section_recovery,
+        "_opposite_side_normal_hits",
+        reject_normal_hits,
+    )
+
+    field = pipeline._measure_section_thickness(
+        loop,
+        decomposition,
+        sample_s=(0.1, 0.5, 0.9),
+        camber_iterations=1,
+    )
+
+    assert field.method == "camber_normal_with_paired_source_witness_fallback"
+    assert field.fallback_sample_count == 3
+    assert field.index_pairing_used is False
+    assert field.radial_distance_used is False
+    assert all(sample.thickness_mm > 0.0 for sample in field.samples)
+    assert all(
+        sample.measurement_method == "paired_source_curve_witnesses"
+        for sample in field.samples
+    )
+
+    monkeypatch.setattr(
+        pipeline.section_recovery,
+        "_opposite_side_normal_hits",
+        original_normal_hits,
+    )
+    monkeypatch.setattr(
+        pipeline.section_recovery,
+        "_point_in_polygon",
+        lambda *_args, **_kwargs: False,
+    )
+    outside_field = pipeline._measure_section_thickness(
+        loop,
+        decomposition,
+        sample_s=(0.1, 0.5, 0.9),
+        camber_iterations=1,
+    )
+    assert outside_field.fallback_sample_count == 3
+    assert all(
+        sample.measurement_method == "paired_source_curve_witnesses"
+        for sample in outside_field.samples
+    )
+
+
+def test_boundary_guided_correspondence_reuses_authenticated_root_streamwise_witnesses(
+    monkeypatch,
+):
+    def profile(z_mm):
+        return {
+            "degree": 1,
+            "knots": "clamped_uniform",
+            "weights": [1.0, 1.0],
+            "control_points_rz_mm": [[10.0, z_mm], [50.0, z_mm]],
+            "residual_rms_mm": 0.0,
+        }
+
+    root_edge_ids = ("root_a", "root_b")
+    tip_points = {
+        "tip_a": [(10.0, 0.0, 9.2), (30.0, 0.0, 9.2), (50.0, 0.0, 9.2)],
+        "tip_b": [(12.0, 0.0, 9.3), (31.0, 0.0, 9.3), (48.0, 0.0, 9.3)],
+    }
+    inventory = {
+        "face_edge_ids": {
+            "side_a_face": ["root_a", "tip_a"],
+            "side_b_face": ["root_b", "tip_b"],
+            "tip_cap_face": ["tip_a", "tip_b"],
+        },
+        "edges_by_id": {
+            edge_id: {"points": points}
+            for edge_id, points in tip_points.items()
+        }
+        | {edge_id: {"points": []} for edge_id in root_edge_ids},
+    }
+    root_attachment = SimpleNamespace(
+        retained_source_edge_ids=root_edge_ids,
+        retained_point_source_edge_ids=("root_a",) * 3 + ("root_b",) * 3,
+        paired_footprint_points_xyz_mm=(
+            (10.0, 0.0, 0.9),
+            (30.0, 0.0, 0.9),
+            (50.0, 0.0, 0.9),
+            (12.0, 0.0, 0.8),
+            (31.0, 0.0, 0.8),
+            (48.0, 0.0, 0.8),
+        ),
+        streamwise_samples_s=(0.15, 0.60, 0.95, 0.20, 0.625, 0.90),
+        retained_streamwise_samples_s=(0.0, 0.5, 1.0, 0.05, 0.525, 0.95),
+    )
+
+    monkeypatch.setattr(
+        pipeline,
+        "_sample_exact_edge_points",
+        lambda edge, _count: edge["points"],
+    )
+
+    correspondence, tip_boundary, evidence = (
+        pipeline._source_side_boundary_guided_correspondence(
+            inventory,
+            {"source_to_canonical_matrix": np.eye(4).tolist()},
+            {"instance_id": "blade_0"},
+            {"side_a_face": "side_a", "side_b_face": "side_b"},
+            topology={
+                "mode": "open",
+                "open_tip_caps": {"blade_0": "tip_cap_face"},
+            },
+            hub_profile=profile(0.0),
+            tip_profile=profile(10.0),
+            hub_points_rz_mm=((10.0, 0.0), (50.0, 0.0)),
+            tip_points_rz_mm=((10.0, 10.0), (50.0, 10.0)),
+            root_attachment=root_attachment,
+            tip_attachment=None,
+            tolerance_mm=0.01,
+        )
+    )
+
+    assert evidence["status"] == "PASS"
+    assert evidence["root_streamwise_authority"] == (
+        "authenticated_retained_boundary_streamwise_samples"
+    )
+    assert correspondence.method == "source_side_boundary_guided_monotone_pchip"
+    assert len(tip_boundary["streamwise_samples_s"]) == 6
+    assert evidence["side_boundaries"][0]["root_streamwise_range_s"] == pytest.approx(
+        [0.0, 1.0]
+    )
+    assert max(
+        item["tip_projection_residual_maximum_mm"]
+        for item in evidence["side_boundaries"]
+    ) == pytest.approx(0.8, abs=0.01)
+
+
+def test_interior_carrier_resolver_moves_only_off_isolated_section_degeneracy():
+    def sampler(active_h):
+        if active_h == pytest.approx(0.5):
+            raise pipeline.section_recovery.SectionRecoveryError(
+                "v116_section_loop_correspondence_failed",
+                "synthetic isolated tangency",
+                {"available_source_roles": ["side_a"]},
+            )
+        return f"section-{active_h:.8f}"
+
+    result, resolved_h, evidence = pipeline._resolve_interior_measurement_carrier(
+        sampler,
+        requested_active_h=0.5,
+        lower_active_h=0.0,
+        upper_active_h=1.0,
+    )
+
+    assert result == "section-0.49218750"
+    assert resolved_h == pytest.approx(0.5 - 1.0 / 128.0)
+    assert evidence["requested_active_span_eta"] == pytest.approx(0.5)
+    assert evidence["resolved_active_span_eta"] == pytest.approx(resolved_h)
+    assert evidence["rejected_candidates"][0]["active_span_eta"] == pytest.approx(
+        0.5
+    )
+    assert evidence["method"] == "nearest_valid_two_sided_station_bounded_search"
+
+
+def test_derived_thickness_uses_arc_pairing_when_physical_s_domains_do_not_overlap():
+    side_a = np.asarray([[0.0, -1.0], [1.0, -1.1], [2.0, -1.0]])
+    side_b = np.asarray([[3.0, 1.0], [4.0, 1.1], [5.0, 1.0]])
+    segments = {
+        "side_a": SimpleNamespace(points_sq_mm=side_a),
+        "side_b": SimpleNamespace(points_sq_mm=side_b),
+    }
+    decomposition = SimpleNamespace(segment=lambda name: segments[name])
+    loop = SimpleNamespace(
+        loop_id="disjoint-s-loop",
+        points_sq_mm=tuple(map(tuple, np.vstack([side_a, side_b[::-1]]))),
+    )
+
+    field = pipeline._measure_section_thickness(
+        loop,
+        decomposition,
+        sample_s=(0.1, 0.5, 0.9),
+    )
+
+    assert field.method == "paired_source_curve_witnesses_no_common_physical_s_domain"
+    assert field.fallback_sample_count == 3
+    assert field.correspondence_monotone is True
+    assert all(sample.thickness_mm > 0.0 for sample in field.samples)
+    assert all(
+        sample.measurement_method == "paired_source_curve_witnesses"
+        for sample in field.samples
+    )
 
 
 def test_representative_meridional_points_sample_curve_interiors():
@@ -294,6 +526,143 @@ def test_periodic_closure_faces_are_split_by_exact_streamwise_position(monkeypat
     ]
 
 
+def test_open_tip_patch_authority_requires_both_sides_and_excludes_support_neighbors(
+    monkeypatch,
+):
+    instance = {
+        "source_face_ids": [
+            "side_a",
+            "side_b",
+            "root_a",
+            "tip_a",
+            "tip_b",
+            "single_side_closure",
+        ]
+    }
+    inventory = {
+        "faces_by_id": {
+            face_id: object() for face_id in instance["source_face_ids"]
+        },
+        "source_manifest": {
+            "adjacency": {
+                "side_a": ["root_a", "tip_a", "tip_b", "single_side_closure"],
+                "side_b": ["root_a", "tip_a", "tip_b"],
+                "root_a": ["hub", "side_a", "side_b"],
+                "tip_a": ["side_a", "side_b", "tip_b"],
+                "tip_b": ["side_a", "side_b", "tip_a"],
+                "single_side_closure": ["side_a"],
+                "hub": ["root_a"],
+            }
+        },
+    }
+    role_map = {"side_a": "side_a", "side_b": "side_b"}
+    topology = {
+        "mode": "open",
+        "hub_face_id": "hub",
+        "hub_support_face_ids": ["hub"],
+    }
+    monkeypatch.setattr(
+        pipeline.section_recovery,
+        "_source_face_bspline_parameter_authority",
+        lambda _face, *, source_face_id: {"source_face_id": source_face_id},
+    )
+    monkeypatch.setattr(
+        pipeline.section_curve_authority,
+        "_canonical_source_face_surface",
+        lambda raw, _matrix, *, expected_face_id: {
+            **raw,
+            "source_face_id": expected_face_id,
+        },
+    )
+
+    patches = pipeline._authenticated_representative_tip_surface_patches(
+        inventory,
+        instance,
+        role_map,
+        topology,
+        np.eye(4),
+    )
+
+    assert [patch["source_face_id"] for patch in patches] == ["tip_a", "tip_b"]
+
+
+def test_representative_surface_patch_partition_uses_semantic_roles(monkeypatch):
+    instance = {
+        "instance_id": "main_instance_0000",
+        "source_face_ids": [
+            "side_a",
+            "side_b",
+            "root_a",
+            "leading",
+            "trailing_a",
+            "trailing_b",
+            "tip",
+        ],
+    }
+    inventory = {
+        "faces_by_id": {
+            face_id: object() for face_id in instance["source_face_ids"]
+        }
+    }
+    source_face_semantics = [
+        {
+            "source_face_id": "root_a",
+            "semantic_role": "periodic_blade_root_attachment",
+            "periodic_instance_id": "main_instance_0000",
+        },
+        {
+            "source_face_id": "leading",
+            "semantic_role": "periodic_blade_leading_edge",
+            "periodic_instance_id": "main_instance_0000",
+        },
+        {
+            "source_face_id": "trailing_a",
+            "semantic_role": "periodic_blade_trailing_edge",
+            "periodic_instance_id": "main_instance_0000",
+        },
+        {
+            "source_face_id": "trailing_b",
+            "semantic_role": "periodic_blade_trailing_edge",
+            "periodic_instance_id": "main_instance_0000",
+        },
+        {
+            "source_face_id": "tip",
+            "semantic_role": "periodic_blade_tip_cap",
+            "periodic_instance_id": "main_instance_0000",
+        },
+    ]
+    monkeypatch.setattr(
+        pipeline.section_recovery,
+        "_source_face_bspline_parameter_authority",
+        lambda _face, *, source_face_id: {"source_face_id": source_face_id},
+    )
+    monkeypatch.setattr(
+        pipeline.section_curve_authority,
+        "_canonical_source_face_surface",
+        lambda raw, _matrix, *, expected_face_id: {
+            **raw,
+            "source_face_id": expected_face_id,
+        },
+    )
+
+    partition = pipeline._authenticated_representative_surface_patch_partition(
+        inventory,
+        instance,
+        source_face_semantics,
+        np.eye(4),
+    )
+
+    assert {
+        role: [patch["source_face_id"] for patch in patches]
+        for role, patches in partition.items()
+    } == {
+        "root": ["root_a"],
+        "tip": ["tip"],
+        "leading_edge": ["leading"],
+        "trailing_edge": ["trailing_a", "trailing_b"],
+    }
+
+
 def test_hub_group_prefers_contact_and_adds_only_missing_same_type_patches():
     all_instances = {f"blade_{index:02d}" for index in range(13)}
     groups = [
@@ -489,6 +858,561 @@ def test_hub_singleton_area_groups_still_require_one_passage_face_per_pitch():
         ],
         "complete": True,
     }
+
+
+def _hub_union_face_sample(*, start_deg, end_deg, radius_mm=10.0):
+    angles = np.radians(np.linspace(start_deg, end_deg, 17))
+    z_values = np.linspace(0.0, 10.0, len(angles))
+    return {
+        "paths_rz_mm": [
+            [[float(radius_mm), float(z_value)] for z_value in z_values]
+        ],
+        "paths_xyz_mm": [
+            [
+                [
+                    float(radius_mm * np.cos(angle)),
+                    float(radius_mm * np.sin(angle)),
+                    float(z_value),
+                ]
+                for angle, z_value in zip(angles, z_values, strict=True)
+            ]
+        ],
+    }
+
+
+def _split_hub_union_fixture(*, include_conformant_split=True):
+    instance_ids = [f"main_instance_{index:04d}" for index in range(4)]
+    support_ids = [f"hub_{index}" for index in range(4)]
+    instance_to_face_id = dict(zip(instance_ids, support_ids, strict=True))
+    samples = {
+        "hub_0": _hub_union_face_sample(start_deg=0.0, end_deg=50.0),
+        "hub_1": _hub_union_face_sample(start_deg=90.0, end_deg=170.0),
+        "hub_2": _hub_union_face_sample(start_deg=180.0, end_deg=260.0),
+        "hub_3": _hub_union_face_sample(start_deg=270.0, end_deg=350.0),
+        "root_transition": _hub_union_face_sample(
+            start_deg=50.0,
+            end_deg=80.0,
+            radius_mm=11.0,
+        ),
+    }
+    if include_conformant_split:
+        samples["hub_0_split"] = _hub_union_face_sample(
+            start_deg=50.0,
+            end_deg=80.0,
+        )
+    adjacency = {
+        face_id: [] for face_id in [*support_ids, *samples]
+    }
+    adjacency["hub_0"] = ["root_transition"]
+    adjacency["root_transition"] = ["hub_0"]
+    if include_conformant_split:
+        adjacency["hub_0"].append("hub_0_split")
+        adjacency["hub_0_split"] = ["hub_0"]
+    candidate_ids = set(samples) - set(support_ids)
+    inventory = {
+        "instance_by_face": {
+            face_id: instance_ids[0] for face_id in candidate_ids
+        },
+        "source_manifest": {"adjacency": adjacency},
+        "records_by_id": {
+            face_id: {
+                "geometry_type": "BSPLINE",
+                "area_mm2": 100.0,
+            }
+            for face_id in samples
+        },
+    }
+    if include_conformant_split:
+        inventory["instance_by_face"]["hub_0_split"] = instance_ids[1]
+    topology = {
+        "hub_face_id": "hub_1",
+        "hub_support_face_ids": support_ids,
+        "hub_support_initial_periodic_coverage": {
+            "mode": "periodic_passage_patches",
+            "expected_count": 4,
+            "observed_count": 4,
+            "instance_to_face_id": instance_to_face_id,
+            "population_instance_ids": {"main": instance_ids},
+            "complete": True,
+        },
+    }
+    controls = [[10.0, 2.0 * index] for index in range(6)]
+    return inventory, topology, samples, controls
+
+
+def test_profile_conformant_split_hub_face_completes_full_revolution_union():
+    inventory, topology, samples, controls = _split_hub_union_fixture()
+
+    refined = pipeline._select_profile_conformant_hub_source_union(
+        inventory,
+        topology,
+        sample_records_by_face=samples,
+        profile_control_points_rz_mm=controls,
+        profile_p95_limit_mm=0.1,
+        profile_maximum_limit_mm=0.3,
+    )
+
+    assert refined["hub_support_face_ids"] == [
+        "hub_0",
+        "hub_0_split",
+        "hub_1",
+        "hub_2",
+        "hub_3",
+    ]
+    evidence = refined["hub_support_source_union"]
+    assert evidence["status"] == "PASS"
+    assert evidence["full_revolution_covered"] is True
+    assert evidence["promoted_source_face_ids"] == ["hub_0_split"]
+    assert evidence["accepted_candidates"]["hub_0_split"][
+        "periodic_instance_ids"
+    ] == ["main_instance_0000"]
+    assert evidence["rejected_candidates"]["root_transition"]["reason"] == (
+        "profile_conformance_failed"
+    )
+    assert evidence["per_instance"]["main_instance_0000"][
+        "normalized_coverage"
+    ] >= 0.8
+
+
+def test_split_hub_source_union_rejects_incomplete_full_revolution_coverage():
+    inventory, topology, samples, controls = _split_hub_union_fixture(
+        include_conformant_split=False
+    )
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._select_profile_conformant_hub_source_union(
+            inventory,
+            topology,
+            sample_records_by_face=samples,
+            profile_control_points_rz_mm=controls,
+            profile_p95_limit_mm=0.1,
+            profile_maximum_limit_mm=0.3,
+        )
+
+    assert caught.value.reason == (
+        "v116_hub_support_circumferential_coverage_incomplete"
+    )
+    assert caught.value.details["failure_evidence"][
+        "deficient_periodic_instance_ids"
+    ] == ["main_instance_0000"]
+
+
+def test_hub_source_union_rejects_uniformly_tiny_absolute_pitch_coverage():
+    inventory, topology, samples, controls = _split_hub_union_fixture()
+    for index in range(4):
+        samples[f"hub_{index}"] = _hub_union_face_sample(
+            start_deg=90.0 * index,
+            end_deg=90.0 * index + 10.0,
+        )
+    samples.pop("hub_0_split")
+    samples.pop("root_transition")
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._select_profile_conformant_hub_source_union(
+            inventory,
+            topology,
+            sample_records_by_face=samples,
+            profile_control_points_rz_mm=controls,
+            profile_p95_limit_mm=0.1,
+            profile_maximum_limit_mm=0.3,
+        )
+
+    evidence = caught.value.details["failure_evidence"]
+    assert evidence["expected_pitch_angle_deg"] == pytest.approx(90.0)
+    assert evidence["minimum_absolute_pitch_coverage_deg"] == pytest.approx(72.0)
+    assert evidence["full_revolution_covered"] is False
+
+
+def test_initial_hub_coverage_rejects_zero_angular_reference():
+    _inventory, topology, samples, _controls = _split_hub_union_fixture()
+    for index in range(4):
+        samples[f"hub_{index}"] = _hub_union_face_sample(
+            start_deg=90.0 * index,
+            end_deg=90.0 * index,
+        )
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._initial_hub_coverage_deficiencies(topology, samples)
+
+    assert caught.value.reason == (
+        "v116_hub_support_circumferential_coverage_incomplete"
+    )
+
+
+def test_hub_coverage_gate_is_independent_per_main_and_splitter_population():
+    instance_ids = [
+        "main_instance_0000",
+        "main_instance_0001",
+        "splitter_instance_0000",
+        "splitter_instance_0001",
+    ]
+    face_ids = ["hub_main_0", "hub_main_1", "hub_splitter_0", "hub_splitter_1"]
+    topology = {
+        "hub_face_id": "hub_main_0",
+        "hub_support_face_ids": face_ids,
+        "hub_support_initial_periodic_coverage": {
+            "mode": "periodic_passage_patches",
+            "expected_count": 4,
+            "observed_count": 4,
+            "instance_to_face_id": dict(zip(instance_ids, face_ids, strict=True)),
+            "population_instance_ids": {
+                "main": instance_ids[:2],
+                "splitter": instance_ids[2:],
+            },
+            "complete": True,
+        },
+    }
+    samples = {
+        "hub_main_0": _hub_union_face_sample(start_deg=0.0, end_deg=100.0),
+        "hub_main_1": _hub_union_face_sample(start_deg=180.0, end_deg=280.0),
+        "hub_splitter_0": _hub_union_face_sample(start_deg=90.0, end_deg=190.0),
+        "hub_splitter_1": _hub_union_face_sample(start_deg=270.0, end_deg=370.0),
+    }
+    inventory = {
+        "instance_by_face": {},
+        "source_manifest": {"adjacency": {face_id: [] for face_id in face_ids}},
+        "records_by_id": {
+            face_id: {"geometry_type": "BSPLINE", "area_mm2": 100.0}
+            for face_id in face_ids
+        },
+    }
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._select_profile_conformant_hub_source_union(
+            inventory,
+            topology,
+            sample_records_by_face=samples,
+            profile_control_points_rz_mm=[[10.0, 2.0 * i] for i in range(6)],
+            profile_p95_limit_mm=0.1,
+            profile_maximum_limit_mm=0.3,
+        )
+
+    evidence = caught.value.details["failure_evidence"]
+    assert evidence["population_gates"]["main"][
+        "minimum_absolute_pitch_coverage_deg"
+    ] == pytest.approx(144.0)
+    assert evidence["population_gates"]["splitter"][
+        "minimum_absolute_pitch_coverage_deg"
+    ] == pytest.approx(144.0)
+    assert set(evidence["deficient_periodic_instance_ids"]) == set(instance_ids)
+
+
+def test_shared_hub_support_requires_absolute_circumferential_coverage():
+    topology = {
+        "hub_face_id": "hub",
+        "hub_support_face_ids": ["hub"],
+        "hub_support_initial_periodic_coverage": {
+            "mode": "shared_support_patch",
+            "complete": True,
+        },
+    }
+    inventory = {
+        "instance_by_face": {},
+        "source_manifest": {"adjacency": {"hub": []}},
+        "records_by_id": {
+            "hub": {"geometry_type": "BSPLINE", "area_mm2": 100.0}
+        },
+    }
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._select_profile_conformant_hub_source_union(
+            inventory,
+            topology,
+            sample_records_by_face={
+                "hub": _hub_union_face_sample(start_deg=0.0, end_deg=100.0)
+            },
+            profile_control_points_rz_mm=[[10.0, 2.0 * i] for i in range(6)],
+            profile_p95_limit_mm=0.1,
+            profile_maximum_limit_mm=0.3,
+        )
+
+    evidence = caught.value.details["failure_evidence"]
+    assert evidence["coverage_mode"] == "shared_support_absolute_angular_support"
+    assert evidence["minimum_absolute_coverage_deg"] == pytest.approx(288.0)
+    assert evidence["full_revolution_covered"] is False
+
+
+def test_profile_conformant_root_attachment_cannot_complete_hub_coverage():
+    inventory, topology, samples, controls = _split_hub_union_fixture(
+        include_conformant_split=False
+    )
+    samples["root_transition"] = _hub_union_face_sample(
+        start_deg=50.0,
+        end_deg=80.0,
+        radius_mm=10.05,
+    )
+    inventory["source_manifest"]["adjacency"].update(
+        {
+            "root_transition": ["hub_0", "side_a", "side_b"],
+            "side_a": ["root_transition"],
+            "side_b": ["root_transition"],
+        }
+    )
+    inventory["semantics"] = {
+        "periodic_population_recovery": {
+            "populations": [
+                {
+                    "instances": [
+                        {
+                            "instance_id": "main_instance_0000",
+                            "source_face_ids": [
+                                "side_a",
+                                "side_b",
+                                "root_transition",
+                            ],
+                            "component_completeness": {
+                                "blade_side_face_ids": ["side_a", "side_b"]
+                            },
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._select_profile_conformant_hub_source_union(
+            inventory,
+            topology,
+            sample_records_by_face=samples,
+            profile_control_points_rz_mm=controls,
+            profile_p95_limit_mm=0.1,
+            profile_maximum_limit_mm=0.3,
+        )
+
+    evidence = caught.value.details["failure_evidence"]
+    assert evidence["rejected_candidates"]["root_transition"]["reason"] == (
+        "periodic_root_attachment_protected"
+    )
+
+
+def test_split_hub_candidate_with_multiple_support_owners_fails_closed():
+    inventory, topology, samples, controls = _split_hub_union_fixture()
+    inventory["source_manifest"]["adjacency"]["hub_1"].append("hub_0_split")
+    inventory["source_manifest"]["adjacency"]["hub_0_split"].append("hub_1")
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._select_profile_conformant_hub_source_union(
+            inventory,
+            topology,
+            sample_records_by_face=samples,
+            profile_control_points_rz_mm=controls,
+            profile_p95_limit_mm=0.1,
+            profile_maximum_limit_mm=0.3,
+        )
+
+    evidence = caught.value.details["failure_evidence"]
+    assert evidence["rejected_candidates"]["hub_0_split"]["reason"] == (
+        "adjacent_support_owner_ambiguous"
+    )
+
+
+def test_exact_hub_boundary_sampling_fails_closed_when_any_edge_is_unreadable():
+    class Vertex:
+        def __init__(self, point):
+            self._point = point
+
+        def Center(self):
+            return self
+
+        def toTuple(self):
+            return self._point
+
+    class BrokenEdge:
+        def sample(self, _count):
+            raise RuntimeError("broken exact edge")
+
+    class Face:
+        def Vertices(self):
+            return [Vertex((1.0, 0.0, 0.0)), Vertex((0.0, 1.0, 0.0))]
+
+        def Edges(self):
+            return [BrokenEdge()]
+
+    inventory = {"faces_by_id": {"hub": Face()}}
+    frame = {
+        "source_to_canonical_matrix": np.eye(4).tolist(),
+    }
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._canonical_face_boundary_points(inventory, frame, "hub")
+
+    assert caught.value.reason == (
+        "v116_hub_support_circumferential_coverage_incomplete"
+    )
+    assert caught.value.details["failure_evidence"]["failed_edge_indices"] == [0]
+
+
+@pytest.mark.parametrize("edge_points", [[], [(1.0, 0.0, 0.0)]])
+def test_exact_hub_boundary_sampling_rejects_short_edge_samples(edge_points):
+    class Vertex:
+        def __init__(self, point):
+            self._point = point
+
+        def Center(self):
+            return self
+
+        def toTuple(self):
+            return self._point
+
+    class ShortEdge:
+        def sample(self, _count):
+            return edge_points, list(range(len(edge_points)))
+
+    class Face:
+        def Vertices(self):
+            return [Vertex((1.0, 0.0, 0.0)), Vertex((0.0, 1.0, 0.0))]
+
+        def Edges(self):
+            return [ShortEdge()]
+
+    inventory = {"faces_by_id": {"hub": Face()}}
+    frame = {"source_to_canonical_matrix": np.eye(4).tolist()}
+
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline._canonical_face_boundary_points(inventory, frame, "hub")
+
+    assert caught.value.details["failure_evidence"]["failed_edge_indices"] == [0]
+
+
+def test_periodic_representative_excludes_promoted_support_faces_from_blade_domain():
+    instance = {
+        "instance_id": "main_instance_0000",
+        "source_face_ids": ["side_a", "side_b", "root", "hub_split"],
+        "component_completeness": {
+            "blade_side_face_ids": ["side_a", "side_b"],
+            "root_edge_face_ids": ["root", "hub_split"],
+        },
+    }
+    sanitized = pipeline._periodic_instance_without_support_faces(
+        instance,
+        {"hub_support_face_ids": ["hub", "hub_split"]},
+    )
+
+    assert sanitized["source_face_ids"] == ["side_a", "side_b", "root"]
+    assert sanitized["component_completeness"]["root_edge_face_ids"] == ["root"]
+    assert sanitized["excluded_support_source_face_ids"] == ["hub_split"]
+    assert instance["source_face_ids"][-1] == "hub_split"
+
+
+def test_pattern_population_authority_excludes_promoted_support_faces():
+    instance = {
+        "instance_id": "main_instance_0000",
+        "source_component_id": "component_0",
+        "source_face_ids": ["side_a", "side_b", "root", "hub_split"],
+        "component_completeness": {
+            "blade_side_face_ids": ["side_a", "side_b"],
+            "root_edge_face_ids": ["root", "hub_split"],
+        },
+    }
+    population = {
+        "classification": "main",
+        "representative": {
+            "source_component_id": "component_0",
+            "source_face_ids": list(instance["source_face_ids"]),
+        },
+        "instances": [copy.deepcopy(instance)],
+    }
+    recovery = {
+        "populations": [copy.deepcopy(population)],
+        "main": copy.deepcopy(population),
+        "splitter": None,
+    }
+
+    sanitized = pipeline._periodic_recovery_without_support_faces(
+        recovery,
+        {"hub_support_face_ids": ["hub", "hub_split"]},
+    )
+
+    assert sanitized["populations"][0]["instances"][0]["source_face_ids"] == [
+        "side_a",
+        "side_b",
+        "root",
+    ]
+    assert sanitized["main"]["instances"][0]["source_face_ids"] == [
+        "side_a",
+        "side_b",
+        "root",
+    ]
+    assert sanitized["main"]["representative"]["source_face_ids"] == [
+        "side_a",
+        "side_b",
+        "root",
+    ]
+    assert recovery["main"]["instances"][0]["source_face_ids"][-1] == "hub_split"
+
+
+def test_promoted_hub_face_is_removed_from_periodic_attachment_semantics():
+    faces = {
+        face_id: object()
+        for face_id in ("hub", "hub_split", "side_a", "side_b", "root")
+    }
+    inventory = {
+        "faces_by_id": faces,
+        "instance_by_face": {
+            "hub_split": "main_instance_0000",
+            "side_a": "main_instance_0000",
+            "side_b": "main_instance_0000",
+            "root": "main_instance_0000",
+        },
+        "source_manifest": {
+            "adjacency": {
+                "hub": ["hub_split", "root"],
+                "hub_split": ["hub"],
+                "side_a": ["root"],
+                "side_b": ["root"],
+                "root": ["hub", "side_a", "side_b"],
+            }
+        },
+        "records_by_id": {
+            face_id: {"geometry_type": "BSPLINE"} for face_id in faces
+        },
+    }
+    instance = {
+        "instance_id": "main_instance_0000",
+        "source_face_ids": ["hub_split", "side_a", "side_b", "root"],
+        "component_completeness": {
+            "blade_side_face_ids": ["side_a", "side_b"]
+        },
+    }
+    semantics = {
+        "periodic_population_recovery": {
+            "populations": [{"instances": [instance]}]
+        },
+        "face_roles": {},
+    }
+    topology = {
+        "mode": "open",
+        "hub_face_id": "hub",
+        "hub_support_face_ids": ["hub", "hub_split"],
+        "open_tip_caps": {},
+    }
+
+    assignments = pipeline._semantic_assignments(
+        inventory,
+        semantics,
+        topology,
+    )
+    attachments = pipeline._attachment_faces_by_instance(
+        inventory,
+        [instance],
+        topology["hub_support_face_ids"],
+    )
+
+    assert assignments["hub_split"]["role"] == "hub_flowpath_support"
+    assert assignments["hub_split"]["periodic_instance_id"] is None
+    assert assignments["hub_split"]["periodic_blade_related"] is False
+    assert attachments == {"main_instance_0000": ["root"]}
+    serialized = pipeline._serialize_source_face_semantics(
+        assignments,
+        inventory,
+        semantics,
+    )
+    assert {
+        record["source_face_id"]
+        for record in serialized
+        if record["semantic_role"] == "hub_flowpath_support"
+    } == {"hub", "hub_split"}
 
 
 def _source_inputs(tmp_path: Path, **fixture_options):
@@ -705,11 +1629,11 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
     )
     result = SimpleNamespace(accepted_loop=loop, as_dict=lambda: {"exact": True})
     profile = SimpleNamespace(points_rz_mm=((10.0, 0.0), (10.0, 5.0)))
-    correspondence = SimpleNamespace()
+    correspondence = SimpleNamespace(method="fixture_meridional_correspondence")
     lattice = SimpleNamespace(
         stations=(
-            SimpleNamespace(h=0.1, metrics={"mean_thickness_mm": 1.0}),
-            SimpleNamespace(h=0.9, metrics={"mean_thickness_mm": 1.2}),
+            SimpleNamespace(h=0.0, metrics={"mean_thickness_mm": 1.0}),
+            SimpleNamespace(h=1.0, metrics={"mean_thickness_mm": 1.2}),
         ),
         as_dict=lambda: {"station_count": 2},
     )
@@ -735,7 +1659,11 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
         },
         "support_face_ids": {"mode": "open"},
     }
-    population = {"representative_instance": instance, "angular_sector_deg": (-5.0, 5.0)}
+    population = {
+        "representative_instance": instance,
+        "angular_sector_deg": (-5.0, 5.0),
+        "streamwise_interval_s": (0.0, 1.0),
+    }
 
     monkeypatch.setattr(pipeline, "_source_tolerance", lambda _frame: 0.01)
     monkeypatch.setattr(
@@ -765,7 +1693,30 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
             },
         ),
     )
-    monkeypatch.setattr(pipeline.section_recovery, "solve_meridional_correspondence", lambda *_args: correspondence)
+    monkeypatch.setattr(
+        pipeline.section_recovery,
+        "solve_meridional_correspondence",
+        lambda *_args, **_kwargs: correspondence,
+    )
+    monkeypatch.setattr(
+        pipeline.section_curve_authority,
+        "build_active_span_field",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            as_dict=lambda: {"contract_id": "active-span-fixture"},
+            profile_rz_mm=lambda h: ((10.0, h), (20.0, 5.0 + h)),
+            beta=lambda h, u: 0.1 + 0.8 * h + 0.01 * u,
+            streamwise_u=(0.0, 1.0),
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline.section_curve_authority,
+        "build_station_curve_authority",
+        lambda **kwargs: {
+            "contract_id": "section-curve-fixture",
+            "canonical_loop_points_xyz_mm": [[1.0, 2.0, 3.0]],
+            "active_h": kwargs["active_h"],
+        },
+    )
     monkeypatch.setattr(pipeline.section_recovery, "build_ordered_span_profiles", lambda *_args: (profile, profile, profile))
     monkeypatch.setattr(pipeline.section_recovery, "make_occt_revolved_measurement_surface", lambda *_args, **_kwargs: "revolved")
     monkeypatch.setattr(pipeline, "_measurement_surface_in_source_frame", lambda surface, *_args: surface)
@@ -779,7 +1730,20 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
         pipeline,
         "_measure_section_thickness",
         lambda *_args, **_kwargs: SimpleNamespace(
-            minimum_mm=0.8, maximum_mm=1.2, mean_mm=1.0
+            minimum_mm=0.8,
+            maximum_mm=1.2,
+            mean_mm=1.0,
+            samples=tuple(
+                SimpleNamespace(
+                    s=value,
+                    camber_sq_mm=(value, 0.1 * value),
+                    normal_sq=(-0.1, 0.995),
+                    thickness_mm=1.0,
+                    side_a_parameter=value,
+                    side_b_parameter=value,
+                )
+                for value in (0.1, 0.5, 0.9)
+            ),
         ),
     )
     monkeypatch.setattr(pipeline, "_preliminary_section_metrics", lambda *_args: {"mean_thickness_mm": 1.1, "camber_turn_deg": 2.0, "edge_curvature_per_mm": 0.1})
@@ -796,7 +1760,9 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
         assert source_shape is inventory["shape"]
         assert set(kwargs["source_faces_by_id"]) == set(inventory["faces_by_id"])
         assert set(kwargs["allowed_source_face_ids"]) == set(instance["source_face_ids"])
-        assert kwargs["source_shape_scope"] == "complete_source_shape"
+        assert kwargs["source_shape_scope"] == (
+            "authenticated_representative_individual_faces"
+        )
         assert kwargs["edge_sample_count"] == 129
         assert kwargs["angular_sector_deg"] == population["angular_sector_deg"]
         assert np.array_equal(
@@ -810,12 +1776,23 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
         pipeline.section_recovery, "section_source_solid", section_probe
     )
 
-    def adaptive_probe(_hub, _tip, sampler, **_kwargs):
-        assert sampler(0.1)["mean_thickness_mm"] == 1.1
+    def adaptive_probe(sampler, **_kwargs):
+        assert sampler(0.0)["mean_thickness_mm"] == 1.1
         assert sampler(0.5)["camber_turn_deg"] == 2.0
-        return lattice
+        return lattice.stations
 
-    monkeypatch.setattr(pipeline.section_recovery, "build_adaptive_span_profiles", adaptive_probe)
+    monkeypatch.setattr(
+        pipeline.section_recovery, "select_adaptive_span_stations", adaptive_probe
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_measurement_carrier_interval",
+        lambda _sampler: (
+            0.0625,
+            0.9375,
+            {"authority": "bounded-fixture-carrier"},
+        ),
+    )
     attachments = {
         "root": SimpleNamespace(
             lift_mm=1.0,
@@ -829,7 +1806,88 @@ def test_section_stage_drives_adaptation_from_revolved_exact_section_metrics(mon
     assert calls and set(calls) == {"revolved"}
     assert [station["h"] for station in family["stations"]] == [0.0, 1.0]
     assert all(record["exact_section"] == {"exact": True} for record in records)
+    assert all(
+        record["direct_section_curve_authority"]["contract_id"]
+        == "section-curve-fixture"
+        for record in records
+    )
+    assert all(
+        record["canonical_source_loop_points_xyz_mm"] == [[1.0, 2.0, 3.0]]
+        for record in records
+    )
+    direct_stations = [
+        record["direct_section_curve_authority"] for record in records
+    ]
+    assert [station["active_h"] for station in direct_stations] == [0.0, 1.0]
+    assert [
+        station["carrier_resolution"]["resolved_active_span_eta"]
+        for station in direct_stations
+    ] == pytest.approx([0.0625, 0.9375])
     assert "gp_Pln" not in inspect.getsource(pipeline._section_family)
+
+
+def test_measurement_carrier_interval_moves_only_past_open_boundary_sections():
+    sampled = []
+
+    def section_probe(active_h):
+        sampled.append(active_h)
+        if active_h < 0.0625 or active_h > 0.9375:
+            raise pipeline.section_recovery.SectionRecoveryError(
+                "v116_section_loop_open",
+                "boundary carrier has not entered the closed blade body",
+            )
+        return active_h
+
+    root, tip, evidence = pipeline._resolve_measurement_carrier_interval(
+        section_probe
+    )
+
+    assert root == pytest.approx(0.0625)
+    assert tip == pytest.approx(0.9375)
+    assert root < tip
+    assert evidence["authority"] == "nearest_exact_two_sided_blade_body_section"
+    assert evidence["root"]["rejected_candidates"][0]["reason"] == (
+        "v116_section_loop_open"
+    )
+    assert 0.0 in sampled and 1.0 in sampled
+
+
+def test_measurement_carrier_interval_moves_past_one_sided_boundary_sections():
+    def section_probe(active_h):
+        if active_h in (0.0, 1.0):
+            raise pipeline.section_recovery.SectionRecoveryError(
+                "v116_section_loop_correspondence_failed",
+                "boundary carrier intersects only one authenticated blade side",
+                {"available_source_roles": ["side_a"]},
+            )
+        return active_h
+
+    root, tip, evidence = pipeline._resolve_measurement_carrier_interval(
+        section_probe
+    )
+
+    assert root == pytest.approx(0.015625)
+    assert tip == pytest.approx(0.984375)
+    assert evidence["root"]["rejected_candidates"] == [
+        {
+            "active_span_eta": 0.0,
+            "reason": "v116_section_loop_correspondence_failed",
+            "details": {"available_source_roles": ["side_a"]},
+        }
+    ]
+
+
+def test_measurement_carrier_interval_does_not_mask_non_boundary_failures():
+    def section_probe(_active_h):
+        raise pipeline.section_recovery.SectionRecoveryError(
+            "v116_section_tangent_flip_detected",
+            "invalid section orientation",
+        )
+
+    with pytest.raises(pipeline.section_recovery.SectionRecoveryError) as caught:
+        pipeline._resolve_measurement_carrier_interval(section_probe)
+
+    assert caught.value.reason == "v116_section_tangent_flip_detected"
 
 
 def test_unknown_material_features_fail_closed_without_bbox_or_zero_measurements(tmp_path):
@@ -1170,6 +2228,35 @@ def test_completed_stage_evidence_contains_source_facts(tmp_path, monkeypatch):
     assert completed[0]["evidence_hash_sha256"]
 
 
+def test_section_curve_authority_failure_preserves_reason_and_details(
+    tmp_path, monkeypatch
+):
+    shape, source, frame, semantics = _source_inputs(tmp_path, blade_count=8)
+
+    def fail_sections(*_args):
+        raise section_curve_authority.SectionCurveAuthorityError(
+            "v116_active_span_carrier_invalid",
+            "forced coverage failure",
+            details={"boundary_role": "root", "topology_gap_mm": {"leading": 1.5}},
+        )
+
+    monkeypatch.setattr(pipeline, "_recover_section_evidence", fail_sections)
+    with pytest.raises(pipeline.AxisFirstPipelineError) as caught:
+        pipeline.build_measurement_bundle(shape, source, frame, semantics)
+
+    assert caught.value.reason == "v116_active_span_carrier_invalid"
+    assert caught.value.stage == "exact_sections"
+    assert caught.value.details["failure_evidence"] == {
+        "boundary_role": "root",
+        "topology_gap_mm": {"leading": 1.5},
+    }
+    assert [record["stage"] for record in caught.value.details["completed_stages"]] == [
+        "source_inventory",
+        "support_recovery",
+        "periodic_representatives",
+    ]
+
+
 def test_tip_cap_selection_ignores_adversarial_face_centroids(tmp_path):
     path = write_axis_first_representable_step(tmp_path / "topology.step")
     shape, source = step_audit.load_step_source(path)
@@ -1205,6 +2292,25 @@ def test_open_tip_active_span_clearance_scales_with_measured_blade_width():
 
     assert root_h == pytest.approx(0.09)
     assert tip_h == pytest.approx(0.96)
+
+
+def test_active_span_uses_authenticated_boundary_tolerance_without_attachment():
+    root_h, tip_h, contract = pipeline._measured_active_span_interval(
+        [(10.0, 0.0), (10.0, 10.0)],
+        [(20.0, 0.0), (20.0, 10.0)],
+        0.02,
+        {"source_edge_ids": ["root"]},
+        {"source_edge_ids": ["tip"]},
+        root_attachment=None,
+        tip_attachment=None,
+    )
+
+    assert root_h == pytest.approx(0.008)
+    assert tip_h == pytest.approx(0.992)
+    assert contract["local_thickness_proxy_mm"] == 0.0
+    assert contract["measurement_authority"] == (
+        "authenticated_boundary_tolerance_clearance_without_attachment_measurement"
+    )
 
 
 def test_active_span_accepts_large_root_lift_when_ordered_body_span_remains():
@@ -1327,6 +2433,66 @@ def test_support_bound_material_planes_ignore_connected_bolt_hole_end_faces(monk
     }
 
 
+def test_semantic_endpoint_witnesses_keep_flowpath_material_bore_and_blade_separate():
+    support = {
+        "mapping_fits": {
+            "hub": {
+                "endpoint_roles": {
+                    "eye_inlet_small_radius": {
+                        "canonical_rz_mm": [10.0, 12.0],
+                        "source_ids": ["hub-eye"],
+                        "authority": "authenticated_support_fit_endpoint",
+                    }
+                }
+            }
+        }
+    }
+    material = {
+        "hub_top_cap_thickness_mm": {
+            "source_ids": ["boss-top"],
+            "evidence": {"axis_parameters_mm": [7.0, 9.0]},
+        },
+        "mounting_bore_radius_mm": {
+            "source_ids": ["bore"],
+            "evidence": {"canonical_axis_limits_mm": [-3.0, 11.0]},
+        },
+    }
+    stations = []
+    for h, z_a, z_b in ((0.0, 1.0, 2.0), (1.0, 8.0, 9.0)):
+        stations.append(
+            {
+                "active_h": h,
+                "source_loop_id": f"loop-{h}",
+                "curves": {
+                    "side_a": {
+                        "start_witness": {"canonical_xyz_mm": [10.0, 0.0, z_a]}
+                    },
+                    "side_b": {
+                        "start_witness": {"canonical_xyz_mm": [11.0, 0.0, z_b]}
+                    },
+                },
+            }
+        )
+    sections = {
+        "direct_section_curve_network": {
+            "populations": {"main": {"stations": stations}}
+        }
+    }
+
+    witnesses = pipeline._semantic_endpoint_witnesses(
+        support,
+        material,
+        sections,
+        source_tolerance_mm=0.01,
+    )
+
+    assert witnesses["hub_flowpath_eye_endpoint"]["canonical_rz_mm"] == [10.0, 12.0]
+    assert witnesses["hub_material_eye_or_boss_top"]["canonical_z_mm"] == 9.0
+    assert witnesses["mounting_bore_material_limits"]["canonical_z_interval_mm"] == [-3.0, 11.0]
+    assert witnesses["blade_leading_boundary"]["canonical_z_range_mm"] == [1.0, 9.0]
+    assert witnesses["universal_common_z_plane_forbidden"] is True
+
+
 def test_measured_section_fit_stops_at_first_passing_low_complexity_budget(monkeypatch):
     calls = []
 
@@ -1436,6 +2602,25 @@ def test_representable_step_passes_actual_default_axis_first_mapping(tmp_path):
 
     result = pipeline.build_measurement_bundle(shape, source, frame, semantics)
     measurements = result.measurements
+    assert all(
+        "section_extraction_performance" not in family
+        for family in measurements["section_families"].values()
+    )
+    assert "section_extraction_performance" in result.section_evidence[
+        "section_families"
+    ]["main"]
+    direct_stations = result.section_evidence["direct_section_curve_network"][
+        "populations"
+    ]["main"]["stations"]
+    assert any(
+        station["derived_fields"]["fallback_sample_count"] > 0
+        for station in direct_stations
+    )
+    assert all(
+        station["normal_thickness"]["method"]
+        == "camber_normal_line_intersections"
+        for station in measurements["section_families"]["main"]["stations"]
+    )
     expected_sha = hashlib.sha256(path.read_bytes()).hexdigest()
     assert measurements["provenance"]["source_sha256"] == expected_sha == source["sha256"]
     assert measurements["provenance"]["source_entity_ids"] == sorted(
@@ -1465,7 +2650,9 @@ def test_representable_step_passes_actual_default_axis_first_mapping(tmp_path):
             if item["population"] == family["population"]
             and item["h"] == station["h"]
         )
-        assert record["exact_section"]["source_shape_scope"] == "complete_source_shape"
+        assert record["exact_section"]["source_shape_scope"] == (
+            "authenticated_representative_individual_faces"
+        )
     for record in measurements["topology"]["material_measurements"].values():
         assert record["measurement_authority"] == (
             "occt_exact_brep_feature_measurement"

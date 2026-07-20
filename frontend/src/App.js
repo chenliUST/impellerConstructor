@@ -11,7 +11,7 @@ import { apiDefault, exportFilename, exportFileOptions, presets, selectedPreset 
 import { defaultVisibleLayers } from "./workspaceModel.js?v=1.1.5";
 import { ModelViewer } from "./components/ModelViewer.js?v=1.1.8";
 import { ReviewEngineeringDrawing } from "./components/ReviewEngineeringDrawing.js?v=1.1.5.1";
-import { StepReconstructionWorkspace } from "./components/StepReconstructionWorkspace.js?v=1.1.6-r13_3";
+import { StepReconstructionWorkspace } from "./components/StepReconstructionWorkspace.js?v=1.1.6-r16_22_1";
 
 const h = React.createElement;
 const WORKSPACES = [

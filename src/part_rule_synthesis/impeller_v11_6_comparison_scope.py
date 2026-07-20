@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from typing import Any, Mapping, Sequence
 
 
@@ -183,6 +185,14 @@ def build_supported_surface_comparison_scope(
                 )
                 base["periodic_population"] = str(binding["population"])
                 base["periodic_lattice_index"] = int(lattice_index)
+                if binding.get("transform_from_representative") is not None:
+                    base["periodic_transform_from_representative"] = binding[
+                        "transform_from_representative"
+                    ]
+                if binding.get("residual_to_representative_mm") is not None:
+                    base["periodic_residual_to_representative_mm"] = float(
+                        binding["residual_to_representative_mm"]
+                    )
                 base["reconstruction_blade_pair_index"] = int(lattice_index)
                 base["reconstruction_blade_index"] = int(lattice_index)
             else:
@@ -653,6 +663,21 @@ def _validated_periodic_instance_bindings(
                 "population": population_id,
                 "lattice_index": int(raw_index),
             }
+            transform = instance.get("transform_from_representative")
+            if _is_finite_matrix4(transform):
+                bindings[instance_id]["transform_from_representative"] = [
+                    [float(value) for value in row] for row in transform
+                ]
+            residual = instance.get("residual_to_representative_mm")
+            if (
+                isinstance(residual, (int, float))
+                and not isinstance(residual, bool)
+                and math.isfinite(float(residual))
+                and float(residual) >= 0.0
+            ):
+                bindings[instance_id]["residual_to_representative_mm"] = float(
+                    residual
+                )
             population_instance_ids.add(instance_id)
             lattice_indexes.add(int(raw_index))
         if lattice_indexes != set(range(declared_count)):
@@ -665,6 +690,26 @@ def _validated_periodic_instance_bindings(
     ):
         return {}, {}, "periodic_population_count_mismatch"
     return bindings, expected_instances_by_population, None
+
+
+def _is_finite_matrix4(value: Any) -> bool:
+    return bool(
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes))
+        and len(value) == 4
+        and all(
+            isinstance(row, Sequence)
+            and not isinstance(row, (str, bytes))
+            and len(row) == 4
+            and all(
+                isinstance(item, (int, float))
+                and not isinstance(item, bool)
+                and math.isfinite(float(item))
+                for item in row
+            )
+            for row in value
+        )
+    )
 
 
 def _exclude_incomplete_periodic_edge_roles(

@@ -4,12 +4,14 @@ import copy
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from typing import Any, Mapping, NoReturn, Sequence
 
 import numpy as np
 
 from part_rule_synthesis import impeller_v11_6_section_recovery as section_recovery
+from part_rule_synthesis import impeller_v11_6_section_curve_authority as section_curve_authority
 from part_rule_synthesis import impeller_v11_6_support_recovery as support_recovery
 from part_rule_synthesis.impeller_v11_2_canonical import evaluate_nurbs_curve
 from part_rule_synthesis.impeller_v11_6_comparison_scope import (
@@ -31,6 +33,7 @@ from part_rule_synthesis.impeller_v11_6_v112_mapping import (
 ALGORITHM_VERSION = "axis_first_measurement_bundle_task9_r3"
 _STABLE_REASONS = {
     "v116_hub_support_classification_failed",
+    "v116_hub_support_circumferential_coverage_incomplete",
     "v116_hub_profile_fit_failed",
     "v116_tip_reference_inference_failed",
     "v116_shroud_topology_ambiguous",
@@ -59,10 +62,13 @@ _STABLE_REASONS = {
     "v116_support_profile_endpoint_role_missing",
     "v116_support_profile_streamwise_mismatch",
     "v116_hub_closure_endpoint_semantics_failed",
+    "v116_active_span_carrier_invalid",
 }
 _TASK8_RECONSTRUCTION_EVIDENCE_BASIS = (
     "v116_axis_first_periodic_material_evidence_v1"
 )
+_HUB_SUPPORT_MINIMUM_NORMALIZED_PITCH_COVERAGE = 0.8
+_HUB_SUPPORT_PROFILE_SAMPLE_COUNT = 4097
 
 
 class AxisFirstPipelineError(RuntimeError):
@@ -186,7 +192,11 @@ def build_measurement_bundle(
     except AxisFirstPipelineError as exc:
         exc.details["completed_stages"] = copy.deepcopy(completed)
         raise
-    except (support_recovery.SupportRecoveryError, section_recovery.SectionRecoveryError) as exc:
+    except (
+        support_recovery.SupportRecoveryError,
+        section_recovery.SectionRecoveryError,
+        section_curve_authority.SectionCurveAuthorityError,
+    ) as exc:
         stage = _exception_stage(exc)
         raise AxisFirstPipelineError(
             getattr(exc, "reason", _stage_reason(stage)),
@@ -297,6 +307,34 @@ def _enrich_mapping(
         ),
     )
     source_sha256 = str(result.measurements["provenance"]["source_sha256"])
+    direct_network = result.section_evidence.get("direct_section_curve_network")
+    direct_populations = (
+        direct_network.get("populations", {})
+        if isinstance(direct_network, Mapping)
+        else {}
+    )
+    direct_stations = [
+        station
+        for family in direct_populations.values()
+        for station in family["stations"]
+    ]
+    if direct_stations:
+        endpoint_witnesses = _semantic_endpoint_witnesses(
+            result.support_evidence,
+            result.measurements["topology"]["material_measurements"],
+            result.section_evidence,
+            source_tolerance_mm=max(
+                float(station["source_tolerance_mm"])
+                for station in direct_stations
+            ),
+        )
+    else:
+        endpoint_witnesses = {
+            "contract_id": "impeller_v1_1_6_semantic_endpoint_witnesses_r16_1",
+            "status": "NOT_AVAILABLE_LEGACY_MEASUREMENT_BUNDLE",
+            "coordinate_frame": "canonical_axis_frame_xyz_mm",
+            "blade_leading_boundary_witnesses": [],
+        }
     mapped.update(
         {
             "mapping_id": "v116-axis-first-" + mapped["constructor_input_hash_sha256"][:12]
@@ -315,6 +353,7 @@ def _enrich_mapping(
                 )
             ),
             "section_provenance": _jsonable(result.section_evidence),
+            "semantic_endpoint_witnesses": _jsonable(endpoint_witnesses),
             "pipeline_stages": list(result.stage_evidence),
             "profile_fits": copy.deepcopy(result.measurements["support_fits"]),
             "source_section_loops": copy.deepcopy(
@@ -462,37 +501,92 @@ def _build_exact_incidence_index(source_shape, faces_by_id, edges_by_id):
 
 def _recover_support_evidence(inventory, frame, semantics) -> dict[str, Any]:
     topology = _classify_support_topology(inventory, frame, semantics)
+    matrix = frame["source_to_canonical_matrix"]
+    tolerance = _source_tolerance(frame)
+    minimum_radius_mm = min(
+        float(instance["radial_support_range_mm"][0])
+        for population in semantics["periodic_population_recovery"]["populations"]
+        for instance in population["instances"]
+    )
+    initial_hub_ids = list(
+        topology.get("hub_support_face_ids", [topology["hub_face_id"]])
+    )
+    initial_coverage = topology.get(
+        "hub_support_initial_periodic_coverage", {}
+    )
+    preliminary_samples = _sample_hub_source_faces(
+        inventory,
+        frame,
+        initial_hub_ids,
+        trace_count=7,
+        samples_per_trace=49,
+    )
+    if initial_coverage.get("mode") == "periodic_passage_patches":
+        preliminary_fit = _fit_preliminary_hub_support(
+            preliminary_samples,
+            frame,
+            minimum_radius_mm=minimum_radius_mm,
+        )
+        deficient_instances = _initial_hub_coverage_deficiencies(
+            topology,
+            preliminary_samples,
+        )
+        candidate_ids = _hub_source_union_candidate_ids(
+            inventory,
+            semantics,
+            topology,
+            deficient_instances,
+        )
+    else:
+        preliminary_fit = None
+        candidate_ids = []
+    preliminary_samples.update(
+        _sample_hub_source_faces(
+            inventory,
+            frame,
+            candidate_ids,
+            trace_count=7,
+            samples_per_trace=49,
+        )
+    )
+    if preliminary_fit is None:
+        p95_limit, maximum_limit = 1.0, 1.0
+        profile_control_points_rz_mm = []
+    else:
+        p95_limit, maximum_limit = _hub_profile_conformance_limits(
+            preliminary_fit,
+            frame,
+        )
+        profile_control_points_rz_mm = preliminary_fit[
+            "control_points_rz_mm"
+        ]
+    topology = _select_profile_conformant_hub_source_union(
+        inventory,
+        topology,
+        sample_records_by_face=preliminary_samples,
+        profile_control_points_rz_mm=profile_control_points_rz_mm,
+        profile_p95_limit_mm=p95_limit,
+        profile_maximum_limit_mm=maximum_limit,
+    )
+
     assignments = _semantic_assignments(inventory, semantics, topology)
     partition = support_recovery.authenticate_occt_semantic_partition(
         inventory["shape"], face_assignments=assignments
     )
-    matrix = frame["source_to_canonical_matrix"]
-    tolerance = _source_tolerance(frame)
-    hub_ids = list(
-        topology.get("hub_support_face_ids", [topology["hub_face_id"]])
+    hub_ids = list(topology["hub_support_face_ids"])
+    hub_samples = _sample_hub_source_faces(
+        inventory,
+        frame,
+        hub_ids,
+        semantic_partition_evidence=partition,
+        trace_count=9,
+        samples_per_trace=65,
     )
-    hub_samples = [
-        support_recovery.sample_occt_face_meridional_paths(
-            inventory["faces_by_id"][hub_id],
-            source_face_id=hub_id,
-            source_solid=inventory["shape"],
-            semantic_partition_evidence=partition,
-            source_to_canonical_matrix=matrix,
-            source_tolerance_mm=tolerance,
-            trace_count=9,
-            samples_per_trace=65,
-        )
-        for hub_id in hub_ids
-    ]
     hub_fit = _fit_authenticated_support(
-        hub_samples,
+        [hub_samples[hub_id] for hub_id in hub_ids],
         outer_diameter_mm=2.0 * float(frame["outer_radius_mm"]),
         semantic_role="hub_profile",
-        minimum_radius_mm=min(
-            float(instance["radial_support_range_mm"][0])
-            for population in semantics["periodic_population_recovery"]["populations"]
-            for instance in population["instances"]
-        ),
+        minimum_radius_mm=minimum_radius_mm,
     )
 
     if topology["mode"] == "open":
@@ -626,7 +720,8 @@ def _attachment_faces_by_instance(inventory, instances, support_face_ids):
         candidates = [
             face_id
             for face_id in instance["source_face_ids"]
-            if support_ids.intersection(adjacency.get(face_id, ()))
+            if face_id not in support_ids
+            and support_ids.intersection(adjacency.get(face_id, ()))
         ]
         if not candidates:
             raise AxisFirstPipelineError(
@@ -797,6 +892,19 @@ def _classify_support_topology(inventory, frame, semantics) -> dict[str, Any]:
         >= 0.5 * hub_group["shared_contact_length_mm"]
     ]
     mode = "closed" if comparable_groups else "open"
+    population_instance_ids = {
+        str(population["classification"]): sorted(
+            str(instance["instance_id"])
+            for instance in population["instances"]
+        )
+        for population in semantics["periodic_population_recovery"]["populations"]
+    }
+    initial_periodic_coverage = copy.deepcopy(
+        hub_group.get("periodic_passage_face_coverage", {})
+    )
+    initial_periodic_coverage["population_instance_ids"] = (
+        population_instance_ids
+    )
     serialized_groups = [
         {
             **{
@@ -816,6 +924,7 @@ def _classify_support_topology(inventory, frame, semantics) -> dict[str, Any]:
         "mode": mode,
         "hub_face_id": hub["face_id"],
         "hub_support_face_ids": sorted(hub_group["member_face_ids"]),
+        "hub_support_initial_periodic_coverage": initial_periodic_coverage,
         "support_candidates": copy.deepcopy(candidates),
         "support_candidate_groups": serialized_groups,
         "classification_authority": (
@@ -901,6 +1010,7 @@ def _semantic_assignments(inventory, semantics, topology) -> dict[str, Any]:
             face_id
             for face_id in instance["source_face_ids"]
             if face_id not in authenticated_side_faces
+            and face_id not in hub_support_ids
             and hub_support_ids.intersection(adjacency.get(face_id, ()))
         }
         dual_side_candidates = {
@@ -932,6 +1042,7 @@ def _semantic_assignments(inventory, semantics, topology) -> dict[str, Any]:
             "hub_support_face_ids", [topology["hub_face_id"]]
         ):
             role, flowpath = "hub_flowpath_support", True
+            instance_id = None
         elif face_id == topology.get("inner_shroud_face_id"):
             role, flowpath = "inner_shroud_flowpath_support", True
         elif face_id == topology.get("outer_shroud_face_id"):
@@ -1353,6 +1464,14 @@ def _recover_periodic_evidence(
             stage="periodic_representatives",
         )
     source_tolerance_mm = _source_tolerance(frame)
+    support_topology = support["support_face_ids"] if support is not None else {}
+    support_source_ids = _topology_material_support_face_ids(support_topology)
+    coarse_periodic_source_ids = {
+        str(face_id)
+        for population in recovery["populations"]
+        for instance in population["instances"]
+        for face_id in instance["source_face_ids"]
+    }
     maximum_representative_residual_mm = max(
         float(instance["residual_to_representative_mm"])
         for population in recovery["populations"]
@@ -1362,6 +1481,10 @@ def _recover_periodic_evidence(
         _bounded_representative_fit_tolerance(
             frame, maximum_representative_residual_mm
         )
+    )
+    pattern_population_evidence = _periodic_recovery_without_support_faces(
+        recovery,
+        support_topology,
     )
     result = {
         "status": "PASS",
@@ -1378,13 +1501,10 @@ def _recover_periodic_evidence(
             "exact_brep_collision_free"
         ],
         "phase_consistent": True,
-        "source_ids": sorted(
-            {
-                face_id
-                for population in recovery["populations"]
-                for instance in population["instances"]
-                for face_id in instance["source_face_ids"]
-            }
+        "source_ids": sorted(coarse_periodic_source_ids - support_source_ids),
+        "coarse_periodic_source_ids": sorted(coarse_periodic_source_ids),
+        "excluded_support_source_face_ids": sorted(
+            coarse_periodic_source_ids & support_source_ids
         ),
         "source_linear_tolerance_mm": source_tolerance_mm,
         "measurement_tolerance_mm": representative_fit_tolerance_mm,
@@ -1393,7 +1513,8 @@ def _recover_periodic_evidence(
         "measurement_tolerance_basis": (
             "maximum_authenticated_periodic_representative_fit_residual"
         ),
-        "pattern_population_evidence": copy.deepcopy(recovery),
+        "pattern_population_evidence": pattern_population_evidence,
+        "coarse_pattern_population_evidence": copy.deepcopy(recovery),
     }
     for name in ("main", "splitter"):
         population = recovery.get(name)
@@ -1411,14 +1532,21 @@ def _recover_periodic_evidence(
             population["instances"][0],
         )
         if support is not None:
-            hub_id = support["support_face_ids"]["hub_face_id"]
+            support_ids = set(
+                support["support_face_ids"].get("hub_support_face_ids", ())
+            )
+            if not support_ids:
+                support_ids = {
+                    str(support["support_face_ids"]["hub_face_id"])
+                }
             support_bound = [
                 item
                 for item in population["instances"]
                 if any(
-                    hub_id
-                    in inventory["source_manifest"]["adjacency"].get(
-                        face_id, ()
+                    support_ids.intersection(
+                        inventory["source_manifest"]["adjacency"].get(
+                            face_id, ()
+                        )
                     )
                     for face_id in item["source_face_ids"]
                 )
@@ -1429,7 +1557,7 @@ def _recover_periodic_evidence(
                     f"{name} population is not bound to the selected support sector",
                     stage="periodic_representatives",
                     evidence={
-                        "hub_face_id": hub_id,
+                        "hub_support_face_ids": sorted(support_ids),
                         "candidate_instance_ids": [
                             item["instance_id"] for item in support_bound
                         ],
@@ -1483,6 +1611,10 @@ def _recover_periodic_evidence(
             instance["angular_envelope_deg"],
             pitch_deg=float(population["pitch_deg"]),
         )
+        representative_instance = _periodic_instance_without_support_faces(
+            instance,
+            support_topology,
+        )
         result[name] = {
             "count": int(population["count"]),
             "pitch_deg": float(population["pitch_deg"]),
@@ -1490,12 +1622,78 @@ def _recover_periodic_evidence(
             "phase_relative_to_main_deg": float(population["phase_relative_to_main_deg"]),
             "streamwise_interval_s": interval,
             "streamwise_interval_evidence": interval_evidence,
-            "source_ids": sorted(instance["source_face_ids"]),
-            "representative_instance": copy.deepcopy(instance),
+            "source_ids": list(representative_instance["source_face_ids"]),
+            "representative_instance": representative_instance,
             "angular_sector_deg": angular_sector,
             "angular_sector_evidence": sector_evidence,
         }
     return result
+
+
+def _periodic_instance_without_support_faces(instance, topology):
+    sanitized = copy.deepcopy(dict(instance))
+    support_ids = _topology_material_support_face_ids(topology)
+    coarse_ids = [str(face_id) for face_id in instance.get("source_face_ids", ())]
+    excluded = sorted(set(coarse_ids).intersection(support_ids))
+    sanitized["coarse_source_face_ids"] = coarse_ids
+    sanitized["excluded_support_source_face_ids"] = excluded
+    sanitized["source_face_ids"] = [
+        face_id for face_id in coarse_ids if face_id not in support_ids
+    ]
+    completeness = sanitized.get("component_completeness")
+    if isinstance(completeness, Mapping):
+        completeness = copy.deepcopy(dict(completeness))
+        for key, value in list(completeness.items()):
+            if (
+                key.endswith("_face_ids")
+                and isinstance(value, Sequence)
+                and not isinstance(value, (str, bytes))
+            ):
+                completeness[key] = [
+                    str(face_id)
+                    for face_id in value
+                    if str(face_id) not in support_ids
+                ]
+        sanitized["component_completeness"] = completeness
+    return sanitized
+
+
+def _periodic_recovery_without_support_faces(recovery, topology):
+    sanitized = copy.deepcopy(dict(recovery))
+
+    def sanitize_population(population):
+        if not isinstance(population, Mapping):
+            return population
+        result = copy.deepcopy(dict(population))
+        instances = result.get("instances")
+        if (
+            isinstance(instances, Sequence)
+            and not isinstance(instances, (str, bytes))
+        ):
+            result["instances"] = [
+                _periodic_instance_without_support_faces(instance, topology)
+                for instance in instances
+            ]
+        representative = result.get("representative")
+        if isinstance(representative, Mapping):
+            result["representative"] = _periodic_instance_without_support_faces(
+                representative,
+                topology,
+            )
+        return result
+
+    populations = sanitized.get("populations")
+    if (
+        isinstance(populations, Sequence)
+        and not isinstance(populations, (str, bytes))
+    ):
+        sanitized["populations"] = [
+            sanitize_population(population) for population in populations
+        ]
+    for name in ("main", "splitter"):
+        if sanitized.get(name) is not None:
+            sanitized[name] = sanitize_population(sanitized[name])
+    return sanitized
 
 
 def _representative_meridional_points(
@@ -1950,6 +2148,1043 @@ def _merge_hub_groups_for_faces(groups, retained_face_ids):
     return result
 
 
+def _select_profile_conformant_hub_source_union(
+    inventory,
+    topology,
+    *,
+    sample_records_by_face,
+    profile_control_points_rz_mm,
+    profile_p95_limit_mm,
+    profile_maximum_limit_mm,
+    minimum_normalized_pitch_coverage=(
+        _HUB_SUPPORT_MINIMUM_NORMALIZED_PITCH_COVERAGE
+    ),
+):
+    """Complete a split hub support without absorbing blade-root geometry."""
+
+    updated = copy.deepcopy(dict(topology))
+    minimum_ratio = float(minimum_normalized_pitch_coverage)
+    if not 0.0 < minimum_ratio <= 1.0:
+        raise ValueError("minimum_normalized_pitch_coverage must be in (0,1]")
+    initial_coverage = updated.get("hub_support_initial_periodic_coverage", {})
+    if initial_coverage.get("mode") != "periodic_passage_patches":
+        return _select_shared_profile_conformant_hub_source_union(
+            inventory,
+            updated,
+            sample_records_by_face=sample_records_by_face,
+            profile_control_points_rz_mm=profile_control_points_rz_mm,
+            profile_p95_limit_mm=profile_p95_limit_mm,
+            profile_maximum_limit_mm=profile_maximum_limit_mm,
+            minimum_coverage_ratio=minimum_ratio,
+        )
+
+    instance_to_face = {
+        str(instance_id): str(face_id)
+        for instance_id, face_id in initial_coverage.get(
+            "instance_to_face_id", {}
+        ).items()
+    }
+    expected_count = int(initial_coverage.get("expected_count", 0))
+    if not instance_to_face or len(instance_to_face) != expected_count:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "hub support has no complete initial periodic ownership map",
+            stage="support_recovery",
+            evidence={
+                "expected_periodic_instance_count": expected_count,
+                "owned_periodic_instance_count": len(instance_to_face),
+            },
+        )
+
+    initial_support_face_ids = set(updated["hub_support_face_ids"])
+    support_face_ids = set(initial_support_face_ids)
+    missing_samples = sorted(support_face_ids - set(sample_records_by_face))
+    if missing_samples:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "hub support coverage lacks sampled source faces",
+            stage="support_recovery",
+            evidence={"missing_sample_source_face_ids": missing_samples},
+        )
+    intervals_by_face = {
+        face_id: _hub_face_angular_intervals_deg(sample_records_by_face[face_id])
+        for face_id in sample_records_by_face
+    }
+    faces_by_instance = {
+        instance_id: [face_id]
+        for instance_id, face_id in instance_to_face.items()
+    }
+    initial_covered = {
+        instance_id: _angular_union_length_deg(
+            [
+                interval
+                for face_id in face_ids
+                for interval in intervals_by_face[face_id]
+            ]
+        )
+        for instance_id, face_ids in faces_by_instance.items()
+    }
+    reference_coverage_deg = float(np.median(list(initial_covered.values())))
+    if not math.isfinite(reference_coverage_deg) or reference_coverage_deg <= 0.0:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "hub support periodic pitch coverage has no finite reference span",
+            stage="support_recovery",
+            evidence={"initial_covered_angle_deg": initial_covered},
+        )
+    population_instance_ids = _hub_coverage_population_instance_ids(
+        updated,
+        instance_to_face,
+    )
+    population_by_instance = {
+        instance_id: population
+        for population, instance_ids in population_instance_ids.items()
+        for instance_id in instance_ids
+    }
+    population_gates = {}
+    for population, instance_ids in population_instance_ids.items():
+        values = [initial_covered[instance_id] for instance_id in instance_ids]
+        reference = float(np.median(values))
+        if not math.isfinite(reference) or reference <= 0.0:
+            raise AxisFirstPipelineError(
+                "v116_hub_support_circumferential_coverage_incomplete",
+                "hub support population has no finite angular coverage reference",
+                stage="support_recovery",
+                evidence={
+                    "population": population,
+                    "initial_covered_angle_deg": {
+                        instance_id: initial_covered[instance_id]
+                        for instance_id in instance_ids
+                    },
+                },
+            )
+        expected_pitch = 360.0 / float(len(instance_ids))
+        population_gates[population] = {
+            "instance_ids": list(instance_ids),
+            "reference_covered_angle_deg": reference,
+            "expected_pitch_angle_deg": expected_pitch,
+            "minimum_absolute_pitch_coverage_deg": (
+                minimum_ratio * expected_pitch
+            ),
+        }
+
+    controls = np.asarray(profile_control_points_rz_mm, dtype=float)
+    profile = np.asarray(
+        support_recovery.evaluate_profile_rz(
+            controls,
+            np.linspace(
+                0.0,
+                1.0,
+                _HUB_SUPPORT_PROFILE_SAMPLE_COUNT,
+            ),
+        ),
+        dtype=float,
+    )
+    p95_limit = float(profile_p95_limit_mm)
+    maximum_limit = float(profile_maximum_limit_mm)
+    if (
+        not math.isfinite(p95_limit)
+        or not math.isfinite(maximum_limit)
+        or p95_limit <= 0.0
+        or maximum_limit < p95_limit
+    ):
+        raise ValueError("hub profile conformance limits are invalid")
+
+    adjacency = inventory["source_manifest"]["adjacency"]
+    support_owner_by_face = {
+        face_id: instance_id for instance_id, face_id in instance_to_face.items()
+    }
+    support_geometry_types = {
+        str(inventory["records_by_id"][face_id]["geometry_type"]).upper()
+        for face_id in initial_support_face_ids
+    }
+    protected_attachment_face_ids = _protected_periodic_root_attachment_face_ids(
+        inventory,
+        updated,
+    )
+    expected_instances = set(instance_to_face)
+    accepted_candidates = {}
+    rejected_candidates = {}
+    for face_id in sorted(set(sample_records_by_face) - support_face_ids):
+        record = inventory["records_by_id"].get(face_id, {})
+        geometry_type = str(record.get("geometry_type", "")).upper()
+        adjacent_initial_support_ids = initial_support_face_ids.intersection(
+            adjacency.get(face_id, ())
+        )
+        owners = _hub_candidate_instance_ids(
+            inventory,
+            face_id,
+            support_owner_by_face=support_owner_by_face,
+        ) & expected_instances
+        if face_id in protected_attachment_face_ids:
+            rejected_candidates[face_id] = {
+                "reason": "periodic_root_attachment_protected",
+                "geometry_type": geometry_type,
+                "periodic_instance_ids": sorted(owners),
+                "adjacent_initial_support_face_ids": sorted(
+                    adjacent_initial_support_ids
+                ),
+            }
+            continue
+        if len(owners) > 1:
+            rejected_candidates[face_id] = {
+                "reason": "adjacent_support_owner_ambiguous",
+                "geometry_type": geometry_type,
+                "periodic_instance_ids": sorted(owners),
+                "adjacent_initial_support_face_ids": sorted(
+                    adjacent_initial_support_ids
+                ),
+            }
+            continue
+        if (
+            geometry_type not in support_geometry_types
+            or not owners
+            or not adjacent_initial_support_ids
+        ):
+            rejected_candidates[face_id] = {
+                "reason": (
+                    "initial_support_adjacency_failed"
+                    if not adjacent_initial_support_ids
+                    else "support_type_or_periodic_ownership_failed"
+                ),
+                "geometry_type": geometry_type,
+                "periodic_instance_ids": sorted(owners),
+                "adjacent_initial_support_face_ids": sorted(
+                    adjacent_initial_support_ids
+                ),
+            }
+            continue
+        rz_points = _hub_sample_points(sample_records_by_face[face_id], "paths_rz_mm", 2)
+        distances = _nearest_profile_sample_distances(rz_points, profile)
+        p95 = float(np.quantile(distances, 0.95))
+        maximum = float(np.max(distances))
+        evidence = {
+            "periodic_instance_ids": sorted(owners),
+            "adjacent_initial_support_face_ids": sorted(
+                adjacent_initial_support_ids
+            ),
+            "profile_distance_p95_mm": round(p95, 9),
+            "profile_distance_maximum_mm": round(maximum, 9),
+            "sample_count": len(rz_points),
+        }
+        if p95 > p95_limit or maximum > maximum_limit:
+            rejected_candidates[face_id] = {
+                **evidence,
+                "reason": "profile_conformance_failed",
+            }
+            continue
+        accepted_candidates[face_id] = evidence
+
+    promoted = []
+
+    def coverage_state():
+        covered = {
+            instance_id: _angular_union_length_deg(
+                [
+                    interval
+                    for face_id in face_ids
+                    for interval in intervals_by_face[face_id]
+                ]
+            )
+            for instance_id, face_ids in faces_by_instance.items()
+        }
+        normalized = {
+            instance_id: value
+            / population_gates[population_by_instance[instance_id]][
+                "reference_covered_angle_deg"
+            ]
+            for instance_id, value in covered.items()
+        }
+        absolute_pitch_coverage = {
+            instance_id: value
+            / population_gates[population_by_instance[instance_id]][
+                "expected_pitch_angle_deg"
+            ]
+            for instance_id, value in covered.items()
+        }
+        deficient = {
+            instance_id
+            for instance_id, ratio in normalized.items()
+            if (
+                ratio + 1.0e-12 < minimum_ratio
+                or covered[instance_id] + 1.0e-12
+                < population_gates[population_by_instance[instance_id]][
+                    "minimum_absolute_pitch_coverage_deg"
+                ]
+            )
+        }
+        return covered, normalized, absolute_pitch_coverage, deficient
+
+    covered, normalized, absolute_pitch_coverage, deficient = coverage_state()
+    while deficient:
+        viable = []
+        for face_id, evidence in accepted_candidates.items():
+            if face_id in promoted:
+                continue
+            if not initial_support_face_ids.intersection(
+                adjacency.get(face_id, ())
+            ):
+                continue
+            owners = set(evidence["periodic_instance_ids"]) & deficient
+            total_gain = 0.0
+            for instance_id in owners:
+                before = covered[instance_id]
+                after = _angular_union_length_deg(
+                    [
+                        interval
+                        for owned_face_id in [
+                            *faces_by_instance[instance_id],
+                            face_id,
+                        ]
+                        for interval in intervals_by_face[owned_face_id]
+                    ]
+                )
+                total_gain += max(0.0, after - before)
+            if total_gain > 1.0e-9:
+                viable.append(
+                    (
+                        total_gain,
+                        -float(evidence["profile_distance_p95_mm"]),
+                        -float(evidence["profile_distance_maximum_mm"]),
+                        face_id,
+                        owners,
+                    )
+                )
+        if not viable:
+            break
+        _gain, _p95, _maximum, selected_face_id, owners = max(viable)
+        promoted.append(selected_face_id)
+        support_face_ids.add(selected_face_id)
+        for instance_id in owners:
+            faces_by_instance[instance_id].append(selected_face_id)
+        covered, normalized, absolute_pitch_coverage, deficient = coverage_state()
+
+    per_instance = {
+        instance_id: {
+            "population": population_by_instance[instance_id],
+            "source_face_ids": sorted(faces_by_instance[instance_id]),
+            "covered_angle_deg": round(covered[instance_id], 9),
+            "normalized_coverage": round(normalized[instance_id], 9),
+            "absolute_pitch_coverage": round(
+                absolute_pitch_coverage[instance_id], 9
+            ),
+            "complete": instance_id not in deficient,
+        }
+        for instance_id in sorted(faces_by_instance)
+    }
+    evidence = {
+        "contract_id": "impeller_v1_1_6_hub_support_source_union_r16_23",
+        "status": "PASS" if not deficient else "REJECTED",
+        "coverage_mode": (
+            "every_periodic_pitch_absolute_and_population_relative_angular_support"
+        ),
+        "coverage_definition": (
+            "every periodic pitch retains both the bounded fraction of its "
+            "absolute pitch angle and the bounded fraction of the population-"
+            "median bare-hub angular support; blade attachment cutouts are not "
+            "misreported as missing hub"
+        ),
+        "initial_source_face_ids": sorted(updated["hub_support_face_ids"]),
+        "promoted_source_face_ids": sorted(promoted),
+        "final_source_face_ids": sorted(support_face_ids),
+        "reference_covered_angle_deg": round(reference_coverage_deg, 9),
+        "population_gates": {
+            population: {
+                **gate,
+                "reference_covered_angle_deg": round(
+                    gate["reference_covered_angle_deg"], 9
+                ),
+                "expected_pitch_angle_deg": round(
+                    gate["expected_pitch_angle_deg"], 9
+                ),
+                "minimum_absolute_pitch_coverage_deg": round(
+                    gate["minimum_absolute_pitch_coverage_deg"], 9
+                ),
+            }
+            for population, gate in sorted(population_gates.items())
+        },
+        "minimum_normalized_pitch_coverage": minimum_ratio,
+        "profile_conformance_limits_mm": {
+            "p95": p95_limit,
+            "maximum": maximum_limit,
+        },
+        "accepted_candidates": copy.deepcopy(accepted_candidates),
+        "rejected_candidates": rejected_candidates,
+        "per_instance": per_instance,
+        "expected_periodic_instance_count": expected_count,
+        "covered_periodic_instance_count": expected_count - len(deficient),
+        "full_revolution_covered": not deficient,
+    }
+    unique_expected_pitches = {
+        round(gate["expected_pitch_angle_deg"], 12)
+        for gate in population_gates.values()
+    }
+    unique_minimum_coverage = {
+        round(gate["minimum_absolute_pitch_coverage_deg"], 12)
+        for gate in population_gates.values()
+    }
+    evidence["expected_pitch_angle_deg"] = (
+        next(iter(unique_expected_pitches))
+        if len(unique_expected_pitches) == 1
+        else None
+    )
+    evidence["minimum_absolute_pitch_coverage_deg"] = (
+        next(iter(unique_minimum_coverage))
+        if len(unique_minimum_coverage) == 1
+        else None
+    )
+    if deficient:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "profile-conformant hub support faces do not cover every periodic pitch",
+            stage="support_recovery",
+            evidence={
+                **evidence,
+                "deficient_periodic_instance_ids": sorted(deficient),
+            },
+        )
+    updated["hub_support_face_ids"] = sorted(support_face_ids)
+    updated["hub_support_source_union"] = evidence
+    updated["classification_authority"] = (
+        str(updated.get("classification_authority", ""))
+        + "_plus_profile_conformant_split_face_union"
+    )
+    return updated
+
+
+def _select_shared_profile_conformant_hub_source_union(
+    inventory,
+    topology,
+    *,
+    sample_records_by_face,
+    profile_control_points_rz_mm,
+    profile_p95_limit_mm,
+    profile_maximum_limit_mm,
+    minimum_coverage_ratio,
+):
+    initial_support_ids = set(topology["hub_support_face_ids"])
+    missing_samples = sorted(initial_support_ids - set(sample_records_by_face))
+    if missing_samples:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "shared hub support coverage lacks sampled source faces",
+            stage="support_recovery",
+            evidence={"missing_sample_source_face_ids": missing_samples},
+        )
+    intervals_by_face = {
+        face_id: _hub_face_angular_intervals_deg(sample)
+        for face_id, sample in sample_records_by_face.items()
+    }
+    support_ids = set(initial_support_ids)
+    minimum_absolute_coverage_deg = float(minimum_coverage_ratio) * 360.0
+    p95_limit = float(profile_p95_limit_mm)
+    maximum_limit = float(profile_maximum_limit_mm)
+    adjacency = inventory["source_manifest"]["adjacency"]
+    support_geometry_types = {
+        str(inventory["records_by_id"][face_id]["geometry_type"]).upper()
+        for face_id in initial_support_ids
+    }
+    protected_attachment_ids = _protected_periodic_root_attachment_face_ids(
+        inventory,
+        topology,
+    )
+    candidate_face_ids = sorted(
+        set(sample_records_by_face) - initial_support_ids
+    )
+    if candidate_face_ids:
+        controls = np.asarray(profile_control_points_rz_mm, dtype=float)
+        profile = np.asarray(
+            support_recovery.evaluate_profile_rz(
+                controls,
+                np.linspace(0.0, 1.0, _HUB_SUPPORT_PROFILE_SAMPLE_COUNT),
+            ),
+            dtype=float,
+        )
+    else:
+        profile = None
+    accepted_candidates = {}
+    rejected_candidates = {}
+    for face_id in candidate_face_ids:
+        geometry_type = str(
+            inventory["records_by_id"].get(face_id, {}).get(
+                "geometry_type", ""
+            )
+        ).upper()
+        adjacent_initial_support_ids = initial_support_ids.intersection(
+            adjacency.get(face_id, ())
+        )
+        if face_id in protected_attachment_ids:
+            rejected_candidates[face_id] = {
+                "reason": "periodic_root_attachment_protected",
+                "geometry_type": geometry_type,
+                "adjacent_initial_support_face_ids": sorted(
+                    adjacent_initial_support_ids
+                ),
+            }
+            continue
+        if (
+            geometry_type not in support_geometry_types
+            or not adjacent_initial_support_ids
+        ):
+            rejected_candidates[face_id] = {
+                "reason": (
+                    "initial_support_adjacency_failed"
+                    if not adjacent_initial_support_ids
+                    else "support_type_failed"
+                ),
+                "geometry_type": geometry_type,
+                "adjacent_initial_support_face_ids": sorted(
+                    adjacent_initial_support_ids
+                ),
+            }
+            continue
+        rz_points = _hub_sample_points(
+            sample_records_by_face[face_id], "paths_rz_mm", 2
+        )
+        distances = _nearest_profile_sample_distances(rz_points, profile)
+        p95 = float(np.quantile(distances, 0.95))
+        maximum = float(np.max(distances))
+        candidate_evidence = {
+            "adjacent_initial_support_face_ids": sorted(
+                adjacent_initial_support_ids
+            ),
+            "profile_distance_p95_mm": round(p95, 9),
+            "profile_distance_maximum_mm": round(maximum, 9),
+            "sample_count": len(rz_points),
+        }
+        if p95 > p95_limit or maximum > maximum_limit:
+            rejected_candidates[face_id] = {
+                **candidate_evidence,
+                "reason": "profile_conformance_failed",
+            }
+            continue
+        accepted_candidates[face_id] = candidate_evidence
+
+    def covered_angle_deg():
+        return _angular_union_length_deg(
+            [
+                interval
+                for face_id in support_ids
+                for interval in intervals_by_face[face_id]
+            ]
+        )
+
+    covered = covered_angle_deg()
+    promoted = []
+    while covered + 1.0e-12 < minimum_absolute_coverage_deg:
+        viable = []
+        for face_id, candidate_evidence in accepted_candidates.items():
+            if face_id in promoted:
+                continue
+            after = _angular_union_length_deg(
+                [
+                    interval
+                    for owned_face_id in [*support_ids, face_id]
+                    for interval in intervals_by_face[owned_face_id]
+                ]
+            )
+            gain = after - covered
+            if gain > 1.0e-9:
+                viable.append(
+                    (
+                        gain,
+                        -float(candidate_evidence["profile_distance_p95_mm"]),
+                        -float(
+                            candidate_evidence["profile_distance_maximum_mm"]
+                        ),
+                        face_id,
+                    )
+                )
+        if not viable:
+            break
+        _gain, _p95, _maximum, selected_face_id = max(viable)
+        promoted.append(selected_face_id)
+        support_ids.add(selected_face_id)
+        covered = covered_angle_deg()
+
+    complete = covered + 1.0e-12 >= minimum_absolute_coverage_deg
+    evidence = {
+        "contract_id": "impeller_v1_1_6_hub_support_source_union_r16_23",
+        "status": "PASS" if complete else "REJECTED",
+        "coverage_mode": "shared_support_absolute_angular_support",
+        "coverage_definition": (
+            "the exact trimmed boundary union of shared hub support faces "
+            "must cover the bounded fraction of a full revolution"
+        ),
+        "initial_source_face_ids": sorted(initial_support_ids),
+        "promoted_source_face_ids": sorted(promoted),
+        "final_source_face_ids": sorted(support_ids),
+        "covered_angle_deg": round(covered, 9),
+        "expected_full_revolution_deg": 360.0,
+        "minimum_absolute_coverage_deg": round(
+            minimum_absolute_coverage_deg, 9
+        ),
+        "accepted_candidates": copy.deepcopy(accepted_candidates),
+        "rejected_candidates": rejected_candidates,
+        "profile_conformance_limits_mm": {
+            "p95": p95_limit,
+            "maximum": maximum_limit,
+        },
+        "full_revolution_covered": complete,
+    }
+    if not complete:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "shared hub support faces do not cover the full revolution",
+            stage="support_recovery",
+            evidence=evidence,
+        )
+    updated = copy.deepcopy(dict(topology))
+    updated["hub_support_face_ids"] = sorted(support_ids)
+    updated["hub_support_source_union"] = evidence
+    updated["classification_authority"] = (
+        str(updated.get("classification_authority", ""))
+        + "_plus_profile_conformant_split_face_union"
+    )
+    return updated
+
+
+def _hub_candidate_instance_ids(
+    inventory,
+    face_id,
+    *,
+    support_owner_by_face=None,
+):
+    support_owners = {
+        str(support_owner_by_face[neighbor])
+        for neighbor in inventory["source_manifest"]["adjacency"].get(
+            face_id, ()
+        )
+        if support_owner_by_face is not None
+        and neighbor in support_owner_by_face
+    }
+    if support_owners:
+        return support_owners
+    direct = inventory["instance_by_face"].get(face_id)
+    if direct is not None:
+        return {str(direct)}
+    return {
+        str(inventory["instance_by_face"][neighbor])
+        for neighbor in inventory["source_manifest"]["adjacency"].get(
+            face_id, ()
+        )
+        if neighbor in inventory["instance_by_face"]
+    }
+
+
+def _hub_sample_points(sample_record, key, dimension):
+    points = np.asarray(
+        [point for path in sample_record.get(key, ()) for point in path],
+        dtype=float,
+    )
+    if (
+        points.ndim != 2
+        or points.shape[1:] != (dimension,)
+        or len(points) < 2
+        or not np.all(np.isfinite(points))
+    ):
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "hub support source face has no finite coverage samples",
+            stage="support_recovery",
+            evidence={"sample_key": key},
+        )
+    return points
+
+
+def _hub_face_angular_intervals_deg(sample_record):
+    if sample_record.get("coverage_points_xyz_mm") is not None:
+        points = np.asarray(sample_record["coverage_points_xyz_mm"], dtype=float)
+        if (
+            points.ndim != 2
+            or points.shape[1:] != (3,)
+            or len(points) < 2
+            or not np.all(np.isfinite(points))
+        ):
+            raise AxisFirstPipelineError(
+                "v116_hub_support_circumferential_coverage_incomplete",
+                "hub support face has invalid exact boundary samples",
+                stage="support_recovery",
+            )
+    else:
+        points = _hub_sample_points(sample_record, "paths_xyz_mm", 3)
+    angles = np.sort(
+        np.mod(np.degrees(np.arctan2(points[:, 1], points[:, 0])), 360.0)
+    )
+    if len(angles) == 2 and math.isclose(angles[0], angles[1], abs_tol=1.0e-12):
+        return [(float(angles[0]), float(angles[0]))]
+    wrapped = np.concatenate((angles, [angles[0] + 360.0]))
+    gaps = np.diff(wrapped)
+    gap_index = int(np.argmax(gaps))
+    start = float(angles[(gap_index + 1) % len(angles)])
+    span = max(0.0, 360.0 - float(gaps[gap_index]))
+    end = start + span
+    if end <= 360.0:
+        return [(start, end)]
+    return [(start, 360.0), (0.0, end - 360.0)]
+
+
+def _angular_union_length_deg(intervals):
+    normalized = []
+    for start, end in intervals:
+        first = min(max(float(start), 0.0), 360.0)
+        second = min(max(float(end), 0.0), 360.0)
+        if second > first:
+            normalized.append((first, second))
+    merged = []
+    for start, end in sorted(normalized):
+        if merged and start <= merged[-1][1] + 1.0e-9:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return float(sum(end - start for start, end in merged))
+
+
+def _nearest_profile_sample_distances(points, profile_samples):
+    distances = np.empty(len(points), dtype=float)
+    for start in range(0, len(points), 256):
+        chunk = points[start : start + 256]
+        squared = np.sum(
+            (chunk[:, None, :] - profile_samples[None, :, :]) ** 2,
+            axis=2,
+        )
+        distances[start : start + len(chunk)] = np.sqrt(
+            np.min(squared, axis=1)
+        )
+    return distances
+
+
+def _sample_hub_source_faces(
+    inventory,
+    frame,
+    source_face_ids,
+    *,
+    semantic_partition_evidence=None,
+    trace_count,
+    samples_per_trace,
+):
+    result = {}
+    for face_id in sorted(set(source_face_ids)):
+        options = {}
+        if semantic_partition_evidence is not None:
+            options["semantic_partition_evidence"] = semantic_partition_evidence
+        sampled = support_recovery.sample_occt_face_meridional_paths(
+            inventory["faces_by_id"][face_id],
+            source_face_id=face_id,
+            source_solid=inventory["shape"],
+            source_to_canonical_matrix=frame["source_to_canonical_matrix"],
+            source_tolerance_mm=_source_tolerance(frame),
+            trace_count=trace_count,
+            samples_per_trace=samples_per_trace,
+            **options,
+        )
+        if semantic_partition_evidence is None:
+            sampled = dict(sampled)
+            sampled["coverage_points_xyz_mm"] = _canonical_face_boundary_points(
+                inventory, frame, face_id
+            )
+        result[face_id] = sampled
+    return result
+
+
+def _canonical_face_boundary_points(inventory, frame, face_id):
+    matrix = np.asarray(frame["source_to_canonical_matrix"], dtype=float)
+    face = inventory["faces_by_id"][face_id]
+    points = []
+    for vertex in face.Vertices():
+        points.append(_transform_point(vertex.Center().toTuple(), matrix))
+    failed_edge_indices = []
+    for edge_index, edge in enumerate(face.Edges()):
+        try:
+            edge_points, _parameters = edge.sample(65)
+            if len(edge_points) < 2:
+                raise ValueError("exact edge returned fewer than two samples")
+            transformed_edge_points = []
+            for point in edge_points:
+                coordinates = point.toTuple() if hasattr(point, "toTuple") else point
+                transformed = _transform_point(coordinates, matrix)
+                if not np.all(np.isfinite(transformed)):
+                    raise ValueError("exact edge returned non-finite samples")
+                transformed_edge_points.append(transformed)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            failed_edge_indices.append(edge_index)
+            continue
+        points.extend(transformed_edge_points)
+    if failed_edge_indices:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "hub support exact boundary sampling failed",
+            stage="support_recovery",
+            evidence={
+                "source_face_id": face_id,
+                "failed_edge_indices": failed_edge_indices,
+            },
+        )
+    if len(points) < 2:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "hub support face has no exact boundary samples",
+            stage="support_recovery",
+            evidence={"source_face_id": face_id},
+        )
+    return points
+
+
+def _fit_preliminary_hub_support(
+    samples_by_face,
+    frame,
+    *,
+    minimum_radius_mm,
+):
+    paths = []
+    path_source_ids = []
+    for face_id in sorted(samples_by_face):
+        for path in samples_by_face[face_id]["paths_rz_mm"]:
+            paths.append(path)
+            path_source_ids.append(face_id)
+    points = np.asarray(
+        [point for path in paths for point in path],
+        dtype=float,
+    )
+    if points.ndim != 2 or points.shape[1:] != (2,) or len(points) < 6:
+        raise AxisFirstPipelineError(
+            "v116_hub_profile_fit_failed",
+            "preliminary hub support has insufficient meridional evidence",
+            stage="support_recovery",
+            evidence={"sample_count": len(points)},
+        )
+    tolerance = _source_tolerance(frame)
+    padding = max(tolerance, 1.0e-6)
+    material_domain = (
+        (
+            float(np.min(points[:, 0]) - padding),
+            float(np.max(points[:, 0]) + padding),
+        ),
+        (
+            float(np.min(points[:, 1]) - padding),
+            float(np.max(points[:, 1]) + padding),
+        ),
+    )
+    try:
+        return support_recovery.fit_hub_profile(
+            paths,
+            source_face_ids=path_source_ids,
+            outer_diameter_mm=2.0 * float(frame["outer_radius_mm"]),
+            material_domain_rz_mm=material_domain,
+            coordinate_frame="canonical_axis_frame_xyz_mm",
+            source_to_canonical_matrix=frame["source_to_canonical_matrix"],
+            source_tolerance_mm=tolerance,
+            source_sampling_authority=(
+                "occt_trimmed_face_classifier_preliminary_union_fit"
+            ),
+            minimum_radius_mm=minimum_radius_mm,
+        )
+    except (ValueError, support_recovery.SupportRecoveryError) as exc:
+        raise AxisFirstPipelineError(
+            "v116_hub_profile_fit_failed",
+            f"preliminary hub source-union fit failed: {exc}",
+            stage="support_recovery",
+            evidence={"source_face_ids": sorted(samples_by_face)},
+        ) from exc
+
+
+def _hub_coverage_population_instance_ids(topology, instance_to_face):
+    coverage = topology["hub_support_initial_periodic_coverage"]
+    raw = coverage.get("population_instance_ids")
+    if not isinstance(raw, Mapping) or not raw:
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "hub support coverage lacks population-specific instance ownership",
+            stage="support_recovery",
+            evidence={"periodic_instance_ids": sorted(instance_to_face)},
+        )
+    expected_ids = set(instance_to_face)
+    result = {}
+    observed_ids = set()
+    duplicate_ids = set()
+    for population, raw_instance_ids in raw.items():
+        if (
+            not isinstance(raw_instance_ids, Sequence)
+            or isinstance(raw_instance_ids, (str, bytes))
+        ):
+            instance_ids = []
+        else:
+            instance_ids = [str(value) for value in raw_instance_ids]
+        duplicate_ids.update(observed_ids.intersection(instance_ids))
+        observed_ids.update(instance_ids)
+        result[str(population)] = sorted(set(instance_ids))
+    if (
+        any(not instance_ids for instance_ids in result.values())
+        or duplicate_ids
+        or observed_ids != expected_ids
+    ):
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "hub support population ownership is incomplete or overlapping",
+            stage="support_recovery",
+            evidence={
+                "expected_periodic_instance_ids": sorted(expected_ids),
+                "observed_periodic_instance_ids": sorted(observed_ids),
+                "duplicate_periodic_instance_ids": sorted(duplicate_ids),
+                "population_instance_ids": result,
+            },
+        )
+    return result
+
+
+def _initial_hub_coverage_deficiencies(topology, samples_by_face):
+    coverage = topology["hub_support_initial_periodic_coverage"]
+    instance_to_face = coverage["instance_to_face_id"]
+    expected_count = int(coverage["expected_count"])
+    missing_face_ids = sorted(
+        str(face_id)
+        for face_id in instance_to_face.values()
+        if str(face_id) not in samples_by_face
+    )
+    if (
+        expected_count <= 0
+        or len(instance_to_face) != expected_count
+        or missing_face_ids
+    ):
+        raise AxisFirstPipelineError(
+            "v116_hub_support_circumferential_coverage_incomplete",
+            "initial hub support has no complete sampled periodic ownership map",
+            stage="support_recovery",
+            evidence={
+                "expected_periodic_instance_count": expected_count,
+                "owned_periodic_instance_count": len(instance_to_face),
+                "missing_sample_source_face_ids": missing_face_ids,
+            },
+        )
+    covered = {
+        str(instance_id): _angular_union_length_deg(
+            _hub_face_angular_intervals_deg(samples_by_face[str(face_id)])
+        )
+        for instance_id, face_id in instance_to_face.items()
+    }
+    population_instance_ids = _hub_coverage_population_instance_ids(
+        topology,
+        {str(key): str(value) for key, value in instance_to_face.items()},
+    )
+    minimum_ratio = _HUB_SUPPORT_MINIMUM_NORMALIZED_PITCH_COVERAGE
+    deficient = set()
+    for population, instance_ids in population_instance_ids.items():
+        reference = float(
+            np.median([covered[instance_id] for instance_id in instance_ids])
+        )
+        if not math.isfinite(reference) or reference <= 0.0:
+            raise AxisFirstPipelineError(
+                "v116_hub_support_circumferential_coverage_incomplete",
+                "initial hub support population has no finite angular coverage reference",
+                stage="support_recovery",
+                evidence={
+                    "population": population,
+                    "initial_covered_angle_deg": {
+                        instance_id: covered[instance_id]
+                        for instance_id in instance_ids
+                    },
+                },
+            )
+        minimum_absolute_coverage = minimum_ratio * (
+            360.0 / len(instance_ids)
+        )
+        deficient.update(
+            instance_id
+            for instance_id in instance_ids
+            if (
+                covered[instance_id] / reference + 1.0e-12 < minimum_ratio
+                or covered[instance_id] + 1.0e-12
+                < minimum_absolute_coverage
+            )
+        )
+    return deficient
+
+
+def _hub_source_union_candidate_ids(
+    inventory,
+    semantics,
+    topology,
+    deficient_instance_ids,
+):
+    support_ids = set(topology["hub_support_face_ids"])
+    support_types = {
+        str(inventory["records_by_id"][face_id]["geometry_type"]).upper()
+        for face_id in support_ids
+    }
+    side_ids = {
+        str(face_id)
+        for population in semantics["periodic_population_recovery"]["populations"]
+        for instance in population["instances"]
+        for face_id in instance["component_completeness"]["blade_side_face_ids"]
+    }
+    support_owner_by_face = {
+        str(face_id): str(instance_id)
+        for instance_id, face_id in topology[
+            "hub_support_initial_periodic_coverage"
+        ]["instance_to_face_id"].items()
+    }
+    return sorted(
+        face_id
+        for face_id, record in inventory["records_by_id"].items()
+        if face_id not in support_ids
+        and face_id not in side_ids
+        and support_ids.intersection(
+            inventory["source_manifest"]["adjacency"].get(face_id, ())
+        )
+        and str(record["geometry_type"]).upper() in support_types
+        and _hub_candidate_instance_ids(
+            inventory,
+            face_id,
+            support_owner_by_face=support_owner_by_face,
+        ).intersection(deficient_instance_ids)
+    )
+
+
+def _protected_periodic_root_attachment_face_ids(inventory, topology):
+    semantics = inventory.get("semantics", {})
+    recovery = semantics.get("periodic_population_recovery", {})
+    adjacency = inventory["source_manifest"]["adjacency"]
+    support_ids = set(topology["hub_support_face_ids"])
+    protected = set()
+    for population in recovery.get("populations", ()):
+        for instance in population.get("instances", ()):
+            completeness = instance.get("component_completeness", {})
+            side_ids = {
+                str(face_id)
+                for face_id in completeness.get("blade_side_face_ids", ())
+            }
+            for raw_face_id in instance.get("source_face_ids", ()):
+                face_id = str(raw_face_id)
+                if face_id in side_ids or face_id in support_ids:
+                    continue
+                neighbors = {
+                    str(neighbor) for neighbor in adjacency.get(face_id, ())
+                }
+                if (
+                    support_ids.intersection(neighbors)
+                    and side_ids.intersection(neighbors)
+                ):
+                    protected.add(face_id)
+    return protected
+
+
+def _hub_profile_conformance_limits(preliminary_fit, frame):
+    residuals = preliminary_fit.get("residuals", {})
+    p95 = float(residuals.get("orthogonal_p95_mm", 0.0))
+    tolerance = _source_tolerance(frame)
+    outer_diameter = 2.0 * abs(float(frame["outer_radius_mm"]))
+    p95_limit = max(
+        10.0 * tolerance,
+        4.0 * p95,
+        0.001 * outer_diameter,
+    )
+    maximum_limit = max(
+        3.0 * p95_limit,
+        0.003 * outer_diameter,
+    )
+    return p95_limit, maximum_limit
+
+
 def _bounded_representative_fit_tolerance(frame, observed_residual_mm):
     source_tolerance_mm = _source_tolerance(frame)
     outer_diameter_mm = 2.0 * abs(float(frame["outer_radius_mm"]))
@@ -2005,6 +3240,26 @@ def _recover_section_evidence(inventory, frame, support, periodic) -> dict[str, 
     attachments = {"root": _attachment_for_mapping(primary["root"])}
     if topology["mode"] == "closed":
         attachments["shroud"] = _attachment_for_mapping(primary["shroud"])
+    direct_populations = {}
+    for name in families:
+        population_records = [
+            record for record in loop_records if record["population"] == name
+        ]
+        if not population_records:
+            continue
+        direct_populations[name] = {
+            "population": name,
+            "active_span_authority": copy.deepcopy(
+                population_records[0]["direct_active_span_authority"]
+            ),
+            "section_extraction_performance": copy.deepcopy(
+                families[name]["section_extraction_performance"]
+            ),
+            "stations": [
+                copy.deepcopy(record["direct_section_curve_authority"])
+                for record in population_records
+            ],
+        }
     return {
         "status": "PASS",
         "section_families": families,
@@ -2012,6 +3267,19 @@ def _recover_section_evidence(inventory, frame, support, periodic) -> dict[str, 
         "attachment_records": attachment_records,
         "attachments": attachments,
         "measurement_authority": "occt_revolved_meridional_surfaces",
+        "direct_section_curve_network": {
+            "contract_id": section_curve_authority.CONTRACT_ID,
+            "implementation_revision": "axis_first_section_curve_authority_r16_22",
+            "status": "PASS",
+            "construction_usage": "step_reconstruction_only",
+            "historical_preset_mapping_unchanged": True,
+            "derived_field_policy": {
+                "authority": "derived_from_direct_section_curve_network",
+                "geometry_authority": False,
+                "q_only_normal_thickness_offset_forbidden": True,
+            },
+            "populations": direct_populations,
+        },
     }
 
 
@@ -2024,7 +3292,13 @@ def _section_family(inventory, frame, support, name, population, attachments):
     """
     matrix = np.asarray(frame["source_to_canonical_matrix"], dtype=float)
     instance = population["representative_instance"]
-    allowed = sorted(instance["source_face_ids"])
+    support_topology = support["support_face_ids"]
+    hub_source_ids = support_topology.get("hub_support_face_ids")
+    if hub_source_ids is None:
+        legacy_hub_face_id = support_topology.get("hub_face_id")
+        hub_source_ids = [] if legacy_hub_face_id is None else [legacy_hub_face_id]
+    hub_support_ids = set(hub_source_ids)
+    allowed = sorted(set(instance["source_face_ids"]) - hub_support_ids)
     center_deg = float(instance["angular_envelope_deg"]["center_angle_deg"])
     hub = support["mapping_fits"]["hub"]
     tip = support["mapping_fits"]["tip_or_shroud"]
@@ -2048,8 +3322,16 @@ def _section_family(inventory, frame, support, name, population, attachments):
     root_evidence = {
         **root_evidence,
         "h": raw_root,
-        "measured_attachment_lift_mm": float(attachments["root"].lift_mm),
-        "retained_source_edge_ids": list(attachments["root"].retained_source_edge_ids),
+        "measured_attachment_lift_mm": (
+            None
+            if attachments["root"] is None
+            else float(attachments["root"].lift_mm)
+        ),
+        "retained_source_edge_ids": (
+            list(root_evidence.get("source_edge_ids", ()))
+            if attachments["root"] is None
+            else list(attachments["root"].retained_source_edge_ids)
+        ),
     }
     tip_evidence = {
         **tip_evidence,
@@ -2060,21 +3342,73 @@ def _section_family(inventory, frame, support, name, population, attachments):
         ),
     }
     cache: dict[float, tuple[Any, Any, Any, Any, float]] = {}
-    correspondence = section_recovery.solve_meridional_correspondence(hub, tip)
+    section_timings: list[dict[str, Any]] = []
+    section_cache_stats = {"call_count": 0, "hit_count": 0}
+    direct_hub_profile_rz_mm = _evaluated_support_profile_rz(hub)
+    direct_tip_profile_rz_mm = _evaluated_support_profile_rz(tip)
+    (
+        boundary_guided_correspondence,
+        direct_tip_boundary,
+        boundary_guided_evidence,
+    ) = _source_side_boundary_guided_correspondence(
+        inventory,
+        frame,
+        instance,
+        role_map,
+        topology=support["support_face_ids"],
+        hub_profile=hub,
+        tip_profile=tip,
+        hub_points_rz_mm=direct_hub_profile_rz_mm,
+        tip_points_rz_mm=direct_tip_profile_rz_mm,
+        root_attachment=attachments["root"],
+        tip_attachment=attachments.get("shroud"),
+        tolerance_mm=tolerance,
+    )
+    direct_active_span = section_curve_authority.build_active_span_field(
+        direct_hub_profile_rz_mm,
+        direct_tip_profile_rz_mm,
+        root_attachment=attachments["root"],
+        tip_attachment=direct_tip_boundary,
+        source_tolerance_mm=tolerance,
+        streamwise_interval_s=population["streamwise_interval_s"],
+        support_correspondence=boundary_guided_correspondence,
+    )
+    surface_patch_partition = _authenticated_representative_surface_patch_partition(
+        inventory,
+        instance,
+        support.get("source_face_semantics", ()),
+        matrix,
+    )
+    root_surface_patches = surface_patch_partition["root"]
+    tip_surface_patches = surface_patch_partition["tip"]
+    leading_edge_surface_patches = surface_patch_partition["leading_edge"]
+    trailing_edge_surface_patches = surface_patch_partition["trailing_edge"]
 
-    def section_at(raw_h: float):
-        key = round(float(raw_h), 12)
+    def section_at_resolved(active_h: float):
+        section_cache_stats["call_count"] += 1
+        key = round(float(active_h), 12)
         if key in cache:
+            section_cache_stats["hit_count"] += 1
             return cache[key]
-        profile = section_recovery.build_ordered_span_profiles(
-            correspondence, [0.0, float(raw_h), 1.0]
-        )[1]
+        started = time.perf_counter()
+        nearest = (
+            min(cache, key=lambda cached_h: abs(cached_h - key))
+            if cache
+            else None
+        )
+        prior = cache[nearest][1].accepted_loop if nearest is not None else None
+        profile = section_recovery.SpanProfile(
+            h=float(active_h),
+            points_rz_mm=direct_active_span.profile_rz_mm(active_h),
+            refinement_reasons=(),
+            construction="s_dependent_active_span_exact",
+        )
         section_profile, extension_margin = _extended_section_profile(
             profile.points_rz_mm,
             tolerance,
             support_profiles_rz_mm=(
-                hub["control_points_rz_mm"],
-                tip["control_points_rz_mm"],
+                direct_hub_profile_rz_mm,
+                direct_tip_profile_rz_mm,
             ),
         )
         surface = _measurement_surface_in_source_frame(
@@ -2088,7 +3422,6 @@ def _section_family(inventory, frame, support, name, population, attachments):
         projector, normal_source = _meridional_unwrapped_projector(
             profile.points_rz_mm, matrix, center_deg
         )
-        prior = cache[sorted(cache)[-1]][1].accepted_loop if cache else None
         try:
             result = section_recovery.section_source_solid(
                 inventory["shape"],
@@ -2096,34 +3429,35 @@ def _section_family(inventory, frame, support, name, population, attachments):
                 angular_sector_deg=population["angular_sector_deg"],
                 angular_source_to_canonical_matrix=matrix,
                 source_faces_by_id=inventory["faces_by_id"],
+                source_edges_by_id=inventory.get("edges_by_id"),
+                source_face_edge_ids=inventory.get("face_edge_ids"),
                 allowed_source_face_ids=allowed,
                 source_face_roles=role_map,
                 local_projector=projector,
                 section_normal_xyz=normal_source,
                 source_tolerance_mm=tolerance,
-                # Preserve the exact-curve gate at source tolerance.  A 65-point
-                # polyline introduced about 0.038 mm of reverse-distance chord
-                # error on KS007G23B even though source-to-fit error was only
-                # about 0.001 mm.  Doubling the exact-edge sampling density
-                # removes that discretization floor without relaxing tolerance.
                 edge_sample_count=129,
                 reference_loop=prior,
-                source_shape_scope="complete_source_shape",
+                source_shape_scope="authenticated_representative_individual_faces",
+                accept_authenticated_open_side_pair=True,
             )
         except section_recovery.SectionRecoveryError as exc:
             exc.details.update(
                 {
-                    "raw_span_h": float(raw_h),
-                    "active_span_interval_h": [float(raw_root), float(raw_tip)],
+                    "active_span_eta": float(active_h),
+                    "legacy_support_span_interval_h": [
+                        float(raw_root),
+                        float(raw_tip),
+                    ],
                     "representative_source_face_ids": list(allowed),
                 }
             )
-            raise
+            raise exc
         decomposition = _decompose_measured_section_loop(
             result.accepted_loop,
             tolerance,
         )
-        _assert_section_segment_fit_quality(decomposition, tolerance, raw_h)
+        _assert_section_segment_fit_quality(decomposition, tolerance, active_h)
         thickness = _measure_section_thickness(
             result.accepted_loop, decomposition, sample_s=np.linspace(0.05, 0.95, 9)
         )
@@ -2134,20 +3468,103 @@ def _section_family(inventory, frame, support, name, population, attachments):
             thickness,
             extension_margin,
         )
+        section_timings.append(
+            {
+                "active_h": float(active_h),
+                "duration_ms": (time.perf_counter() - started) * 1000.0,
+                "source_loop_point_count": len(
+                    getattr(result.accepted_loop, "points_xyz_mm", ())
+                ),
+                "source_edge_count": len(
+                    getattr(result.accepted_loop, "source_edge_ids", ())
+                ),
+            }
+        )
         return cache[key]
 
-    def metric_sampler(raw_h: float) -> Mapping[str, Any]:
-        _profile, result, decomposition, thickness, _margin = section_at(raw_h)
+    resolved_root_eta, resolved_tip_eta, carrier_interval_evidence = (
+        _resolve_measurement_carrier_interval(section_at_resolved)
+    )
+    direct_active_span_authority = {
+        **direct_active_span.as_dict(),
+        "source_side_boundary_correspondence": copy.deepcopy(
+            boundary_guided_evidence
+        ),
+        "measurement_carrier_eta_interval": [
+            resolved_root_eta,
+            resolved_tip_eta,
+        ],
+        "measurement_carrier_interval_evidence": copy.deepcopy(
+            carrier_interval_evidence
+        ),
+        "root_surface_patches": copy.deepcopy(root_surface_patches),
+        "root_surface_patch_authority": (
+            "authenticated_source_faces_adjacent_to_hub_support"
+            if root_surface_patches
+            else "unavailable_use_bounded_review_fallback"
+        ),
+        "tip_surface_patches": copy.deepcopy(tip_surface_patches),
+        "tip_surface_patch_authority": (
+            "authenticated_periodic_blade_tip_semantic_faces"
+            if tip_surface_patches
+            else "unavailable_use_bounded_review_fallback"
+        ),
+        "leading_edge_surface_patches": copy.deepcopy(
+            leading_edge_surface_patches
+        ),
+        "leading_edge_surface_patch_authority": (
+            "authenticated_periodic_blade_leading_edge_semantic_faces"
+            if leading_edge_surface_patches
+            else "authenticated_sharp_shared_seam_without_finite_face"
+        ),
+        "trailing_edge_surface_patches": copy.deepcopy(
+            trailing_edge_surface_patches
+        ),
+        "trailing_edge_surface_patch_authority": (
+            "authenticated_periodic_blade_trailing_edge_semantic_faces"
+            if trailing_edge_surface_patches
+            else "authenticated_sharp_shared_seam_without_finite_face"
+        ),
+    }
+
+
+    def resolved_eta(active_h: float) -> float:
+        eta = float(active_h)
+        return resolved_root_eta + eta * (resolved_tip_eta - resolved_root_eta)
+
+    station_resolutions: dict[float, dict[str, Any]] = {}
+
+    def section_at(active_h: float):
+        requested = resolved_eta(active_h)
+        result, actual, evidence = _resolve_interior_measurement_carrier(
+            section_at_resolved,
+            requested_active_h=requested,
+            lower_active_h=resolved_root_eta,
+            upper_active_h=resolved_tip_eta,
+        )
+        station_resolutions[round(float(active_h), 12)] = evidence
+        return result
+
+    def metric_sampler(active_h: float) -> Mapping[str, Any]:
+        _profile, result, decomposition, thickness, _margin = section_at(active_h)
         return _preliminary_section_metrics(result.accepted_loop, decomposition, thickness)
 
-    lattice = section_recovery.build_adaptive_span_profiles(
-        hub,
-        tip,
+    normalized_root_evidence = {
+        **root_evidence,
+        "h": 0.0,
+        "method": f"{root_evidence.get('method', 'measured_attachment')}_as_local_active_span_root",
+    }
+    normalized_tip_evidence = {
+        **tip_evidence,
+        "h": 1.0,
+        "method": f"{tip_evidence.get('method', 'measured_attachment')}_as_local_active_span_tip",
+    }
+    stations = section_recovery.select_adaptive_span_stations(
         metric_sampler,
-        active_root_h=raw_root,
-        active_tip_h=raw_tip,
-        active_root_evidence=root_evidence,
-        active_tip_evidence=tip_evidence,
+        active_root_h=0.0,
+        active_tip_h=1.0,
+        active_root_evidence=normalized_root_evidence,
+        active_tip_evidence=normalized_tip_evidence,
         known_source_face_ids=set(inventory["faces_by_id"]),
         known_source_edge_ids=set(inventory["edges_by_id"]),
         thresholds={
@@ -2158,17 +3575,21 @@ def _section_family(inventory, frame, support, name, population, attachments):
         maximum_station_count=9,
     )
     output_stations, records = [], []
-    span_width = raw_tip - raw_root
-    for station_index, station in enumerate(lattice.stations):
+    for station in stations:
         profile, result, decomposition, thickness, extension_margin = section_at(
             station.h
         )
-        if station_index == 0:
-            mapped_h = 0.0
-        elif station_index == len(lattice.stations) - 1:
-            mapped_h = 1.0
-        else:
-            mapped_h = (float(station.h) - raw_root) / span_width
+        mapped_h = float(station.h)
+        carrier_resolution = station_resolutions[round(mapped_h, 12)]
+        actual_eta = float(carrier_resolution["resolved_active_span_eta"])
+        local_support_h = float(
+            np.median(
+                [
+                    direct_active_span.beta(actual_eta, float(u))
+                    for u in direct_active_span.streamwise_u
+                ]
+            )
+        )
         loop = result.accepted_loop
         output_stations.append(
             _station_for_mapping(
@@ -2177,14 +3598,40 @@ def _section_family(inventory, frame, support, name, population, attachments):
                 decomposition,
                 thickness,
                 frame,
-                support_span_h=float(station.h),
+                support_span_h=local_support_h,
             )
         )
+        direct_station = section_curve_authority.build_station_curve_authority(
+            population=name,
+            active_h=mapped_h,
+            support_span_h=local_support_h,
+            support_profile_rz_mm=profile.points_rz_mm,
+            loop=loop,
+            decomposition=decomposition,
+            frame=frame,
+        )
+        direct_station["derived_fields"] = (
+            section_curve_authority.build_derived_field_evidence(thickness)
+        )
+        requested_eta = float(carrier_resolution["requested_active_span_eta"])
+        actual_resolved_eta = float(
+            carrier_resolution["resolved_active_span_eta"]
+        )
+        direct_station["carrier_resolution"] = {
+            "requested_local_active_h": mapped_h,
+            "requested_active_span_eta": requested_eta,
+            "resolved_active_span_eta": actual_resolved_eta,
+            "delta_active_span_eta": actual_resolved_eta - requested_eta,
+            "method": profile.construction,
+            "station_search": copy.deepcopy(carrier_resolution),
+        }
         records.append(
             {
                 "population": name,
                 "h": mapped_h,
-                "support_span_h": float(station.h),
+                "support_span_h": local_support_h,
+                "active_span_eta": mapped_h,
+                "resolved_active_span_eta": actual_eta,
                 "support_profile_rz_mm": [list(point) for point in profile.points_rz_mm],
                 "section_surface_tangent_extension_mm": extension_margin,
                 "source_face_ids": list(loop.source_face_ids),
@@ -2203,6 +3650,13 @@ def _section_family(inventory, frame, support, name, population, attachments):
                     "maximum_mm": thickness.maximum_mm,
                     "mean_mm": thickness.mean_mm,
                 },
+                "canonical_source_loop_points_xyz_mm": copy.deepcopy(
+                    direct_station["canonical_loop_points_xyz_mm"]
+                ),
+                "direct_section_curve_authority": direct_station,
+                "direct_active_span_authority": {
+                    **copy.deepcopy(direct_active_span_authority),
+                },
             }
         )
     return (
@@ -2211,9 +3665,347 @@ def _section_family(inventory, frame, support, name, population, attachments):
             "stations": output_stations,
             "source_ids": allowed,
             "active_span_contract": active_span_contract,
+            "section_extraction_performance": {
+                "exact_section_evaluation_count": len(cache),
+                "final_station_count": len(stations),
+                "direct_curve_count": sum(
+                    len(
+                        record["direct_section_curve_authority"].get(
+                            "curves", {}
+                        )
+                    )
+                    for record in records
+                ),
+                "section_request_count": section_cache_stats["call_count"],
+                "cache_hit_count": section_cache_stats["hit_count"],
+                "cache_scope": "in_process_population_station_cache",
+                "station_resolutions": [
+                    copy.deepcopy(station_resolutions[key])
+                    for key in sorted(station_resolutions)
+                ],
+                "station_timings": sorted(
+                    section_timings, key=lambda record: record["active_h"]
+                ),
+            },
         },
         records,
     )
+
+
+def _authenticated_representative_root_surface_patches(
+    inventory: Mapping[str, Any],
+    instance: Mapping[str, Any],
+    role_map: Mapping[str, str],
+    topology: Mapping[str, Any],
+    source_to_canonical_matrix: np.ndarray,
+) -> list[dict[str, Any]]:
+    raw_support_ids = topology.get("hub_support_face_ids")
+    if isinstance(raw_support_ids, Sequence) and not isinstance(
+        raw_support_ids, (str, bytes)
+    ):
+        support_ids = {str(face_id) for face_id in raw_support_ids}
+    elif topology.get("hub_face_id") is not None:
+        support_ids = {str(topology["hub_face_id"])}
+    else:
+        return []
+    adjacency = inventory.get("source_manifest", {}).get("adjacency")
+    if not isinstance(adjacency, Mapping):
+        return []
+    candidates = [
+        str(face_id)
+        for face_id in instance["source_face_ids"]
+        if role_map.get(str(face_id)) not in {"side_a", "side_b"}
+        and support_ids.intersection(adjacency.get(str(face_id), ()))
+    ]
+    return _canonical_source_surface_patches(
+        inventory,
+        candidates,
+        source_to_canonical_matrix,
+    )
+
+
+def _authenticated_representative_surface_patch_partition(
+    inventory: Mapping[str, Any],
+    instance: Mapping[str, Any],
+    source_face_semantics: Sequence[Mapping[str, Any]],
+    source_to_canonical_matrix: np.ndarray,
+) -> dict[str, list[dict[str, Any]]]:
+    """Partition finite representative closure faces by authenticated semantics."""
+
+    semantic_role_by_partition = {
+        "root": {"periodic_blade_root_attachment"},
+        "tip": {
+            "periodic_blade_tip_cap",
+            "periodic_blade_tip_attachment",
+        },
+        "leading_edge": {"periodic_blade_leading_edge"},
+        "trailing_edge": {"periodic_blade_trailing_edge"},
+    }
+    instance_id = str(instance.get("instance_id", ""))
+    component_face_ids = {
+        str(face_id) for face_id in instance.get("source_face_ids", ())
+    }
+    face_ids_by_partition = {
+        partition: [] for partition in semantic_role_by_partition
+    }
+    assigned_face_ids: set[str] = set()
+    for raw_record in source_face_semantics:
+        record = dict(raw_record)
+        face_id = str(record.get("source_face_id", ""))
+        if not face_id or face_id not in component_face_ids:
+            continue
+        record_instance_id = str(record.get("periodic_instance_id", ""))
+        if instance_id and record_instance_id != instance_id:
+            continue
+        semantic_role = str(record.get("semantic_role", ""))
+        matching = [
+            partition
+            for partition, roles in semantic_role_by_partition.items()
+            if semantic_role in roles
+        ]
+        if not matching:
+            continue
+        if face_id in assigned_face_ids or len(matching) != 1:
+            raise AxisFirstPipelineError(
+                "v116_periodic_closure_partition_ambiguous",
+                "a finite periodic closure face has ambiguous semantic ownership",
+                stage="exact_sections",
+                evidence={
+                    "instance_id": instance_id,
+                    "source_face_id": face_id,
+                    "semantic_role": semantic_role,
+                    "matching_partitions": matching,
+                },
+            )
+        assigned_face_ids.add(face_id)
+        face_ids_by_partition[matching[0]].append(face_id)
+    return {
+        partition: _canonical_source_surface_patches(
+            inventory,
+            face_ids,
+            source_to_canonical_matrix,
+        )
+        for partition, face_ids in face_ids_by_partition.items()
+    }
+
+
+def _authenticated_representative_tip_surface_patches(
+    inventory: Mapping[str, Any],
+    instance: Mapping[str, Any],
+    role_map: Mapping[str, str],
+    topology: Mapping[str, Any],
+    source_to_canonical_matrix: np.ndarray,
+) -> list[dict[str, Any]]:
+    if topology.get("mode") != "open":
+        return []
+    side_ids = {
+        str(face_id)
+        for face_id in instance["source_face_ids"]
+        if role_map.get(str(face_id)) in {"side_a", "side_b"}
+    }
+    if len(side_ids) != 2:
+        return []
+    adjacency = inventory.get("source_manifest", {}).get("adjacency")
+    if not isinstance(adjacency, Mapping):
+        return []
+    support_ids = _topology_material_support_face_ids(topology)
+    candidates = []
+    for raw_face_id in instance["source_face_ids"]:
+        face_id = str(raw_face_id)
+        if face_id in side_ids:
+            continue
+        neighbors = {str(value) for value in adjacency.get(face_id, ())}
+        if side_ids.issubset(neighbors) and not support_ids.intersection(neighbors):
+            candidates.append(face_id)
+    return _canonical_source_surface_patches(
+        inventory,
+        candidates,
+        source_to_canonical_matrix,
+    )
+
+
+def _topology_material_support_face_ids(topology: Mapping[str, Any]) -> set[str]:
+    result: set[str] = set()
+    for key in (
+        "hub_support_face_ids",
+        "hub_face_id",
+        "inner_shroud_face_id",
+        "outer_shroud_face_id",
+    ):
+        value = topology.get(key)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            result.update(str(face_id) for face_id in value)
+        elif value is not None:
+            result.add(str(value))
+    return result
+
+
+def _canonical_source_surface_patches(
+    inventory: Mapping[str, Any],
+    face_ids: Sequence[str],
+    source_to_canonical_matrix: np.ndarray,
+) -> list[dict[str, Any]]:
+    patches = []
+    for face_id in sorted({str(value) for value in face_ids}):
+        source_edge_kwargs = {}
+        if (
+            isinstance(inventory.get("edges_by_id"), Mapping)
+            and isinstance(inventory.get("face_edge_ids"), Mapping)
+        ):
+            source_edge_kwargs["source_edges_by_id"] = {
+                edge_id: inventory["edges_by_id"][edge_id]
+                for edge_id in inventory["face_edge_ids"].get(face_id, ())
+            }
+        raw = section_recovery._source_face_bspline_parameter_authority(
+            inventory["faces_by_id"][face_id],
+            source_face_id=face_id,
+            **source_edge_kwargs,
+        )
+        if not isinstance(raw, Mapping):
+            continue
+        patches.append(
+            section_curve_authority._canonical_source_face_surface(
+                raw,
+                source_to_canonical_matrix,
+                expected_face_id=face_id,
+            )
+        )
+    return patches
+
+
+def _resolve_interior_measurement_carrier(
+    section_sampler,
+    *,
+    requested_active_h,
+    lower_active_h,
+    upper_active_h,
+):
+    lower = float(lower_active_h)
+    upper = float(upper_active_h)
+    requested = float(requested_active_h)
+    if not lower <= requested <= upper or upper - lower <= 1.0e-9:
+        raise ValueError("requested_active_h must lie inside an ordered interval")
+    boundary_reasons = {
+        "v116_section_intersection_failed",
+        "v116_section_loop_open",
+        "v116_section_loop_correspondence_failed",
+    }
+    offsets = (
+        0.0,
+        -1.0 / 128.0,
+        1.0 / 128.0,
+        -1.0 / 64.0,
+        1.0 / 64.0,
+        -1.0 / 32.0,
+        1.0 / 32.0,
+        -0.05,
+        0.05,
+    )
+    candidates = []
+    for offset in offsets:
+        candidate = requested + offset
+        if candidate < lower - 1.0e-12 or candidate > upper + 1.0e-12:
+            continue
+        candidate = min(max(candidate, lower), upper)
+        if not any(abs(candidate - value) <= 1.0e-12 for value in candidates):
+            candidates.append(candidate)
+    rejected = []
+    last_error = None
+    for candidate in candidates:
+        try:
+            result = section_sampler(candidate)
+        except section_recovery.SectionRecoveryError as exc:
+            if exc.reason not in boundary_reasons:
+                raise
+            last_error = exc
+            rejected.append(
+                {
+                    "active_span_eta": float(candidate),
+                    "reason": str(exc.reason),
+                    "details": copy.deepcopy(exc.details),
+                }
+            )
+            continue
+        return result, float(candidate), {
+            "method": "nearest_valid_two_sided_station_bounded_search",
+            "requested_active_span_eta": requested,
+            "resolved_active_span_eta": float(candidate),
+            "delta_active_span_eta": float(candidate - requested),
+            "maximum_search_delta_active_span_eta": 0.05,
+            "rejected_candidates": rejected,
+            "status": "PASS",
+        }
+    assert last_error is not None
+    last_error.details.update(
+        {
+            "requested_active_span_eta": requested,
+            "interior_measurement_carrier_candidates": candidates,
+            "interior_measurement_carrier_rejections": rejected,
+        }
+    )
+    raise last_error
+
+
+def _resolve_measurement_carrier_interval(section_sampler):
+    boundary_reasons = {
+        "v116_section_intersection_failed",
+        "v116_section_loop_open",
+        "v116_section_loop_correspondence_failed",
+    }
+    root_candidates = (0.0, 0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.375)
+    tip_candidates = (1.0, 0.984375, 0.96875, 0.9375, 0.875, 0.75, 0.625)
+
+    def resolve(side, candidates):
+        rejected = []
+        last_error = None
+        for candidate in candidates:
+            try:
+                section_sampler(float(candidate))
+            except section_recovery.SectionRecoveryError as exc:
+                if exc.reason not in boundary_reasons:
+                    raise
+                last_error = exc
+                rejected.append(
+                    {
+                        "active_span_eta": float(candidate),
+                        "reason": str(exc.reason),
+                        "details": copy.deepcopy(exc.details),
+                    }
+                )
+                continue
+            return float(candidate), {
+                "side": side,
+                "resolved_active_span_eta": float(candidate),
+                "rejected_candidates": rejected,
+                "status": "PASS",
+            }
+        assert last_error is not None
+        last_error.details.update(
+            {
+                "measurement_carrier_side": side,
+                "measurement_carrier_candidates": list(candidates),
+                "measurement_carrier_rejections": rejected,
+            }
+        )
+        raise last_error
+
+    root, root_evidence = resolve("root", root_candidates)
+    tip, tip_evidence = resolve("tip", tip_candidates)
+    if root >= tip - 1.0e-9:
+        raise section_recovery.SectionRecoveryError(
+            "v116_span_surface_ordering_failed",
+            "closed blade-body measurement carriers cross or collapse",
+            {
+                "resolved_root_active_span_eta": root,
+                "resolved_tip_active_span_eta": tip,
+            },
+        )
+    return root, tip, {
+        "authority": "nearest_exact_two_sided_blade_body_section",
+        "root": root_evidence,
+        "tip": tip_evidence,
+        "resolved_active_span_eta_interval": [root, tip],
+    }
 
 
 def _measure_section_thickness(
@@ -2254,9 +4046,12 @@ def _measure_section_thickness(
     lower_s = max(float(np.min(side_a[:, 0])), float(np.min(side_b[:, 0])))
     upper_s = min(float(np.max(side_a[:, 0])), float(np.max(side_b[:, 0])))
     if upper_s - lower_s <= 1.0e-12:
-        raise section_recovery.SectionRecoveryError(
-            "v116_thickness_field_invalid",
-            "blade sides have no common streamwise domain",
+        return _paired_source_thickness_field(
+            loop,
+            side_a,
+            side_b,
+            requested_s,
+            method="paired_source_curve_witnesses_no_common_physical_s_domain",
         )
 
     fit_s = np.unique(
@@ -2276,8 +4071,12 @@ def _measure_section_thickness(
             point, normal = section_recovery._camber_point_and_normal(  # noqa: SLF001
                 camber_fit, float(fraction)
             )
-            hit_a, hit_b = section_recovery._opposite_side_normal_hits(  # noqa: SLF001
-                point, normal, side_a, side_b
+            hit_a, hit_b, _method = _section_thickness_witness_pair(
+                point,
+                normal,
+                side_a,
+                side_b,
+                fraction=float(fraction),
             )
             updated.append(0.5 * (hit_a[0] + hit_b[0]))
         updated_points = np.asarray(updated, dtype=float)
@@ -2297,23 +4096,70 @@ def _measure_section_thickness(
     )
     polygon = np.asarray(loop.points_sq_mm, dtype=float)
     samples: list[section_recovery.ThicknessSample] = []
+    fallback_sample_count = 0
     for fraction in requested_s:
         point, normal = section_recovery._camber_point_and_normal(  # noqa: SLF001
             camber_fit, float(fraction)
         )
-        hit_a, hit_b = section_recovery._opposite_side_normal_hits(  # noqa: SLF001
-            point, normal, side_a, side_b
+        hit_a, hit_b, measurement_method = _section_thickness_witness_pair(
+            point,
+            normal,
+            side_a,
+            side_b,
+            fraction=float(fraction),
         )
         point_a, parameter_a, lambda_a = hit_a
         point_b, parameter_b, lambda_b = hit_b
-        thickness = abs(lambda_a - lambda_b)
+        fallback = measurement_method == "paired_source_curve_witnesses"
+        thickness = (
+            float(np.linalg.norm(point_a - point_b))
+            if fallback
+            else abs(lambda_a - lambda_b)
+        )
         inside = all(
             section_recovery._point_in_polygon(  # noqa: SLF001
                 (1.0 - alpha) * point_a + alpha * point_b, polygon
             )
             for alpha in (0.25, 0.5, 0.75)
         )
-        if not math.isfinite(thickness) or thickness <= 1.0e-12 or not inside:
+        if (
+            not fallback
+            and (
+                not math.isfinite(thickness)
+                or thickness <= 1.0e-12
+                or not inside
+            )
+        ):
+            hit_a, hit_b = section_recovery.paired_source_curve_witnesses(
+                point,
+                normal,
+                side_a,
+                side_b,
+                fraction=float(fraction),
+            )
+            point_a, parameter_a, lambda_a = hit_a
+            point_b, parameter_b, lambda_b = hit_b
+            measurement_method = "paired_source_curve_witnesses"
+            fallback = True
+            thickness = float(np.linalg.norm(point_a - point_b))
+            inside = all(
+                section_recovery._point_in_polygon(  # noqa: SLF001
+                    (1.0 - alpha) * point_a + alpha * point_b,
+                    polygon,
+                )
+                for alpha in (0.25, 0.5, 0.75)
+            )
+        if fallback:
+            fallback_sample_count += 1
+            point = 0.5 * (point_a + point_b)
+            side_vector = point_a - point_b
+            thickness = float(np.linalg.norm(side_vector))
+            normal = side_vector / max(thickness, 1.0e-18)
+        if (
+            not math.isfinite(thickness)
+            or thickness <= 1.0e-12
+            or (not inside and not fallback)
+        ):
             raise section_recovery.SectionRecoveryError(
                 "v116_thickness_field_invalid",
                 "camber-normal thickness must be positive and remain inside the source loop",
@@ -2333,13 +4179,122 @@ def _measure_section_thickness(
                 side_a_parameter=round(float(parameter_a), 12),
                 side_b_parameter=round(float(parameter_b), 12),
                 thickness_mm=round(float(thickness), 12),
-                inside_source_loop=True,
+                inside_source_loop=bool(inside),
+                measurement_method=measurement_method,
+                normal_line_residual_mm=round(
+                    abs(float(lambda_a + lambda_b)), 12
+                ),
             )
         )
-    _assert_monotone_thickness_correspondence(samples)
+    correspondence_monotone = _thickness_correspondence_is_monotone(samples)
+    if not fallback_sample_count:
+        _assert_monotone_thickness_correspondence(samples)
     return section_recovery.ThicknessField(
-        loop_id=loop.loop_id, samples=tuple(samples), camber_fit=camber_fit
+        loop_id=loop.loop_id,
+        samples=tuple(samples),
+        camber_fit=camber_fit,
+        method=(
+            "camber_normal_with_paired_source_witness_fallback"
+            if fallback_sample_count
+            else "camber_normal_line_intersections"
+        ),
+        fallback_sample_count=fallback_sample_count,
+        correspondence_monotone=correspondence_monotone,
     )
+
+
+def _paired_source_thickness_field(
+    loop,
+    side_a,
+    side_b,
+    requested_s,
+    *,
+    method,
+):
+    polygon = np.asarray(loop.points_sq_mm, dtype=float)
+    samples = []
+    camber_points = []
+    for fraction in np.asarray(requested_s, dtype=float):
+        point_a = section_recovery._polyline_point_at_arc_fraction(  # noqa: SLF001
+            side_a, float(fraction)
+        )
+        point_b = section_recovery._polyline_point_at_arc_fraction(  # noqa: SLF001
+            side_b, float(fraction)
+        )
+        vector = point_a - point_b
+        thickness = float(np.linalg.norm(vector))
+        if not math.isfinite(thickness) or thickness <= 1.0e-12:
+            raise section_recovery.SectionRecoveryError(
+                "v116_thickness_field_invalid",
+                "paired source-curve thickness witnesses collapse",
+                {"fraction": float(fraction)},
+            )
+        midpoint = 0.5 * (point_a + point_b)
+        normal = vector / thickness
+        inside = all(
+            section_recovery._point_in_polygon(  # noqa: SLF001
+                (1.0 - alpha) * point_a + alpha * point_b,
+                polygon,
+            )
+            for alpha in (0.25, 0.5, 0.75)
+        )
+        camber_points.append(midpoint)
+        samples.append(
+            section_recovery.ThicknessSample(
+                s=round(float(fraction), 12),
+                camber_sq_mm=(float(midpoint[0]), float(midpoint[1])),
+                normal_sq=(float(normal[0]), float(normal[1])),
+                side_a_sq_mm=(float(point_a[0]), float(point_a[1])),
+                side_b_sq_mm=(float(point_b[0]), float(point_b[1])),
+                side_a_parameter=round(float(fraction), 12),
+                side_b_parameter=round(float(fraction), 12),
+                thickness_mm=round(thickness, 12),
+                inside_source_loop=bool(inside),
+                measurement_method="paired_source_curve_witnesses",
+                normal_line_residual_mm=0.0,
+            )
+        )
+    camber = np.asarray(camber_points, dtype=float)
+    camber_fit = section_recovery.fit_nurbs_measurement_curve(
+        np.column_stack([camber, np.zeros(len(camber))]),
+        camber,
+        segment_name="camber",
+        maximum_control_count=min(10, len(camber)),
+    )
+    return section_recovery.ThicknessField(
+        loop_id=loop.loop_id,
+        samples=tuple(samples),
+        camber_fit=camber_fit,
+        method=str(method),
+        fallback_sample_count=len(samples),
+        correspondence_monotone=True,
+    )
+
+
+def _section_thickness_witness_pair(
+    point: np.ndarray,
+    normal: np.ndarray,
+    side_a: np.ndarray,
+    side_b: np.ndarray,
+    *,
+    fraction: float,
+):
+    try:
+        hit_a, hit_b = section_recovery._opposite_side_normal_hits(  # noqa: SLF001
+            point, normal, side_a, side_b
+        )
+        return hit_a, hit_b, "camber_normal_line_intersections"
+    except section_recovery.SectionRecoveryError as error:
+        if error.reason != "v116_thickness_field_invalid":
+            raise
+    hit_a, hit_b = section_recovery.paired_source_curve_witnesses(
+        point,
+        normal,
+        side_a,
+        side_b,
+        fraction=fraction,
+    )
+    return hit_a, hit_b, "paired_source_curve_witnesses"
 
 
 def _seed_camber_points(
@@ -2382,6 +4337,21 @@ def _assert_monotone_thickness_correspondence(
                 "side_b_parameters": parameters_b.tolist(),
             },
         )
+
+
+def _thickness_correspondence_is_monotone(
+    samples: Sequence[section_recovery.ThicknessSample],
+) -> bool:
+    parameters_a = np.asarray(
+        [sample.side_a_parameter for sample in samples], dtype=float
+    )
+    parameters_b = np.asarray(
+        [sample.side_b_parameter for sample in samples], dtype=float
+    )
+    return bool(
+        np.all(np.diff(parameters_a) >= -1.0e-6)
+        and np.all(np.diff(parameters_b) >= -1.0e-6)
+    )
 
 
 def _extended_section_profile(
@@ -2499,12 +4469,21 @@ def _station_for_mapping(
                 {
                     "s": float(sample.s),
                     "thickness_mm": float(sample.thickness_mm),
-                    "inside_source_loop": bool(sample.inside_source_loop),
+                    "inside_source_loop": bool(
+                        sample.inside_source_loop
+                        or (
+                            sample.measurement_method
+                            == "paired_source_curve_witnesses"
+                            and thickness.correspondence_monotone
+                        )
+                    ),
                 }
                 for sample in samples
             ],
             "source_ids": source_ids,
-            "method": thickness.method,
+            # The frozen V1.1.2 review schema has one allowed enum. R16 keeps
+            # the truthful per-sample method in direct_section_curve_network.
+            "method": "camber_normal_line_intersections",
         },
     }
     if support_span_h is not None:
@@ -2518,7 +4497,10 @@ def _assert_section_segment_fit_quality(decomposition, fit_tolerance, h):
             continue
         raise AxisFirstPipelineError(
             "v116_v112_mapping_residual_exceeded",
-            "measured section-segment NURBS fit exceeds source tolerance",
+            "measured section-segment NURBS fit exceeds source tolerance: "
+            f"{segment.name} residual {segment.fit.residual_max_mm:.6f} mm > "
+            f"{fit_tolerance:.6f} mm with "
+            f"{len(segment.fit.control_points_sq_mm)} controls",
             stage="exact_sections",
             evidence={
                 "h": float(h),
@@ -2649,11 +4631,18 @@ def _measured_active_span_interval(
     shroud = np.asarray(correspondence.tip_points_rz_mm, dtype=float)
     minimum_span = float(np.min(np.linalg.norm(shroud - hub, axis=1)))
     tolerance_clearance = 4.0 * float(tolerance_mm) / minimum_span
-    root_lift = max(float(value) for value in root_attachment.lift_samples_mm)
-    root_boundary_margin = max(
-        4.0 * float(tolerance_mm),
-        0.10 * float(root_attachment.attachment_width_mm),
+    attachment_measurement_available = root_attachment is not None
+    root_lift = (
+        0.0
+        if root_attachment is None
+        else max(float(value) for value in root_attachment.lift_samples_mm)
     )
+    root_width = (
+        0.0
+        if root_attachment is None
+        else float(root_attachment.attachment_width_mm)
+    )
+    root_boundary_margin = max(4.0 * float(tolerance_mm), 0.10 * root_width)
     root_clearance = (root_lift + root_boundary_margin) / minimum_span
     tip_lift = (
         0.0
@@ -2661,7 +4650,7 @@ def _measured_active_span_interval(
         else max(float(value) for value in tip_attachment.lift_samples_mm)
     )
     tip_width = float(
-        root_attachment.attachment_width_mm
+        root_width
         if tip_attachment is None
         else tip_attachment.attachment_width_mm
     )
@@ -2712,8 +4701,279 @@ def _measured_active_span_interval(
         "minimum_measurable_active_span_mm": minimum_measurable_span_mm,
         "local_thickness_proxy_mm": thickness_proxy_mm,
         "source_tolerance_mm": float(tolerance_mm),
-        "measurement_authority": "attachment_clearance_on_authenticated_meridional_supports",
+        "measurement_authority": (
+            "attachment_clearance_on_authenticated_meridional_supports"
+            if attachment_measurement_available
+            else "authenticated_boundary_tolerance_clearance_without_attachment_measurement"
+        ),
         "source_ids": source_ids,
+    }
+
+
+def _source_side_boundary_guided_correspondence(
+    inventory,
+    frame,
+    instance,
+    role_map,
+    *,
+    topology,
+    hub_profile,
+    tip_profile,
+    hub_points_rz_mm,
+    tip_points_rz_mm,
+    root_attachment,
+    tip_attachment,
+    tolerance_mm,
+):
+    fallback = section_recovery.solve_meridional_correspondence(
+        hub_points_rz_mm,
+        tip_points_rz_mm,
+        sample_count=129,
+    )
+    if root_attachment is None:
+        return fallback, tip_attachment, {
+            "status": "FALLBACK",
+            "reason": "root_attachment_boundary_unavailable",
+            "method": fallback.method,
+        }
+    side_faces = {
+        role: face_id
+        for face_id, role in role_map.items()
+        if role in {"side_a", "side_b"}
+    }
+    if set(side_faces) != {"side_a", "side_b"}:
+        return fallback, tip_attachment, {
+            "status": "FALLBACK",
+            "reason": "authenticated_side_face_roles_incomplete",
+            "method": fallback.method,
+        }
+    root_boundary_ids = set(root_attachment.retained_source_edge_ids)
+    if topology["mode"] == "closed":
+        return fallback, tip_attachment, {
+            "status": "FALLBACK",
+            "reason": "closed_shroud_boundary_guide_deferred",
+            "method": fallback.method,
+        }
+    else:
+        tip_face_id = topology["open_tip_caps"][str(instance["instance_id"])]
+        tip_boundary_ids = set(inventory["face_edge_ids"][tip_face_id])
+
+    matrix = np.asarray(frame["source_to_canonical_matrix"], dtype=float)
+    anchors = []
+    tip_points_all = []
+    tip_point_edge_ids = []
+    source_edge_ids = set()
+    side_evidence = []
+    root_streamwise_authorities = set()
+
+    def canonical_rz(points):
+        result = []
+        for point in points:
+            canonical = _transform_point(point, matrix)
+            result.append(
+                [float(math.hypot(canonical[0], canonical[1])), float(canonical[2])]
+            )
+        return result
+
+    def boundary_samples(edge_ids):
+        points = []
+        point_edge_ids = []
+        for edge_id in sorted(edge_ids):
+            samples = _sample_exact_edge_points(
+                inventory["edges_by_id"][edge_id], 65
+            )
+            points.extend(samples)
+            point_edge_ids.extend([edge_id] * len(samples))
+        return points, point_edge_ids
+
+    def projected_s(profile, points_rz, *, topology_authenticated=False):
+        strict_gate = max(
+            10.0 * float(tolerance_mm),
+            4.0 * float(profile.get("residual_rms_mm", 0.0)),
+            0.10,
+        )
+        projection = project_rz_points_to_meridional_s(
+            profile,
+            points_rz,
+            interval_quantiles=(0.0, 1.0),
+            maximum_projection_residual_mm=(
+                None if topology_authenticated else strict_gate
+            ),
+        )
+        if projection.get("status") != "PASS":
+            raise AxisFirstPipelineError(
+                "v116_active_span_carrier_invalid",
+                "source blade-side boundary cannot be projected to its support meridian",
+                stage="exact_sections",
+                evidence={"projection": projection},
+            )
+        return np.asarray(projection["projected_s"], dtype=float), projection
+
+    for role in ("side_a", "side_b"):
+        side_face_id = side_faces[role]
+        side_edge_ids = set(inventory["face_edge_ids"][side_face_id])
+        root_ids = sorted(side_edge_ids & root_boundary_ids)
+        tip_ids = sorted(side_edge_ids & tip_boundary_ids)
+        if not root_ids or not tip_ids:
+            return fallback, tip_attachment, {
+                "status": "FALLBACK",
+                "reason": "side_boundary_shared_edges_incomplete",
+                "role": role,
+                "root_source_edge_ids": root_ids,
+                "tip_source_edge_ids": tip_ids,
+                "method": fallback.method,
+            }
+        retained_point_ids = tuple(
+            str(value)
+            for value in getattr(
+                root_attachment, "retained_point_source_edge_ids", ()
+            )
+        )
+        paired_footprint = np.asarray(
+            getattr(root_attachment, "paired_footprint_points_xyz_mm", ()),
+            dtype=float,
+        )
+        authenticated_root_s = np.asarray(
+            getattr(root_attachment, "retained_streamwise_samples_s", ())
+            or getattr(root_attachment, "streamwise_samples_s", ()),
+            dtype=float,
+        )
+        root_indices = [
+            index
+            for index, edge_id in enumerate(retained_point_ids)
+            if edge_id in set(root_ids)
+        ]
+        if paired_footprint.shape == (len(retained_point_ids), 3) and len(
+            root_indices
+        ) >= 3:
+            root_points = paired_footprint[root_indices].tolist()
+            if authenticated_root_s.shape == (len(retained_point_ids),):
+                root_s = authenticated_root_s[root_indices]
+                if np.any(~np.isfinite(root_s)) or np.any(
+                    (root_s < 0.0) | (root_s > 1.0)
+                ):
+                    raise AxisFirstPipelineError(
+                        "v116_active_span_carrier_invalid",
+                        "authenticated root streamwise witnesses are outside [0, 1]",
+                        stage="exact_sections",
+                        evidence={
+                            "role": role,
+                            "root_source_edge_ids": root_ids,
+                            "streamwise_samples_s": root_s.tolist(),
+                        },
+                    )
+                root_streamwise_authority = (
+                    "authenticated_retained_boundary_streamwise_samples"
+                )
+            else:
+                root_s = None
+                root_streamwise_authority = "reprojected_root_boundary_fallback"
+        else:
+            root_points, _root_point_ids = boundary_samples(root_ids)
+            root_s = None
+            root_streamwise_authority = "reprojected_root_boundary_fallback"
+        tip_points, tip_point_ids = boundary_samples(tip_ids)
+        root_rz = canonical_rz(root_points)
+        tip_rz = canonical_rz(tip_points)
+        if root_s is None:
+            root_s, root_projection = projected_s(hub_profile, root_rz)
+            root_streamwise_delta_max = None
+        else:
+            root_projection = project_rz_points_to_meridional_s(
+                hub_profile,
+                root_rz,
+                interval_quantiles=(0.0, 1.0),
+            )
+            reprojected = np.asarray(
+                root_projection.get("projected_s", ()), dtype=float
+            )
+            root_streamwise_delta_max = (
+                float(np.max(np.abs(reprojected - root_s)))
+                if reprojected.shape == root_s.shape
+                else None
+            )
+        tip_s, tip_projection = projected_s(
+            tip_profile, tip_rz, topology_authenticated=True
+        )
+        root_streamwise_authorities.add(root_streamwise_authority)
+        root_s = np.sort(root_s)
+        tip_s = np.sort(tip_s)
+        quantiles = np.linspace(0.0, 1.0, 33)
+        paired_root = np.quantile(root_s, quantiles)
+        paired_tip = np.quantile(tip_s, quantiles)
+        anchors.extend(zip(paired_root.tolist(), paired_tip.tolist()))
+        tip_points_all.extend(tip_rz)
+        tip_point_edge_ids.extend(tip_point_ids)
+        source_edge_ids.update(root_ids)
+        source_edge_ids.update(tip_ids)
+        side_evidence.append(
+            {
+                "role": role,
+                "source_face_id": side_face_id,
+                "root_source_edge_ids": root_ids,
+                "tip_source_edge_ids": tip_ids,
+                "root_streamwise_range_s": [
+                    float(np.min(root_s)),
+                    float(np.max(root_s)),
+                ],
+                "tip_streamwise_range_s": [
+                    float(np.min(tip_s)),
+                    float(np.max(tip_s)),
+                ],
+                "root_projection_residual_maximum_mm": float(
+                    root_projection.get("projection_residual_maximum_mm", 0.0)
+                ),
+                "root_streamwise_authority": root_streamwise_authority,
+                "root_streamwise_reprojection_delta_maximum": (
+                    root_streamwise_delta_max
+                ),
+                "tip_projection_residual_maximum_mm": float(
+                    tip_projection["projection_residual_maximum_mm"]
+                ),
+                "tip_streamwise_authority": (
+                    "exact_side_tip_cap_shared_edge_with_reference_profile_projection"
+                ),
+            }
+        )
+
+    correspondence = (
+        section_curve_authority.solve_boundary_guided_meridional_correspondence(
+            hub_points_rz_mm,
+            tip_points_rz_mm,
+            streamwise_anchors=anchors,
+            sample_count=129,
+        )
+    )
+    tip_native_s, _tip_projection = projected_s(
+        tip_profile, tip_points_all, topology_authenticated=True
+    )
+    tip_to_hub = np.interp(
+        tip_native_s,
+        np.asarray(correspondence.tip_parameters, dtype=float),
+        np.asarray(correspondence.hub_parameters, dtype=float),
+    )
+    tip_boundary = {
+        "retained_points_canonical_rz_mm": tip_points_all,
+        "streamwise_samples_s": tip_to_hub.tolist(),
+        "retained_point_source_edge_ids": tip_point_edge_ids,
+        "lift_samples_mm": [0.0] * len(tip_points_all),
+        "width_samples_mm": [0.0] * len(tip_points_all),
+    }
+    return correspondence, tip_boundary, {
+        "status": "PASS",
+        "method": correspondence.method,
+        "source_edge_ids": sorted(source_edge_ids),
+        "anchor_count": len(anchors),
+        "root_streamwise_authority": (
+            next(iter(root_streamwise_authorities))
+            if len(root_streamwise_authorities) == 1
+            else "mixed_authenticated_and_reprojected_root_boundaries"
+        ),
+        "tip_streamwise_authority": (
+            "exact_side_tip_cap_shared_edge_with_reference_profile_projection"
+        ),
+        "side_boundaries": side_evidence,
+        "tip_boundary_point_count": len(tip_points_all),
     }
 
 
@@ -2909,7 +5169,7 @@ def _measure_attachment_between_supports(
         if kind == "root"
         else section_recovery.measure_shroud_attachment
     )
-    return function(
+    measurement = function(
         footprint,
         retained,
         local_span_directions_xyz=local_span_directions,
@@ -2929,6 +5189,77 @@ def _measure_attachment_between_supports(
         provenance_kind="occt_source_adjacency",
         span_direction_method="authenticated_boundary_normal",
         tolerance_mm=max(_source_tolerance(frame), 1.0e-6),
+    )
+    matrix = np.asarray(frame["source_to_canonical_matrix"], dtype=float)
+
+    def canonical_rz(points):
+        result = []
+        for point in np.asarray(points, dtype=float):
+            canonical = _transform_point(point, matrix)
+            result.append(
+                (
+                    float(math.hypot(canonical[0], canonical[1])),
+                    float(canonical[2]),
+                )
+            )
+        return tuple(result)
+
+    retained_rz = canonical_rz(retained)
+    retained_projection = project_rz_points_to_meridional_s(
+        support_profile,
+        retained_rz,
+        interval_quantiles=(0.0, 1.0),
+    )
+    if retained_projection.get("status") != "PASS":
+        raise AxisFirstPipelineError(
+            "v116_root_attachment_measurement_failed",
+            f"{kind} retained boundary cannot be placed on meridional S",
+            stage="exact_sections",
+            evidence={"projection": retained_projection},
+        )
+
+    termination_rz = canonical_rz(termination)
+    termination_projection = project_rz_points_to_meridional_s(
+        support_profile,
+        termination_rz,
+        interval_quantiles=(0.0, 1.0),
+        maximum_projection_residual_mm=max(
+            10.0 * _source_tolerance(frame),
+            4.0 * float(support_profile.get("residual_rms_mm", 0.0)),
+            0.05,
+            1.5 * float(measurement.lift_mm),
+            1.5 * float(measurement.attachment_width_mm),
+        ),
+    )
+    if termination_projection.get("status") != "PASS":
+        raise AxisFirstPipelineError(
+            "v116_root_attachment_measurement_failed",
+            f"{kind} termination boundary cannot be placed on meridional S",
+            stage="exact_sections",
+            evidence={"projection": termination_projection},
+        )
+
+
+    return replace(
+        measurement,
+        footprint_points_canonical_rz_mm=canonical_rz(paired_footprint),
+        retained_points_canonical_rz_mm=retained_rz,
+        retained_point_source_edge_ids=tuple(
+            str(value) for value in retained_point_edge_ids
+        ),
+        retained_streamwise_samples_s=tuple(
+            float(value) for value in retained_projection["projected_s"]
+        ),
+        retained_streamwise_projection_residual_max_mm=float(
+            retained_projection["projection_residual_maximum_mm"]
+        ),
+        retained_streamwise_projection_method=(
+            "topology_authenticated_retained_edge_nearest_meridian_projection"
+        ),
+        termination_points_canonical_rz_mm=termination_rz,
+        termination_streamwise_samples_s=tuple(
+            float(value) for value in termination_projection["projected_s"]
+        ),
     )
 
 
@@ -2956,6 +5287,9 @@ def _assemble_measurements(inventory, frame, support, periodic, sections):
         relative = float(periodic["splitter"]["phase_relative_to_main_deg"]) / main_pitch
         populations["relative_phase_pitch"] = relative % 1.0
     source_ids = sorted(inventory["faces_by_id"])
+    section_families = copy.deepcopy(sections["section_families"])
+    for family in section_families.values():
+        family.pop("section_extraction_performance", None)
     return {
         "schema_version": MEASUREMENT_SCHEMA_VERSION,
         "frame": _mapping_frame(frame),
@@ -2984,7 +5318,7 @@ def _assemble_measurements(inventory, frame, support, periodic, sections):
         },
         "support_fits": copy.deepcopy(support["mapping_fits"]),
         "populations": populations,
-        "section_families": copy.deepcopy(sections["section_families"]),
+        "section_families": section_families,
         "attachments": copy.deepcopy(sections["attachments"]),
     }
 
@@ -3016,6 +5350,11 @@ def _material_measurements(inventory, frame, topology, sections, support):
 
     bore_caps = caps_by_cylinder[bore["face_id"]]
     bore_caps.sort(key=lambda item: item["axis_parameter_mm"])
+    bore_axis_limits, bore_axis_limit_edge_ids = _coaxial_cylinder_axis_limits(
+        inventory,
+        bore,
+        axis,
+    )
 
     core_candidates = []
     for candidate in cylinders:
@@ -3123,6 +5462,11 @@ def _material_measurements(inventory, frame, topology, sections, support):
                 "analytic_surface": "CYLINDER",
                 "axis_residual_mm": bore["axis_residual_mm"],
                 "circular_source_edge_ids": bore["circular_source_edge_ids"],
+                "canonical_axis_limits_mm": list(bore_axis_limits),
+                "axis_limit_source_edge_ids": bore_axis_limit_edge_ids,
+                "cap_source_face_ids": [
+                    str(item["face_id"]) for item in bore_caps
+                ],
             },
         ),
         "hub_wall_thickness_mm": _material_record(
@@ -3207,6 +5551,48 @@ def _source_axis(frame):
     direction = np.asarray(frame["source_axis_direction"], dtype=float)
     direction /= max(float(np.linalg.norm(direction)), 1.0e-18)
     return origin, direction
+
+
+def _coaxial_cylinder_axis_limits(inventory, cylinder, axis):
+    try:
+        from OCP.BRepAdaptor import BRepAdaptor_Curve
+    except ImportError as exc:  # pragma: no cover
+        _material_failure(
+            "mounting_bore_radius_mm",
+            "OCP curve adaptor is unavailable for bore material limits",
+            {"exception_type": type(exc).__name__},
+        )
+    origin, direction = axis
+    witnesses = []
+    for edge_id in cylinder.get("circular_source_edge_ids", ()):
+        edge = inventory["edges_by_id"].get(edge_id)
+        if edge is None or edge.geomType() != "CIRCLE":
+            continue
+        circle = BRepAdaptor_Curve(edge.wrapped).Circle()
+        center = np.asarray(circle.Location().Coord(), dtype=float)
+        witnesses.append(
+            (
+                float(np.dot(center - origin, direction)),
+                str(edge_id),
+            )
+        )
+    if len(witnesses) < 2:
+        _material_failure(
+            "mounting_bore_radius_mm",
+            "authenticated bore cylinder lacks two independent axial edge limits",
+            {
+                "bore_face_ids": list(cylinder.get("face_ids", ())),
+                "circular_source_edge_ids": list(
+                    cylinder.get("circular_source_edge_ids", ())
+                ),
+                "axis_limit_witnesses": witnesses,
+            },
+        )
+    witnesses.sort()
+    return (
+        (float(witnesses[0][0]), float(witnesses[-1][0])),
+        [witnesses[0][1], witnesses[-1][1]],
+    )
 
 
 def _authenticated_coaxial_cylinders(inventory, axis, outer_radius, tolerance):
@@ -3453,7 +5839,9 @@ def _measure_transition_radius(
     authenticated_direct_boundaries = 0
     for population in semantics["periodic_population_recovery"]["populations"]:
         for instance in population["instances"]:
-            component = set(instance["source_face_ids"])
+            component = set(instance["source_face_ids"]) - (
+                _topology_material_support_face_ids(topology)
+            )
             side_ids = set(
                 instance["component_completeness"]["blade_side_face_ids"]
             )
@@ -3968,6 +6356,147 @@ def _population_for_mapping(population):
     }
 
 
+def _evaluated_support_profile_rz(
+    profile: Mapping[str, Any], *, sample_count: int = 257
+) -> list[list[float]]:
+    control_points = profile.get("control_points_rz_mm", ())
+    if not isinstance(control_points, Sequence) or len(control_points) < 2:
+        raise AxisFirstPipelineError(
+            "v116_support_profile_invalid",
+            "direct active-span support lacks a valid NURBS control polygon",
+            stage="exact_sections",
+        )
+    weights = profile.get("weights")
+    if not isinstance(weights, Sequence) or len(weights) != len(control_points):
+        weights = [1.0] * len(control_points)
+    curve = {
+        "degree": int(profile.get("degree", min(3, len(control_points) - 1))),
+        "control_points": control_points,
+        "weights": weights,
+        "knots": profile.get("knots") or "clamped_uniform",
+    }
+    count = max(17, int(sample_count))
+    points = [
+        evaluate_nurbs_curve(curve, index / (count - 1))
+        for index in range(count)
+    ]
+    if any(
+        len(point) != 2
+        or not all(math.isfinite(float(value)) for value in point)
+        for point in points
+    ):
+        raise AxisFirstPipelineError(
+            "v116_support_profile_invalid",
+            "direct active-span NURBS evaluation produced invalid R-Z points",
+            stage="exact_sections",
+        )
+    return [[float(value) for value in point] for point in points]
+
+
+def _semantic_endpoint_witnesses(
+    support: Mapping[str, Any],
+    material: Mapping[str, Any],
+    sections: Mapping[str, Any],
+    *,
+    source_tolerance_mm: float,
+) -> dict[str, Any]:
+    hub_fit = support.get("mapping_fits", {}).get("hub", {})
+    eye = hub_fit.get("endpoint_roles", {}).get("eye_inlet_small_radius", {})
+    eye_rz = np.asarray(eye.get("canonical_rz_mm"), dtype=float)
+    if eye_rz.shape != (2,) or np.any(~np.isfinite(eye_rz)):
+        raise AxisFirstPipelineError(
+            "v116_hub_closure_endpoint_semantics_failed",
+            "hub flowpath eye endpoint lacks a finite canonical R-Z witness",
+            stage="measurement_bundle",
+            evidence={"eye_endpoint": copy.deepcopy(eye)},
+        )
+
+    top_evidence = material["hub_top_cap_thickness_mm"]["evidence"]
+    top_axis = np.asarray(top_evidence.get("axis_parameters_mm"), dtype=float)
+    bore_evidence = material["mounting_bore_radius_mm"]["evidence"]
+    bore_axis = np.asarray(bore_evidence.get("canonical_axis_limits_mm"), dtype=float)
+    if top_axis.shape != (2,) or np.any(~np.isfinite(top_axis)):
+        raise AxisFirstPipelineError(
+            "v116_hub_closure_endpoint_semantics_failed",
+            "hub material top lacks two finite axial witnesses",
+            stage="measurement_bundle",
+            evidence={"hub_top_cap_evidence": copy.deepcopy(top_evidence)},
+        )
+    if bore_axis.shape != (2,) or np.any(~np.isfinite(bore_axis)):
+        raise AxisFirstPipelineError(
+            "v116_hub_closure_endpoint_semantics_failed",
+            "mounting bore lacks independent lower and upper material limits",
+            stage="measurement_bundle",
+            evidence={"mounting_bore_evidence": copy.deepcopy(bore_evidence)},
+        )
+
+    blade_witnesses = []
+    direct = sections.get("direct_section_curve_network", {})
+    for population, family in sorted(direct.get("populations", {}).items()):
+        for station in family.get("stations", ()):
+            for side_role in ("side_a", "side_b"):
+                start = station.get("curves", {}).get(side_role, {}).get(
+                    "start_witness", {}
+                )
+                xyz = np.asarray(start.get("canonical_xyz_mm"), dtype=float)
+                if xyz.shape != (3,) or np.any(~np.isfinite(xyz)):
+                    raise AxisFirstPipelineError(
+                        "v116_direct_curve_contract_invalid",
+                        "blade leading boundary lacks a canonical endpoint witness",
+                        stage="measurement_bundle",
+                        evidence={
+                            "population": population,
+                            "active_h": station.get("active_h"),
+                            "side_role": side_role,
+                            "start_witness": copy.deepcopy(start),
+                        },
+                    )
+                blade_witnesses.append(
+                    {
+                        "population": str(population),
+                        "active_h": float(station["active_h"]),
+                        "side_role": side_role,
+                        "canonical_xyz_mm": xyz.tolist(),
+                        "source_loop_id": station.get("source_loop_id"),
+                    }
+                )
+    if not blade_witnesses:
+        raise AxisFirstPipelineError(
+            "v116_direct_curve_contract_invalid",
+            "direct section network has no blade leading-boundary witnesses",
+            stage="measurement_bundle",
+        )
+
+    blade_z = [float(item["canonical_xyz_mm"][2]) for item in blade_witnesses]
+    return {
+        "contract_id": "impeller_v1_1_6_semantic_endpoint_witnesses_r16_1",
+        "coordinate_frame": "canonical_axis_frame_xyz_mm",
+        "source_tolerance_mm": float(source_tolerance_mm),
+        "hub_flowpath_eye_endpoint": {
+            "canonical_rz_mm": eye_rz.tolist(),
+            "source_ids": list(eye.get("source_ids", ())),
+            "authority": eye.get("authority"),
+        },
+        "hub_material_eye_or_boss_top": {
+            "canonical_z_mm": float(np.max(top_axis)),
+            "canonical_axis_witnesses_mm": top_axis.tolist(),
+            "source_ids": list(material["hub_top_cap_thickness_mm"].get("source_ids", ())),
+            "authority": "authenticated_axis_perpendicular_material_planes",
+        },
+        "mounting_bore_material_limits": {
+            "canonical_z_interval_mm": [float(np.min(bore_axis)), float(np.max(bore_axis))],
+            "source_ids": list(material["mounting_bore_radius_mm"].get("source_ids", ())),
+            "authority": "authenticated_coaxial_cylinder_end_planes",
+        },
+        "blade_leading_boundary": {
+            "canonical_z_range_mm": [min(blade_z), max(blade_z)],
+            "witnesses": blade_witnesses,
+            "authority": "authenticated_step_exact_section_curve_endpoints",
+        },
+        "universal_common_z_plane_forbidden": True,
+    }
+
+
 def _support_profile_sample_frames(
     source_to_canonical,
     profile,
@@ -4103,7 +6632,9 @@ def _tip_cap_face_ids(inventory, semantics, *, hub_face_ids):
     adjacency = inventory["source_manifest"]["adjacency"]
     for population in semantics["periodic_population_recovery"]["populations"]:
         for instance in population["instances"]:
-            component_ids = set(instance["source_face_ids"])
+            component_ids = set(instance["source_face_ids"]) - set(
+                hub_face_ids
+            )
             side_ids = set(
                 instance["component_completeness"]["blade_side_face_ids"]
             )
@@ -4629,13 +7160,23 @@ def _decompose_measured_section_loop(loop, fit_tolerance):
     # Use the first source-tolerance fit in increasing complexity order.  Fit
     # error is not monotone in control count: dense uniform-knot fits can
     # oscillate between exact samples, while an intermediate budget remains
-    # both smoother and more accurate.  Every budget stays below the source
-    # sample count and cannot activate the degree-one polyline fallback.
-    for maximum_control_count in (25, 49, 65, 81, 97):
-        decomposition = section_recovery.decompose_section_loop(
-            loop,
-            maximum_control_count=maximum_control_count,
-        )
+    # both smoother and more accurate.  The final budget may equal the 129
+    # exact-curve display samples for a strongly curved terminal station, but
+    # the direct path never activates the degree-one polyline fallback.
+    for maximum_control_count in (25, 49, 65, 81, 97, 129):
+        if (
+            getattr(loop, "source_kind", "")
+            == "occt_exact_authenticated_open_side_pair"
+        ):
+            decomposition = section_recovery.decompose_authenticated_open_side_pair(
+                loop,
+                maximum_control_count=maximum_control_count,
+            )
+        else:
+            decomposition = section_recovery.decompose_section_loop(
+                loop,
+                maximum_control_count=maximum_control_count,
+            )
         if all(
             segment.fit.residual_max_mm <= fit_tolerance + 1.0e-12
             for segment in decomposition.segments
@@ -4670,10 +7211,10 @@ def _representative_face_roles(
             evidence={"component": instance},
     )
     roles = {side_ids[0]: "side_a", side_ids[1]: "side_b"}
-    component_ids = set(instance["source_face_ids"])
     hub_support_ids = set(
         topology.get("hub_support_face_ids", [topology["hub_face_id"]])
     )
+    component_ids = set(instance["source_face_ids"]) - hub_support_ids
     adjacent_support_ids = {
         neighbor
         for face_id in component_ids

@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 import numpy as np
@@ -37,7 +37,7 @@ _REGIONAL_EVIDENCE_FIELDS = frozenset(
     }
 )
 _DIRECTIONAL_WEIGHT = 0.5
-DEVIATION_CHECKPOINT_REVISION = "exact_triangle_surface_r14_0"
+DEVIATION_CHECKPOINT_REVISION = "exact_triangle_surface_r16_24_periodic_normalized"
 
 
 @dataclass(frozen=True)
@@ -482,6 +482,8 @@ def compare_corresponding_mesh_regions(
     query_workers: int = 1,
     max_workers: int = 1,
     checkpoint_dir: str | Path | None = None,
+    periodic_equivalence_groups: Mapping[str, str] | None = None,
+    periodic_equivalence_authority: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Measure each reconstruction region against only its source counterpart."""
 
@@ -561,7 +563,35 @@ def compare_corresponding_mesh_regions(
                 checkpoint_hit_count += 1
 
     pending_roles = [role for role in roles if role not in role_results]
+    periodic_reuse_from: dict[str, str] = {}
+    periodic_normalized_reuse: set[str] = set()
+    periodic_reuse_rejection_count = 0
     for role in pending_roles:
+        representative = str((periodic_equivalence_groups or {}).get(role, role))
+        if representative == role:
+            continue
+        if representative not in validated_pairs:
+            periodic_reuse_rejection_count += 1
+            continue
+        authority = (periodic_equivalence_authority or {}).get(role)
+        if _periodic_authorized_pair_is_equivalent(
+            validated_pairs[representative],
+            validated_pairs[role],
+            authority,
+            expected_representative=representative,
+        ):
+            periodic_reuse_from[role] = representative
+            periodic_normalized_reuse.add(role)
+        elif _periodic_z_pair_is_equivalent(
+            validated_pairs[representative], validated_pairs[role]
+        ):
+            periodic_reuse_from[role] = representative
+        else:
+            periodic_reuse_rejection_count += 1
+    computed_pending_roles = [
+        role for role in pending_roles if role not in periodic_reuse_from
+    ]
+    for role in computed_pending_roles:
         source, _ = validated_pairs[role]
         if id(source) not in source_indexes:
             source_indexes[id(source)] = TriangleSurfaceIndex.build(source)
@@ -617,9 +647,11 @@ def compare_corresponding_mesh_regions(
                 }
             )
 
-    actual_max_workers = min(int(max_workers), len(pending_roles))
+    actual_max_workers = min(int(max_workers), len(computed_pending_roles))
     if actual_max_workers == 1:
-        completed_results = (compare_role(role) for role in pending_roles)
+        completed_results = (
+            compare_role(role) for role in computed_pending_roles
+        )
         for result in completed_results:
             record_computed_result(result)
     elif actual_max_workers > 1:
@@ -628,11 +660,58 @@ def compare_corresponding_mesh_regions(
             thread_name_prefix="surface-deviation",
         ) as executor:
             futures = {
-                executor.submit(compare_role, role): role for role in pending_roles
+                executor.submit(compare_role, role): role
+                for role in computed_pending_roles
             }
             for future in as_completed(futures):
                 result = future.result()
                 record_computed_result(result)
+
+    periodic_reconstruction_indexes: dict[str, TriangleSurfaceIndex] = {}
+    for role in pending_roles:
+        representative = periodic_reuse_from.get(role)
+        if representative is None or role in role_results:
+            continue
+        representative_result = role_results.get(representative)
+        if representative_result is None:
+            result = compare_role(role)
+            record_computed_result(result)
+            periodic_reuse_rejection_count += 1
+            del periodic_reuse_from[role]
+            continue
+        source, reconstruction = validated_pairs[role]
+        normalized = role in periodic_normalized_reuse
+        representative_reconstruction_index = None
+        if normalized:
+            if representative not in periodic_reconstruction_indexes:
+                periodic_reconstruction_indexes[representative] = (
+                    TriangleSurfaceIndex.build(
+                        validated_pairs[representative][1]
+                    )
+                )
+            representative_reconstruction_index = (
+                periodic_reconstruction_indexes[representative]
+            )
+        result = _periodic_reused_surface_result(
+            role,
+            source,
+            reconstruction,
+            representative_result,
+            periodic_normalized=normalized,
+            authority=(periodic_equivalence_authority or {}).get(role),
+            representative_reconstruction_index=representative_reconstruction_index,
+            query_workers=int(query_workers),
+        )
+        role_results[role] = result
+        completed_surface_count += 1
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    **result.timing,
+                    "completed_surface_count": completed_surface_count,
+                    "total_surface_count": len(roles),
+                }
+            )
 
     role_timings = []
     for role in roles:
@@ -659,6 +738,11 @@ def compare_corresponding_mesh_regions(
         "contract_id": "impeller_v1_1_6_corresponding_surface_deviation_v5",
         "distance_kind": (
             "unsigned_corresponding_sample_to_triangle_surface_distance_mm"
+        ),
+        "periodic_alias_distance_authority": (
+            "authenticated_periodic_normalized_representative_surface_samples"
+            if periodic_normalized_reuse
+            else "not_used"
         ),
         "comparison_direction": (
             "reconstruction_samples_to_corresponding_source_triangle_surfaces"
@@ -689,15 +773,27 @@ def compare_corresponding_mesh_regions(
                     reconstruction_mesh_ids
                 ),
                 "triangle_index_build_count": len(source_indexes)
-                + len(pending_roles),
-                "distance_query_count": 2 * len(pending_roles),
+                + len(computed_pending_roles)
+                + len(periodic_reconstruction_indexes),
+                "distance_query_count": 2 * len(computed_pending_roles)
+                + len(periodic_normalized_reuse),
                 "legacy_distance_query_count": 3 * len(regions),
+                "periodic_equivalence_requested_count": len(
+                    periodic_equivalence_groups or {}
+                ),
+                "periodic_reuse_count": len(periodic_reuse_from),
+                "periodic_normalized_reuse_count": len(
+                    periodic_normalized_reuse
+                ),
+                "periodic_reuse_rejection_count": (
+                    periodic_reuse_rejection_count
+                ),
                 "checkpoint_contract_revision": DEVIATION_CHECKPOINT_REVISION,
                 "checkpoint_enabled": checkpoint_root is not None,
                 "checkpoint_hit_count": checkpoint_hit_count,
                 "checkpoint_write_count": checkpoint_write_count,
                 "checkpoint_write_failure_count": checkpoint_write_failure_count,
-                "pending_surface_count": len(pending_roles),
+                "pending_surface_count": len(computed_pending_roles),
                 "query_workers": int(query_workers),
                 "max_workers": actual_max_workers,
                 "duration_ms": round(
@@ -707,6 +803,219 @@ def compare_corresponding_mesh_regions(
             }
         )
     return metrics, heatmap
+
+
+def _periodic_z_pair_is_equivalent(
+    representative: tuple[TriangleMesh, TriangleMesh],
+    candidate: tuple[TriangleMesh, TriangleMesh],
+) -> bool:
+    representative_source, representative_reconstruction = representative
+    candidate_source, candidate_reconstruction = candidate
+    if not _same_mesh_topology(representative_source, candidate_source):
+        return False
+    if not _same_mesh_topology(
+        representative_reconstruction, candidate_reconstruction
+    ):
+        return False
+    reference_centroid = np.mean(representative_source.vertices, axis=0)
+    candidate_centroid = np.mean(candidate_source.vertices, axis=0)
+    reference_radius = float(np.linalg.norm(reference_centroid[:2]))
+    candidate_radius = float(np.linalg.norm(candidate_centroid[:2]))
+    scale = max(
+        float(np.ptp(representative_source.vertices, axis=0).max()),
+        float(np.ptp(candidate_source.vertices, axis=0).max()),
+        1.0,
+    )
+    if reference_radius <= 1.0e-9 * scale or candidate_radius <= 1.0e-9 * scale:
+        return False
+    angle = math.atan2(candidate_centroid[1], candidate_centroid[0]) - math.atan2(
+        reference_centroid[1], reference_centroid[0]
+    )
+    cosine = math.cos(angle)
+    sine = math.sin(angle)
+    rotation = np.asarray(
+        [[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]],
+        dtype=float,
+    )
+    tolerance = max(1.0e-8, 2.0e-8 * scale)
+    return (
+        float(
+            np.max(
+                np.linalg.norm(
+                    representative_source.vertices @ rotation.T
+                    - candidate_source.vertices,
+                    axis=1,
+                )
+            )
+        )
+        <= tolerance
+        and float(
+            np.max(
+                np.linalg.norm(
+                    representative_reconstruction.vertices @ rotation.T
+                    - candidate_reconstruction.vertices,
+                    axis=1,
+                )
+            )
+        )
+        <= tolerance
+    )
+
+
+def _periodic_authorized_pair_is_equivalent(
+    representative: tuple[TriangleMesh, TriangleMesh],
+    candidate: tuple[TriangleMesh, TriangleMesh],
+    authority: Mapping[str, Any] | None,
+    *,
+    expected_representative: str,
+) -> bool:
+    if not isinstance(authority, Mapping):
+        return False
+    if authority.get("authority") != "authenticated_step_periodic_topology_component":
+        return False
+    if str(authority.get("representative_role", "")) != expected_representative:
+        return False
+    residual = float(authority.get("source_periodic_residual_bound_mm", math.inf))
+    residual_tolerance = float(
+        authority.get("source_periodic_residual_tolerance_mm", 0.0)
+    )
+    if (
+        not math.isfinite(residual)
+        or not math.isfinite(residual_tolerance)
+        or residual < 0.0
+        or residual_tolerance <= 0.0
+        or residual > residual_tolerance
+    ):
+        return False
+    matrix = np.asarray(
+        authority.get("candidate_from_representative_matrix"), dtype=float
+    )
+    if matrix.shape != (4, 4) or np.any(~np.isfinite(matrix)):
+        return False
+    rotation = matrix[:3, :3]
+    if (
+        np.max(np.abs(rotation.T @ rotation - np.eye(3))) > 1.0e-9
+        or abs(float(np.linalg.det(rotation)) - 1.0) > 1.0e-9
+        or np.max(np.abs(matrix[3] - np.asarray([0.0, 0.0, 0.0, 1.0])))
+        > 1.0e-9
+    ):
+        return False
+    _representative_source, representative_reconstruction = representative
+    _candidate_source, candidate_reconstruction = candidate
+    if not _same_mesh_topology(
+        representative_reconstruction, candidate_reconstruction
+    ):
+        return False
+    homogeneous = np.column_stack(
+        (
+            representative_reconstruction.vertices,
+            np.ones(len(representative_reconstruction.vertices)),
+        )
+    )
+    transformed = (homogeneous @ matrix.T)[:, :3]
+    scale = max(
+        float(np.ptp(representative_reconstruction.vertices, axis=0).max()),
+        1.0,
+    )
+    reconstruction_tolerance = max(1.0e-8, 2.0e-8 * scale)
+    return (
+        float(
+            np.max(
+                np.linalg.norm(
+                    transformed - candidate_reconstruction.vertices,
+                    axis=1,
+                )
+            )
+        )
+        <= reconstruction_tolerance
+    )
+def _same_mesh_topology(first: TriangleMesh, second: TriangleMesh) -> bool:
+    return (
+        first.vertices.shape == second.vertices.shape
+        and first.triangles.shape == second.triangles.shape
+        and np.array_equal(first.triangles, second.triangles)
+    )
+
+
+def _periodic_reused_surface_result(
+    role: str,
+    source: TriangleMesh,
+    reconstruction: TriangleMesh,
+    representative: _SurfaceComparisonResult,
+    *,
+    periodic_normalized: bool = False,
+    authority: Mapping[str, Any] | None = None,
+    representative_reconstruction_index: TriangleSurfaceIndex | None = None,
+    query_workers: int = 1,
+) -> _SurfaceComparisonResult:
+    started = time.perf_counter()
+    centroid_errors = representative.centroid_errors.copy()
+    vertex_errors = representative.vertex_errors.copy()
+    if periodic_normalized:
+        if (
+            representative_reconstruction_index is None
+            or not isinstance(authority, Mapping)
+        ):
+            raise ValueError(
+                "periodic-normalized reverse deviation requires representative reconstruction authority"
+            )
+        matrix = np.asarray(
+            authority.get("candidate_from_representative_matrix"), dtype=float
+        )
+        inverse = np.linalg.inv(matrix)
+        candidate_centroids = _triangle_centroids(source)
+        homogeneous = np.column_stack(
+            (candidate_centroids, np.ones(len(candidate_centroids)))
+        )
+        normalized_centroids = (homogeneous @ inverse.T)[:, :3]
+        reverse_centroid_errors = representative_reconstruction_index.distances(
+            normalized_centroids, workers=int(query_workers)
+        )
+    else:
+        reverse_centroid_errors = representative.reverse_centroid_errors.copy()
+    timing = {
+        "role": role,
+        "source_triangle_count": int(len(source.triangles)),
+        "reconstruction_triangle_count": int(len(reconstruction.triangles)),
+        "forward_query_point_count": 0,
+        "reverse_query_point_count": (
+            int(len(source.triangles)) if periodic_normalized else 0
+        ),
+        "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        "checkpoint_hit": False,
+        "periodic_reuse": True,
+        "periodic_normalized": bool(periodic_normalized),
+        "representative_role": representative.role,
+        "reverse_distance_authority": (
+            "candidate_source_samples_to_normalized_representative_reconstruction"
+            if periodic_normalized
+            else "rigidly_equivalent_representative_samples"
+        ),
+        **(
+            {
+                "source_periodic_residual_bound_mm": float(
+                    authority.get("source_periodic_residual_bound_mm", 0.0)
+                )
+            }
+            if periodic_normalized and isinstance(authority, Mapping)
+            else {}
+        ),
+    }
+    return _SurfaceComparisonResult(
+        role=role,
+        source=source,
+        reconstruction=reconstruction,
+        centroid_errors=centroid_errors,
+        reverse_centroid_errors=reverse_centroid_errors,
+        vertex_errors=vertex_errors,
+        regional_metric=_surface_regional_metric(
+            source,
+            reconstruction,
+            centroid_errors,
+            reverse_centroid_errors,
+        ),
+        timing=timing,
+    )
 
 
 def combine_triangle_meshes(meshes: list[TriangleMesh]) -> TriangleMesh:

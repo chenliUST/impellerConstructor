@@ -1,6 +1,6 @@
 export const stepAuditStages = [
   "uploaded", "brep_loaded", "frame_resolved", "semantics_classified", "parameters_extracted",
-  "hub_reconstructed", "blade_surfaces_reconstructed", "edge_closures_reconstructed", "deviation_measured", "complete",
+  "hub_reconstructed", "blade_surfaces_reconstructed", "edge_closures_reconstructed", "comparison_preprocessing", "deviation_measured", "complete",
 ];
 
 export const stepOverlayOptions = [
@@ -26,6 +26,16 @@ export function auditStageRows(status) {
     state: status?.status === "FAILED" && status.current_stage === id ? "failed"
       : completed.has(id) ? "complete" : status?.current_stage === id ? "active" : "pending",
   }));
+}
+
+export function auditProgressLabel(status) {
+  const progress = asRecord(status?.progress);
+  const phase = String(progress.phase || status?.current_stage || "STEP").replaceAll("_", " ");
+  const detail = String(progress.detail || "").replaceAll("_", " ");
+  const fraction = finite(progress.fraction_complete)
+    ? `${Math.round(Number(progress.fraction_complete) * 100)}%`
+    : "";
+  return [phase, detail, fraction].filter(Boolean).join(" / ");
 }
 
 export function auditArtifactUrls(apiBase, auditId, manifest = null) {
@@ -78,16 +88,22 @@ export function auditInProgress(status) { return ["UPLOADING", "QUEUED", "RUNNIN
 export function stepInspectionModel(manifest, selection = {}) {
   const root = asRecord(manifest);
   const mapping = asRecord(root.parameter_mapping);
+  const overlay = asRecord(root.section_overlay_contract);
+  const sourceOverlay = asRecord(overlay.source);
+  const generatedOverlay = asRecord(overlay.generated);
   const axisFirst = asRecord(root.axis_first_section_reconstruction);
   const support = asRecord(mapping.support_recovery);
   const periodic = asRecord(mapping.periodic_provenance);
-  const loops = asRecords(mapping.source_section_loops);
+  const overlaySourceLoops = sourceOverlay.status === "AVAILABLE" ? asRecords(sourceOverlay.stations) : [];
+  const loops = overlaySourceLoops.length ? overlaySourceLoops : asRecords(mapping.source_section_loops);
+  const generatedLoops = generatedOverlay.status === "AVAILABLE" ? asRecords(generatedOverlay.stations) : [];
   const populations = populationOptions(periodic, asRecord(root.semantics), loops, axisFirst);
   const requestedPopulation = selection.populationId || populations[0]?.id || "main";
   const populationId = populations.some((population) => population.id === requestedPopulation) ? requestedPopulation : requestedPopulation;
   const stations = stationsForPopulation(loops, populationId);
   const requestedStation = selection.spanStationId || stations[0]?.id || "";
   const selectedLoop = selectLoop(loops, populationId, requestedStation);
+  const generatedLoop = selectLoop(generatedLoops, populationId, requestedStation);
   const selectedMappingTerms = mappingTermsForSelection(mapping.objective_terms, { populationId, spanStationId: requestedStation, selectedLoop });
   const topology = topologyDecision(support);
   const activeSupport = support;
@@ -110,8 +126,15 @@ export function stepInspectionModel(manifest, selection = {}) {
     stations,
     spanStationId: requestedStation,
     selectedLoop,
+    sourceSectionLoop: selectedLoop,
+    generatedSectionLoop: generatedLoop,
+    sectionOverlayStatus: {
+      contractId: overlay.contract_id || null,
+      source: sourceOverlay.status || (selectedLoop ? "LEGACY_SOURCE_ONLY" : "UNAVAILABLE"),
+      generated: generatedOverlay.status || "UNAVAILABLE",
+    },
     selectedMappingTerms,
-    representative: representativeForPopulation(periodic, populationId, axisFirst, loops),
+    representative: representativeForPopulation(periodic, populationId, axisFirst, generatedLoops),
     regionalDeviation: regionalDeviationRecords(root),
     selectionEvidence: selectedLoop
       ? { state: "available", message: `Exact source loop bound to ${populationId} / ${requestedStation}.` }
@@ -280,7 +303,10 @@ function populationOptions(periodic, semantics, loops, axisFirst) {
 
 function stationsForPopulation(loops, populationId) {
   const seen = new Set();
-  return loops.filter((loop) => populationOf(loop) === populationId).map((loop) => ({ ...loop, id: stationId(loop), h: loop.h ?? loop.span_fraction, label: `h ${span(loop.h ?? loop.span_fraction)}` }))
+  return loops.filter((loop) => populationOf(loop) === populationId).map((loop) => {
+    const h = stationSpanValue(loop);
+    return { ...loop, id: stationId(loop), h, label: `h ${span(h)}` };
+  })
     .filter((station) => station.id && !seen.has(station.id) && seen.add(station.id));
 }
 
@@ -388,7 +414,8 @@ function regionalDeviationRecords(manifest) {
   return [];
 }
 function populationOf(record) { return String(record?.population || record?.family || record?.blade_population || record?.population_id || ""); }
-function stationId(record) { const value = record?.span_station_id ?? record?.station_id ?? record?.h ?? record?.span_fraction; return value === undefined || value === null ? "" : String(value); }
+function stationId(record) { const value = record?.span_station_id ?? record?.station_id ?? record?.active_h ?? record?.h ?? record?.span_fraction; return value === undefined || value === null ? "" : String(value); }
+function stationSpanValue(record) { return record?.active_h ?? record?.h ?? record?.span_fraction ?? record?.support_span_h; }
 function span(value) { return finite(value) ? Number(value).toFixed(2) : "--"; }
 function firstMetric(record, keys) { for (const key of keys) if (finite(record?.[key])) return Number(record[key]); return null; }
 function average(records, keys) { const values = records.map((record) => firstMetric(record, keys)).filter((value) => value !== null); return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null; }

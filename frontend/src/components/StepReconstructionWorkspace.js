@@ -8,6 +8,7 @@ import {
 import {
   auditArtifactUrls,
   auditInProgress,
+  auditProgressLabel,
   auditStageRows,
   defaultStepOverlayVisibility,
   heatmapLegend,
@@ -19,7 +20,7 @@ import {
   stepOverlayOptions,
   terminalAuditStatus,
   unsupportedSourceFeatures,
-} from "../stepReconstructionModel.js?v=1.1.6-r13_2";
+} from "../stepReconstructionModel.js?v=1.1.6-r16_22_1";
 import { StepComparisonScene } from "./StepComparisonScene.js?v=1.1.6-r22";
 
 const h = React.createElement;
@@ -147,7 +148,7 @@ export function StepReconstructionWorkspace({ apiBase, initialAuditId = "", init
       auditStageRows(status).map((row) => h("li", { key: row.id, className: row.state }, h("span", null), row.label)),
     ),
     h("div", { className: "step-audit-grid" },
-      manifest ? h(SceneErrorBoundary, { auditId: manifest?.audit_id }, h(SceneComponent, {
+        manifest ? h(SceneErrorBoundary, { auditId: manifest?.audit_id }, h(SceneComponent, {
         artifactUrls,
         inspection,
         overlays,
@@ -157,7 +158,7 @@ export function StepReconstructionWorkspace({ apiBase, initialAuditId = "", init
         onRegionFilterStatus: updateRegionFilterStatus,
         runtime: sceneRuntime,
       })) : h("div", { className: "step-comparison-placeholder" },
-        h("strong", null, status?.status === "RUNNING" ? `Processing ${stageLabel(status.current_stage)}` : status?.status === "QUEUED" ? "Queued for reconstruction" : "Load a STEP model to begin reconstruction."),
+        h("strong", null, status?.status === "RUNNING" ? `Processing ${auditProgressLabel(status)}` : status?.status === "QUEUED" ? "Queued for reconstruction" : "Load a STEP model to begin reconstruction."),
       ),
       h("aside", { className: "step-report-pane" },
         h("header", null, h("h3", null, "Parameter & deviation report"), h("span", null, manifest?.units || "mm")),

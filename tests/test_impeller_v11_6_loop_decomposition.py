@@ -234,6 +234,30 @@ def test_source_tolerance_can_select_an_honestly_measured_linear_nurbs_target():
     )
 
 
+def test_authenticated_observation_polyline_can_exceed_smoothing_control_budget():
+    parameter = np.linspace(0.0, 1.0, 65)
+    sq = np.column_stack(
+        [10.0 * parameter, np.sin(3.0 * np.pi * parameter)]
+    )
+    xyz = np.column_stack([sq, 0.25 * np.sin(5.0 * np.pi * parameter)])
+
+    fit = fit_nurbs_measurement_curve(
+        xyz,
+        sq,
+        segment_name="authenticated_trim_observation",
+        maximum_control_count=8,
+        fit_tolerance_mm=0.02,
+        allow_source_polyline_nurbs=True,
+    )
+
+    assert fit.degree == 1
+    assert len(fit.control_points_sq_mm) == len(sq)
+    assert fit.knot_strategy == "source_polyline_degree_one"
+    assert fit.residual_source_to_fit_max_sq_mm == 0.0
+    assert fit.residual_source_to_fit_max_xyz_mm == 0.0
+    assert fit.residual_max_mm <= 0.02
+
+
 def test_high_resolution_fit_has_a_bounded_display_sample_budget():
     parameter = np.linspace(0.0, 1.0, 4001)
     sq = np.column_stack([20.0 * parameter, np.sin(4.0 * np.pi * parameter)])

@@ -49,6 +49,7 @@ from part_rule_synthesis.impeller_v11_6_comparison_scope import (
 from part_rule_synthesis import impeller_runtime_compiler as compiler_module
 from part_rule_synthesis import impeller_v11_6_axis_first_pipeline as axis_pipeline
 from part_rule_synthesis import impeller_v11_6_step_audit as step_audit_module
+from part_rule_synthesis import impeller_surface_graph_export as surface_export_module
 from part_rule_synthesis import service as service_module
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
 from part_rule_synthesis.service import RuleSynthesisService
@@ -96,7 +97,7 @@ def test_deviation_progress_is_persisted_without_completing_the_stage(tmp_path):
 
     status = service.status(handle.audit_id)
     assert status["status"] == "UPLOADING"
-    assert status["current_stage"] == "surface_deviation"
+    assert status["current_stage"] == "deviation_measured"
     assert status["progress"] == {
         "phase": "surface_deviation",
         "completed_surface_count": 3,
@@ -106,6 +107,32 @@ def test_deviation_progress_is_persisted_without_completing_the_stage(tmp_path):
         "last_surface_duration_ms": 1250.0,
         "updated_at": status["progress"]["updated_at"],
     }
+
+
+def test_comparison_preprocessing_progress_is_persisted_with_detail(tmp_path):
+    service = step_audit_module.StepReconstructionAuditService(
+        tmp_path, run_async=False
+    )
+    handle = service.begin_upload("progress.step")
+
+    service._set_comparison_preprocessing_progress(
+        handle.audit_id,
+        completed_step_count=2,
+        total_step_count=5,
+        detail="reconstruction_regions_built",
+    )
+
+    status = service.status(handle.audit_id)
+    assert status["current_stage"] == "comparison_preprocessing"
+    assert status["progress"] == {
+        "phase": "comparison_preprocessing",
+        "completed_step_count": 2,
+        "total_step_count": 5,
+        "fraction_complete": 0.4,
+        "detail": "reconstruction_regions_built",
+        "updated_at": status["progress"]["updated_at"],
+    }
+    assert status["worker_owner"]["state"] == "RUNNING"
 
 
 def test_recovery_does_not_interrupt_audit_owned_by_a_live_worker(tmp_path):
@@ -463,6 +490,51 @@ def test_runtime_compiler_consumes_mapper_approved_canonical_without_regeneratio
         )
 
 
+def test_section_overlay_conformance_gate_fails_before_deviation():
+    contract = {
+        "station_residuals": [
+            {
+                "population": "main",
+                "active_h": 0.5,
+                "source_tolerance_mm": 0.02,
+                "role_residuals": {
+                    "side_a": {"hausdorff_max_mm": 0.25},
+                    "side_b": {"hausdorff_max_mm": 0.05},
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(
+        step_audit_module.StepAuditError,
+        match="generated direct surfaces do not interpolate",
+    ) as caught:
+        step_audit_module._validate_section_overlay_conformance(contract)
+
+    assert caught.value.reason == "v116_direct_curve_section_conformance_failed"
+    assert contract["conformance_gate"]["status"] == "FAIL"
+    assert contract["conformance_gate"]["failures"][0]["curve_role"] == "side_a"
+
+
+def test_section_overlay_conformance_gate_accepts_source_tolerance_bound():
+    contract = {
+        "station_residuals": [
+            {
+                "population": "main",
+                "active_h": 0.0,
+                "source_tolerance_mm": 0.08,
+                "role_residuals": {
+                    "side_a": {"hausdorff_max_mm": 0.15},
+                },
+            }
+        ]
+    }
+
+    step_audit_module._validate_section_overlay_conformance(contract)
+
+    assert contract["conformance_gate"]["status"] == "PASS"
+
+
 def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
     tmp_path, monkeypatch
 ):
@@ -479,6 +551,12 @@ def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
         },
         "parameters": {},
         "parameter_rows": [],
+        "section_provenance": {
+            "direct_section_curve_network": {
+                "status": "PASS",
+                "construction_usage": "step_reconstruction_only",
+            }
+        },
     }
     compiled_calls = []
     instantiated_runtimes = []
@@ -507,7 +585,15 @@ def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
                     "generation_id": f"generation-{len(instantiated_runtimes)}",
                     "geometry_version": "1.1",
                     "geometry_patch_version": "1.1.2",
-                    "geometry_validation_status": "PASS",
+                    "geometry_validation_status": "FAIL",
+                    "geometry_validation_report": {
+                        "blocking_failures": [
+                            {
+                                "reason": "v1_1_root_attachment_failed",
+                                "surface_graph_id": "blade_0_root_attachment_surface",
+                            }
+                        ]
+                    },
                     "operation_graph_hash": kwargs["geometry_stage"],
                     "parameters": {},
                     "geometry": {"surface_graph": {"surfaces": []}},
@@ -518,6 +604,14 @@ def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
         step_audit_module, "compile_impeller_runtime_preset", compile_probe
     )
     monkeypatch.setattr(step_audit_module, "RuleSynthesisService", FakeService)
+    monkeypatch.setattr(
+        step_audit_module.section_curve_surfaces,
+        "replace_blade_surfaces_with_direct_section_curves",
+        lambda graph, _mapping: (
+            graph,
+            {"implementation_revision": "axis_first_section_curve_authority_r16_22"},
+        ),
+    )
     monkeypatch.setattr(
         step_audit_module.pattern_reconstruction,
         "validate_mapped_pattern_reconstruction",
@@ -539,7 +633,7 @@ def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
     )
 
     assert len(compiled_calls) == 1
-    assert len(instantiated_runtimes) == 3
+    assert len(instantiated_runtimes) == 1
     assert all(
         runtime["canonical_nurbs_parameterization"] == canonical
         and runtime["canonical_payload_hash_sha256"] == digest
@@ -547,6 +641,17 @@ def test_reconstruct_passes_mapper_approved_canonical_through_runtime_compiler(
     )
     assert result["manifest"]["geometry_patch_version"] == "1.1.2"
     assert result["manifest"]["pattern_material_contract"]["status"] == "PASS"
+    assert result["manifest"]["direct_section_curve_surface_contract"][
+        "implementation_revision"
+    ] == "axis_first_section_curve_authority_r16_22"
+    assert [
+        stage["execution_mode"]
+        for stage in result["manifest"]["constructor_stages"]
+    ] == [
+        "single_full_graph_pass",
+        "single_full_graph_pass",
+        "single_full_graph_pass",
+    ]
 
 
 def test_zero_measured_radius_disables_only_legacy_transition_policy():
@@ -598,6 +703,324 @@ def test_material_export_graph_excludes_open_tip_reference():
         "hub",
         "blade",
     ]
+
+
+def test_material_surface_meshes_are_triangulated_once_and_keyed_by_surface(
+    monkeypatch,
+):
+    graph = {
+        "surfaces": [
+            {
+                "id": "pressure",
+                "role": "blade_pressure",
+                "material": True,
+                "blade_class": "main",
+                "blade_pair_index": 0,
+                "uv_grid": [
+                    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                    [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "suction",
+                "role": "blade_suction",
+                "material": True,
+                "blade_class": "main",
+                "blade_pair_index": 0,
+                "uv_grid": [
+                    [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
+                    [[0.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+                ],
+            },
+            {
+                "id": "reference",
+                "role": "open_tip_reference",
+                "material": False,
+                "export_default": "excluded",
+                "uv_grid": [
+                    [[0.0, 0.0, 2.0], [1.0, 0.0, 2.0]],
+                    [[0.0, 1.0, 2.0], [1.0, 1.0, 2.0]],
+                ],
+            },
+        ]
+    }
+
+    monkeypatch.setattr(
+        surface_export_module,
+        "triangulate_surface_graph",
+        lambda *_args, **_kwargs: pytest.fail(
+            "comparison meshes must not allocate a full graph triangle-record list"
+        ),
+    )
+
+    meshes = step_audit_module._material_surface_triangle_meshes(graph)
+
+    assert sorted(meshes) == ["pressure", "suction"]
+    assert len(meshes["pressure"].triangles) == 2
+    assert len(meshes["suction"].triangles) == 2
+    assert len(meshes["pressure"].vertices) == 4
+    assert len(meshes["suction"].vertices) == 4
+
+
+def test_surface_graph_stl_reuses_indexed_material_meshes(tmp_path, monkeypatch):
+    graph = {
+        "surfaces": [
+            {
+                "id": "pressure",
+                "role": "blade_pressure",
+                "material": True,
+                "uv_grid": [
+                    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                    [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "suction",
+                "role": "blade_suction",
+                "material": True,
+                "uv_grid": [
+                    [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
+                    [[0.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+                ],
+            },
+            {
+                "id": "reference",
+                "role": "open_tip_reference",
+                "material": False,
+                "export_default": "excluded",
+                "uv_grid": [
+                    [[0.0, 0.0, 2.0], [1.0, 0.0, 2.0]],
+                    [[0.0, 1.0, 2.0], [1.0, 1.0, 2.0]],
+                ],
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        surface_export_module,
+        "triangulate_surface_graph",
+        lambda *_args, **_kwargs: pytest.fail(
+            "STL export must not allocate a full graph triangle-record list"
+        ),
+    )
+
+    output = tmp_path / "reconstruction.stl"
+    step_audit_module._write_surface_graph_stl(graph, output)
+    mesh = step_audit_module.read_stl(output)
+
+    assert output.is_file()
+    assert len(mesh.triangles) == 4
+
+
+def test_comparison_preprocessing_stage_summary_retains_cache_evidence():
+    summary = step_audit_module._stage_summary(
+        {
+            "source_region_count": 17,
+            "material_surface_mesh_count": 82,
+            "material_triangle_count": 123_456,
+            "comparison_surface_pair_count": 82,
+            "triangulation_reuse": "one_material_surface_mesh_cache",
+            "peak_working_set_bytes": 987_654_321,
+        }
+    )
+
+    assert summary == {
+        "source_region_count": 17,
+        "material_surface_mesh_count": 82,
+        "material_triangle_count": 123_456,
+        "comparison_surface_pair_count": 82,
+        "triangulation_reuse": "one_material_surface_mesh_cache",
+        "peak_working_set_bytes": 987_654_321,
+    }
+
+
+def test_region_and_surface_comparison_reuse_pretriangulated_material_meshes(
+    monkeypatch,
+):
+    graph = {
+        "surfaces": [
+            {
+                "id": "pressure",
+                "role": "blade_pressure",
+                "material": True,
+                "blade_class": "main",
+                "blade_pair_index": 0,
+                "uv_grid": [
+                    [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                    [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+                ],
+            },
+            {
+                "id": "suction",
+                "role": "blade_suction",
+                "material": True,
+                "blade_class": "main",
+                "blade_pair_index": 0,
+                "uv_grid": [
+                    [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
+                    [[0.0, 1.0, 1.0], [1.0, 1.0, 1.0]],
+                ],
+            },
+        ]
+    }
+    scope = {
+        "included_surfaces": [
+            {
+                "comparison_region_id": "blade_sides::main-00",
+                "reconstruction_role": "blade_sides",
+                "periodic_population": "main",
+                "reconstruction_blade_pair_index": 0,
+                "source_face_id": "source-face",
+            }
+        ]
+    }
+    surface_meshes = step_audit_module._material_surface_triangle_meshes(graph)
+    monkeypatch.setattr(
+        step_audit_module,
+        "_material_surface_triangle_meshes",
+        lambda *_args, **_kwargs: pytest.fail("material surfaces were triangulated twice"),
+    )
+
+    regions = step_audit_module._reconstruction_comparison_region_meshes(
+        graph,
+        scope,
+        surface_meshes=surface_meshes,
+    )
+    ledger = {
+        "surfaces": [
+            {"surface_id": "pressure", "disposition": "EVALUATED"},
+            {"surface_id": "suction", "disposition": "EVALUATED"},
+        ]
+    }
+    surfaces = step_audit_module._reconstruction_surface_comparison_meshes(
+        graph,
+        ledger,
+        surface_meshes=surface_meshes,
+    )
+
+    assert len(regions["blade_sides::main-00"].triangles) == 4
+    assert sorted(surfaces) == ["pressure", "suction"]
+
+
+def test_surface_comparison_pairs_union_patches_by_semantic_region():
+    source = _angular_triangle_mesh(0.0)
+    pressure = _angular_triangle_mesh(0.0)
+    suction = _angular_triangle_mesh(1.0)
+    region_id = "blade_sides::main-00"
+    ledger = {
+        "surfaces": [
+            {
+                "surface_id": "pressure",
+                "disposition": "EVALUATED",
+                "comparison_region_id": region_id,
+            },
+            {
+                "surface_id": "suction",
+                "disposition": "EVALUATED",
+                "comparison_region_id": region_id,
+            },
+        ]
+    }
+    scope = {
+        "included_surfaces": [
+            {
+                "comparison_region_id": region_id,
+                "reconstruction_role": "blade_sides",
+                "source_face_id": "source-side-a",
+            },
+            {
+                "comparison_region_id": region_id,
+                "reconstruction_role": "blade_sides",
+                "source_face_id": "source-side-b",
+            },
+        ]
+    }
+
+    pairs, updated = step_audit_module._surface_comparison_pairs(
+        {region_id: source},
+        {"pressure": pressure, "suction": suction},
+        ledger,
+        scope,
+        {},
+    )
+
+    assert list(pairs) == [region_id]
+    assert len(pairs[region_id][1].triangles) == 2
+    assert {
+        record["comparison_pair_id"] for record in updated["surfaces"]
+    } == {region_id}
+    assert updated["evaluated_surface_count"] == 2
+    assert updated["evaluated_comparison_region_count"] == 1
+
+
+def test_surface_comparison_pairs_groups_periodic_instances_by_role():
+    source_regions = {}
+    reconstruction_surfaces = {}
+    ledger_records = []
+    scope_records = []
+    alignment = {}
+    for index in range(3):
+        region_id = f"blade_sides::main-{index:02d}"
+        surface_id = f"pressure-{index}"
+        source_regions[region_id] = _angular_triangle_mesh(float(index))
+        reconstruction_surfaces[surface_id] = _angular_triangle_mesh(float(index))
+        ledger_records.append(
+            {
+                "surface_id": surface_id,
+                "disposition": "EVALUATED",
+                "comparison_region_id": region_id,
+            }
+        )
+        scope_records.append(
+            {
+                "comparison_region_id": region_id,
+                "reconstruction_role": "blade_sides",
+                "source_face_id": f"source-side-{index}",
+                "periodic_instance_id": f"main-{index}",
+                "periodic_population": "main",
+                "periodic_lattice_index": index,
+                "periodic_transform_from_representative": [
+                    [
+                        math.cos(float(index)),
+                        -math.sin(float(index)),
+                        0.0,
+                        0.0,
+                    ],
+                    [
+                        math.sin(float(index)),
+                        math.cos(float(index)),
+                        0.0,
+                        0.0,
+                    ],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                "periodic_residual_to_representative_mm": 1.0e-6,
+            }
+        )
+        alignment[region_id] = region_id
+
+    pairs, updated = step_audit_module._surface_comparison_pairs(
+        source_regions,
+        reconstruction_surfaces,
+        {"surfaces": ledger_records},
+        {"included_surfaces": scope_records},
+        {"reconstruction_to_source_region_ids": alignment},
+    )
+
+    assert set(pairs) == set(source_regions)
+    assert updated["periodic_equivalence_groups"] == {
+        "blade_sides::main-00": "blade_sides::main-00",
+        "blade_sides::main-01": "blade_sides::main-00",
+        "blade_sides::main-02": "blade_sides::main-00",
+    }
+    assert updated["periodic_equivalence_candidate_count"] == 2
+    assert set(updated["periodic_equivalence_authority"]) == {
+        "blade_sides::main-01",
+        "blade_sides::main-02",
+    }
+    assert updated["periodic_equivalence_authority"][
+        "blade_sides::main-02"
+    ]["source_periodic_residual_bound_mm"] == pytest.approx(2.0e-6)
 
 
 def test_geometric_manifest_preserves_uv_topology_and_applies_phase_alignment(tmp_path):

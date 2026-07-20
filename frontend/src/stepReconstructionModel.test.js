@@ -4,6 +4,8 @@ import { describe, test } from "node:test";
 import {
   attachmentReportRows,
   auditArtifactUrls,
+  auditProgressLabel,
+  auditStageRows,
   comparisonViewportRects,
   defaultStepOverlayVisibility,
   heatmapLegend,
@@ -17,6 +19,27 @@ import {
 } from "./stepReconstructionModel.js";
 
 describe("STEP reconstruction model", () => {
+  test("shows comparison preprocessing as an observable audit stage", () => {
+    const status = {
+      status: "RUNNING",
+      current_stage: "comparison_preprocessing",
+      progress: {
+        phase: "comparison_preprocessing",
+        detail: "reconstruction_regions_built",
+        fraction_complete: 0.4,
+      },
+    };
+
+    assert.equal(
+      auditStageRows(status).find((row) => row.id === "comparison_preprocessing").state,
+      "active",
+    );
+    assert.equal(
+      auditProgressLabel(status),
+      "comparison preprocessing / reconstruction regions built / 40%",
+    );
+  });
+
   test("exposes comparison phase and scoped unsupported source faces", () => {
     const manifest = task8Manifest("open");
     manifest.comparison_alignment = { rotation_about_axis_deg: -10.625 };
@@ -178,6 +201,33 @@ describe("STEP reconstruction model", () => {
     assert.match(model.selectionEvidence.message, /no fallback loop/i);
   });
 
+  test("keeps source and generated section overlays separate without generated fallback", () => {
+    const manifest = task8Manifest("open");
+    manifest.section_overlay_contract = {
+      contract_id: "impeller_v1_1_6_section_overlay_r16_1",
+      source: {
+        status: "AVAILABLE",
+        stations: [{ population: "main", active_h: 0.5, points_xyz_mm: [[101, 0, 4], [102, 0, 4]] }],
+      },
+      generated: {
+        status: "AVAILABLE",
+        stations: [{ population: "main", active_h: 0.5, points_xyz_mm: [[201, 0, 4], [202, 0, 4]] }],
+      },
+    };
+
+    const model = stepInspectionModel(manifest, { populationId: "main", spanStationId: "0.5" });
+    assert.deepEqual(model.stations.map((station) => station.label), ["h 0.50"]);
+    assert.equal(model.stations[0].h, 0.5);
+    assert.deepEqual(model.sourceSectionLoop.points_xyz_mm[0], [101, 0, 4]);
+    assert.deepEqual(model.generatedSectionLoop.points_xyz_mm[0], [201, 0, 4]);
+    assert.notStrictEqual(model.sourceSectionLoop, model.generatedSectionLoop);
+
+    manifest.section_overlay_contract.generated = { status: "UNAVAILABLE", stations: [] };
+    const unavailable = stepInspectionModel(manifest, { populationId: "main", spanStationId: "0.5" });
+    assert.equal(unavailable.generatedSectionLoop, null);
+    assert.deepEqual(unavailable.representative.section_loops, []);
+  });
+
   test("keeps stale and incomplete manifests inspectable", () => {
     const model = stepInspectionModel({ parameter_mapping: { source_section_loops: { stale: true } } });
     assert.equal(model.selectedLoop, null);
@@ -232,11 +282,34 @@ function task8Manifest(mode) {
     source_tip_caps: { source_face_ids: ["face-tip-01", "face-tip-02"] },
     profile_fit: profileFit(tipControls(), "edge-open-tip"),
   };
+  const sourceLoops = [
+    sectionLoop("main", 0, "main-root", [[9, 0, 0], [10, 0, 0]], [[18, 1], [23, 5], [29, 9]], "face-loop-root"),
+    sectionLoop("main", 0.5, "main-mid", [[10, 0, 4], [11, 0, 4]], [[20, 2], [25, 6], [31, 10]], "face-loop-mid"),
+    sectionLoop("splitter", 0.5, "splitter-mid", [[15, 0, 4], [16, 0, 4]], [[21, 2], [26, 6], [32, 10]], "face-loop-splitter"),
+  ];
+  const sourceOverlayStations = sourceLoops.map((loop) => ({
+    population: loop.population,
+    active_h: loop.h,
+    source_loop_id: loop.loop_id,
+    points_xyz_mm: loop.exact_section.accepted_loop.points_xyz_mm,
+    support_profile_rz_mm: loop.support_profile_rz_mm,
+    source_face_ids: loop.source_face_ids,
+  }));
+  const generatedOverlayStations = sourceOverlayStations.map((loop) => ({
+    population: loop.population,
+    active_h: loop.active_h,
+    points_xyz_mm: loop.points_xyz_mm.map(([x, y, z]) => [x + 100, y, z]),
+  }));
   return {
     audit_id: `audit-task8-${mode}`,
     canonical_geometry_version: "1.1.2",
     source: { solid_count: 1, face_count: 240, edge_count: 612 },
     frame: { axis: { origin_mm: [0, 0, 0], direction: [0, 0, 1] } },
+    section_overlay_contract: {
+      contract_id: "impeller_v1_1_6_section_overlay_r16_1",
+      source: { status: "AVAILABLE", stations: sourceOverlayStations },
+      generated: { status: "AVAILABLE", stations: generatedOverlayStations },
+    },
     semantics: { main_blade_count: 13, splitter_blade_count: 13, shroud_topology: closed ? "closed" : "open" },
     parameter_mapping: {
       support_recovery: {
@@ -251,11 +324,7 @@ function task8Manifest(mode) {
         main: { count: 13, pitch_deg: 27.692307, phase_deg: 0, representative_instance: { source_component_id: "main-component-03", instance_id: "main-03", source_face_ids: ["face-main-a", "face-main-b"] } },
         splitter: { count: 13, pitch_deg: 27.692307, phase_deg: 13.846154, representative_instance: { source_component_id: "splitter-component-09", instance_id: "splitter-09", source_face_ids: ["face-split-a", "face-split-b"] } },
       },
-      source_section_loops: [
-        sectionLoop("main", 0, "main-root", [[9, 0, 0], [10, 0, 0]], [[18, 1], [23, 5], [29, 9]], "face-loop-root"),
-        sectionLoop("main", 0.5, "main-mid", [[10, 0, 4], [11, 0, 4]], [[20, 2], [25, 6], [31, 10]], "face-loop-mid"),
-        sectionLoop("splitter", 0.5, "splitter-mid", [[15, 0, 4], [16, 0, 4]], [[21, 2], [26, 6], [32, 10]], "face-loop-splitter"),
-      ],
+      source_section_loops: sourceLoops,
       measurement_bundle: { attachments: { root: { lift_samples_mm: [1.4, 1.5, 1.6], width_samples_mm: [3.4, 3.5, 3.6], source_ids: ["face-root", "edge-footprint-root"], source_measurement: true, promotable: true, material_side: 1 } } },
       promotion: { promotable: true, policy: "specification_values_are_promotion_maxima" },
       objective_terms: {

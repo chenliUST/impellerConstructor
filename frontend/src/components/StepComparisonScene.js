@@ -6,7 +6,7 @@ import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import {
   heatmapTriangleSelection,
   inspectionPolylinePoints,
-} from "../stepReconstructionModel.js?v=1.1.6-r13_2";
+} from "../stepReconstructionModel.js?v=1.1.6-r16_22_1";
 
 const h = React.createElement;
 const defaultRuntime = { THREE, OrbitControls, STLLoader };
@@ -529,7 +529,7 @@ function addInspectionOverlays(Three, scene, inspection, overlays, pane) {
   if (!inspection) return;
   if (overlays?.axis && inspection.axis) scene.add(axisOverlay(Three, inspection.axis));
   if (pane === "source") {
-    if (overlays?.selectedLoop) addPointEvidence(Three, scene, inspection.selectedLoop, "#a92525", "source-loop-evidence");
+    if (overlays?.selectedLoop) addPointEvidence(Three, scene, inspection.sourceSectionLoop, "#a92525", "source-loop-evidence");
     return;
   }
   if (pane !== "reconstruction") return;
@@ -541,11 +541,12 @@ function addInspectionOverlays(Three, scene, inspection, overlays, pane) {
   }
   if (overlays?.spanSurfaces) addSpanSurfaces(Three, scene, inspection.stations);
   if (overlays?.representativeBlade) {
-    addRepresentativeEvidence(
+    addPointEvidence(
       Three,
       scene,
-      inspection.representative,
-      inspection.comparisonPhaseDeg,
+      inspection.generatedSectionLoop,
+      "#005ea8",
+      "representative-blade-evidence",
     );
   }
 }
@@ -614,19 +615,6 @@ function addSpanSurfaces(Three, scene, stations) {
   }
 }
 
-function addRepresentativeEvidence(Three, scene, representative, phaseDeg = 0) {
-  const loops = Array.isArray(representative?.section_loops) ? representative.section_loops : [];
-  if (loops.length) {
-    loops.forEach((loop) => {
-      const line = addPointEvidence(Three, scene, loop, "#005ea8", "representative-blade-evidence");
-      applyPeriodicPhase(line, phaseDeg);
-    });
-    return;
-  }
-  const line = addPointEvidence(Three, scene, representative, "#005ea8", "representative-blade-evidence");
-  applyPeriodicPhase(line, phaseDeg);
-}
-
 function addPointEvidence(Three, scene, evidence, color, overlayKind) {
   const points = pointTable(evidence);
   if (points.length < 2) return null;
@@ -634,12 +622,6 @@ function addPointEvidence(Three, scene, evidence, color, overlayKind) {
   line.userData.overlayKind = overlayKind;
   scene.add(line);
   return line;
-}
-
-function applyPeriodicPhase(object, phaseDeg) {
-  if (!object || !Number.isFinite(Number(phaseDeg))) return;
-  object.rotation.z = Number(phaseDeg) * Math.PI / 180;
-  object.userData.periodicPhaseAppliedDeg = Number(phaseDeg);
 }
 
 function pointTable(evidence) {

@@ -341,7 +341,7 @@ def _write_pass_cache(
 
 
 def test_axis_first_contract_pins_revision_failures_and_v112_authority():
-    assert AUDIT_IMPLEMENTATION_REVISION == "axis_first_triangle_surface_r15_3"
+    assert AUDIT_IMPLEMENTATION_REVISION == "axis_first_attachment_patch_complex_r16_24"
     assert AXIS_FIRST_FAILURE_REASONS <= FAILURE_REASONS
     assert CANONICAL_GEOMETRY_VERSION == "1.1.2"
 

@@ -464,8 +464,28 @@ def test_scope_uses_authenticated_population_lattice_indexes():
                 "classification": "main",
                 "count": 2,
                 "instances": [
-                    {"instance_id": "main-z", "lattice_index": 0},
-                    {"instance_id": "main-a", "lattice_index": 1},
+                    {
+                        "instance_id": "main-z",
+                        "lattice_index": 0,
+                        "transform_from_representative": [
+                            [1.0, 0.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0, 0.0],
+                            [0.0, 0.0, 1.0, 0.0],
+                            [0.0, 0.0, 0.0, 1.0],
+                        ],
+                        "residual_to_representative_mm": 1.0e-6,
+                    },
+                    {
+                        "instance_id": "main-a",
+                        "lattice_index": 1,
+                        "transform_from_representative": [
+                            [-1.0, 0.0, 0.0, 0.0],
+                            [0.0, -1.0, 0.0, 0.0],
+                            [0.0, 0.0, 1.0, 0.0],
+                            [0.0, 0.0, 0.0, 1.0],
+                        ],
+                        "residual_to_representative_mm": 2.0e-6,
+                    },
                 ],
             }
         ],
@@ -480,6 +500,14 @@ def test_scope_uses_authenticated_population_lattice_indexes():
         if record.get("reconstruction_role") == "blade_sides"
     }
     assert side_indexes == {"main-z": 0, "main-a": 1}
+    main_a = next(
+        record
+        for record in scope["included_surfaces"]
+        if record.get("reconstruction_role") == "blade_sides"
+        and record.get("periodic_instance_id") == "main-a"
+    )
+    assert main_a["periodic_transform_from_representative"][0][0] == -1.0
+    assert main_a["periodic_residual_to_representative_mm"] == 2.0e-6
 
 
 def test_scope_rejects_instance_membership_that_disagrees_with_populations():

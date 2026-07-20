@@ -122,6 +122,8 @@ def project_rz_points_to_meridional_s(
         "projected_point_count": int(len(evidence)),
         "profile_sample_count": count,
         "interval_quantiles": [low, high],
+        "projected_s": [float(value) for value in projected_s],
+        "projection_residuals_mm": [float(value) for value in residuals],
     }
     if correspondence_diagnostics is not None:
         result["support_correspondence"] = correspondence_diagnostics

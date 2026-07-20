@@ -154,6 +154,12 @@ class SectionEdge:
     sampled_display_only: bool = True
     topology_start_vertex_id: str | None = None
     topology_end_vertex_id: str | None = None
+    topology_endpoint_residual_mm: float = 0.0
+    parameter_direction_reversed: bool = False
+    source_parameter_face_id: str | None = None
+    source_face_parameter_uv: tuple[tuple[float, float], ...] = ()
+    source_face_parameter_residual_max_mm: float = 0.0
+    source_surface_parameter_authority: Mapping[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -171,6 +177,18 @@ class SectionEdge:
             "display_polyline_exact": self.exact_curve,
             "topology_start_vertex_id": self.topology_start_vertex_id,
             "topology_end_vertex_id": self.topology_end_vertex_id,
+            "topology_endpoint_residual_mm": self.topology_endpoint_residual_mm,
+            "parameter_direction_reversed": self.parameter_direction_reversed,
+            "source_parameter_face_id": self.source_parameter_face_id,
+            "source_face_parameter_uv": [
+                list(point) for point in self.source_face_parameter_uv
+            ],
+            "source_face_parameter_residual_max_mm": (
+                self.source_face_parameter_residual_max_mm
+            ),
+            "source_surface_parameter_authority": _json_value(
+                self.source_surface_parameter_authority
+            ),
         }
 
 
@@ -304,6 +322,10 @@ class SectionSegmentMeasurement:
     source_edge_ids: tuple[str, ...]
     source_face_ids: tuple[str, ...]
     fit: NurbsCurveFit
+    source_parameter_face_id: str | None = None
+    source_face_parameter_uv: tuple[tuple[float, float], ...] = ()
+    source_face_parameter_residual_max_mm: float = 0.0
+    source_surface_parameter_authority: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -333,6 +355,8 @@ class ThicknessSample:
     side_b_parameter: float
     thickness_mm: float
     inside_source_loop: bool
+    measurement_method: str = "camber_normal_line_intersections"
+    normal_line_residual_mm: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -343,6 +367,8 @@ class ThicknessField:
     method: str = "camber_normal_line_intersections"
     index_pairing_used: bool = False
     radial_distance_used: bool = False
+    fallback_sample_count: int = 0
+    correspondence_monotone: bool = True
 
     @property
     def minimum_mm(self) -> float:
@@ -386,6 +412,18 @@ class AttachmentMeasurement:
     width_method: str = "support_tangent_plane_caliper"
     correspondence_method: str = "nearest_support_tangent_projection"
     copied_from_preset: bool = False
+    footprint_points_xyz_mm: tuple[tuple[float, float, float], ...] = ()
+    retained_points_xyz_mm: tuple[tuple[float, float, float], ...] = ()
+    paired_footprint_points_xyz_mm: tuple[tuple[float, float, float], ...] = ()
+    footprint_points_canonical_rz_mm: tuple[tuple[float, float], ...] = ()
+    retained_points_canonical_rz_mm: tuple[tuple[float, float], ...] = ()
+    retained_point_source_edge_ids: tuple[str, ...] = ()
+    retained_streamwise_samples_s: tuple[float, ...] = ()
+    retained_streamwise_projection_residual_max_mm: float = 0.0
+    retained_streamwise_projection_method: str = ""
+    termination_points_xyz_mm: tuple[tuple[float, float, float], ...] = ()
+    termination_points_canonical_rz_mm: tuple[tuple[float, float], ...] = ()
+    termination_streamwise_samples_s: tuple[float, ...] = ()
 
 
 def solve_meridional_correspondence(
@@ -792,6 +830,8 @@ def section_source_solid(
     angular_sector_deg: tuple[float, float] | None = None,
     angular_source_to_canonical_matrix: Sequence[Sequence[float]] | None = None,
     source_faces_by_id: Mapping[str, Any] | None = None,
+    source_edges_by_id: Mapping[str, Any] | None = None,
+    source_face_edge_ids: Mapping[str, Sequence[str]] | None = None,
     allowed_source_face_ids: Sequence[str] | None = None,
     source_face_roles: Mapping[str, str] | None = None,
     local_frame: LocalSectionFrame | None = None,
@@ -802,13 +842,16 @@ def section_source_solid(
     edge_sample_count: int = 17,
     reference_loop: SectionLoop | None = None,
     source_shape_scope: str = "complete_source_shape",
+    accept_authenticated_open_side_pair: bool = False,
 ) -> ExactSectionResult:
     try:
+        from OCP.BRep import BRep_Builder, BRep_Tool
         from OCP.BRepAdaptor import BRepAdaptor_Curve
         from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
+        from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
         from OCP.TopAbs import TopAbs_EDGE
         from OCP.TopExp import TopExp, TopExp_Explorer
-        from OCP.TopoDS import TopoDS, TopoDS_Face
+        from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Face
     except ImportError as exc:
         raise SectionRecoveryError(
             "v116_section_intersection_failed", "OCP exact section support is unavailable"
@@ -827,30 +870,105 @@ def section_source_solid(
                 "allow_list_present": bool(allowed_source_face_ids),
             },
         )
-    if source_shape_scope != "complete_source_shape":
-        raise ValueError("source_shape_scope must be complete_source_shape")
-    source = _wrapped(source_shape)
-    surface = _wrapped(measurement_surface)
-    operation = BRepAlgoAPI_Section(source, surface, False)
-    operation.ComputePCurveOn1(True)
-    operation.Approximation(False)
-    operation.Build()
-    if not operation.IsDone():
-        raise SectionRecoveryError(
-            "v116_section_intersection_failed",
-            f"OCCT failed to section {source_shape_scope}",
+    supported_scopes = {
+        "complete_source_shape",
+        "authenticated_representative_face_compound",
+        "authenticated_representative_sewn_shell",
+        "authenticated_representative_individual_faces",
+    }
+    if source_shape_scope not in supported_scopes:
+        raise ValueError(
+            "source_shape_scope must be complete_source_shape, "
+            "authenticated_representative_face_compound or "
+            "authenticated_representative_sewn_shell or "
+            "authenticated_representative_individual_faces"
         )
-
-    face_records = [(str(face_id), _wrapped(face)) for face_id, face in (source_faces_by_id or {}).items()]
+    face_records = [
+        (str(face_id), _wrapped(face))
+        for face_id, face in (source_faces_by_id or {}).items()
+    ]
+    face_lookup = dict(face_records)
+    source_surface_authority_cache: dict[str, Mapping[str, Any] | None] = {}
     allowed = {str(value) for value in allowed_source_face_ids or ()}
-    unknown_allowed = sorted(allowed.difference(face_id for face_id, _face in face_records))
+    unknown_allowed = sorted(
+        allowed.difference(face_id for face_id, _face in face_records)
+    )
     if unknown_allowed:
         raise SectionRecoveryError(
             "v116_section_intersection_failed",
             "population allow-list references faces outside the complete source inventory",
             {"unknown_allowed_source_face_ids": unknown_allowed},
         )
-    role_map = {str(key): _canonical_segment_role(value) for key, value in (source_face_roles or {}).items()}
+    role_map = {
+        str(key): _canonical_segment_role(value)
+        for key, value in (source_face_roles or {}).items()
+    }
+    if source_shape_scope == "complete_source_shape":
+        source = _wrapped(source_shape)
+    elif source_shape_scope == "authenticated_representative_face_compound":
+        builder = BRep_Builder()
+        compound = TopoDS_Compound()
+        builder.MakeCompound(compound)
+        for face_id, face in face_records:
+            if face_id in allowed:
+                builder.Add(compound, face)
+        source = compound
+    elif source_shape_scope == "authenticated_representative_sewn_shell":
+        sewing = BRepBuilderAPI_Sewing(tolerance, True, True, True, False)
+        for face_id, face in face_records:
+            if face_id in allowed:
+                sewing.Add(face)
+        sewing.Perform()
+        source = sewing.SewedShape()
+        if source.IsNull():
+            raise SectionRecoveryError(
+                "v116_section_intersection_failed",
+                "authenticated representative faces could not be sewn into a source shell",
+                {"allowed_source_face_ids": sorted(allowed)},
+            )
+    surface = _wrapped(measurement_surface)
+    explicit_section_edges: list[tuple[Any, str]] = []
+    operation = None
+    if source_shape_scope == "authenticated_representative_individual_faces":
+        builder = BRep_Builder()
+        section_shape = TopoDS_Compound()
+        builder.MakeCompound(section_shape)
+        for face_id, face in face_records:
+            if face_id not in allowed:
+                continue
+            if (
+                accept_authenticated_open_side_pair
+                and role_map.get(face_id) not in {"side_a", "side_b"}
+            ):
+                continue
+            face_operation = BRepAlgoAPI_Section(face, surface, False)
+            face_operation.ComputePCurveOn1(True)
+            face_operation.Approximation(False)
+            face_operation.Build()
+            if not face_operation.IsDone():
+                raise SectionRecoveryError(
+                    "v116_section_intersection_failed",
+                    "OCCT failed to section an authenticated representative face",
+                    {"source_face_id": face_id},
+                )
+            face_explorer = TopExp_Explorer(face_operation.Shape(), TopAbs_EDGE)
+            while face_explorer.More():
+                section_edge = TopoDS.Edge_s(face_explorer.Current())
+                builder.Add(section_shape, section_edge)
+                explicit_section_edges.append((section_edge, face_id))
+                face_explorer.Next()
+    else:
+        operation = BRepAlgoAPI_Section(source, surface, False)
+        operation.ComputePCurveOn1(True)
+        operation.Approximation(False)
+        operation.Build()
+        if not operation.IsDone():
+            raise SectionRecoveryError(
+                "v116_section_intersection_failed",
+                f"OCCT failed to section {source_shape_scope}",
+            )
+        section_shape = operation.Shape()
+
     angular_matrix = None
     if angular_source_to_canonical_matrix is not None:
         angular_matrix = np.asarray(
@@ -864,7 +982,7 @@ def section_source_solid(
     rejected: list[Mapping[str, Any]] = []
     unresolved: list[Mapping[str, Any]] = []
     minimum_cutter_clearance_deg = math.inf
-    explorer = TopExp_Explorer(operation.Shape(), TopAbs_EDGE)
+    explorer = TopExp_Explorer(section_shape, TopAbs_EDGE)
     while explorer.More():
         edge = TopoDS.Edge_s(explorer.Current())
         adaptor = BRepAdaptor_Curve(edge)
@@ -882,11 +1000,58 @@ def section_source_solid(
             ],
             dtype=float,
         )
-        ancestor = TopoDS_Face()
-        provenance_available = bool(operation.HasAncestorFaceOn1(edge, ancestor))
-        face_ids = tuple(
-            sorted(face_id for face_id, face in face_records if provenance_available and ancestor.IsSame(face))
+        first_vertex = TopExp.FirstVertex_s(edge, True)
+        last_vertex = TopExp.LastVertex_s(edge, True)
+        first_vertex_point = BRep_Tool.Pnt_s(first_vertex)
+        last_vertex_point = BRep_Tool.Pnt_s(last_vertex)
+        first_xyz = np.asarray(
+            [
+                float(first_vertex_point.X()),
+                float(first_vertex_point.Y()),
+                float(first_vertex_point.Z()),
+            ],
+            dtype=float,
         )
+        last_xyz = np.asarray(
+            [
+                float(last_vertex_point.X()),
+                float(last_vertex_point.Y()),
+                float(last_vertex_point.Z()),
+            ],
+            dtype=float,
+        )
+        direct_residual = float(
+            np.linalg.norm(points[0] - first_xyz)
+            + np.linalg.norm(points[-1] - last_xyz)
+        )
+        reversed_residual = float(
+            np.linalg.norm(points[-1] - first_xyz)
+            + np.linalg.norm(points[0] - last_xyz)
+        )
+        if reversed_residual + 1.0e-12 < direct_residual:
+            points = points[::-1].copy()
+        if source_shape_scope == "authenticated_representative_individual_faces":
+            face_ids = tuple(
+                sorted(
+                    face_id
+                    for section_edge, face_id in explicit_section_edges
+                    if section_edge.IsSame(edge)
+                )
+            )
+            provenance_available = bool(face_ids)
+        else:
+            ancestor = TopoDS_Face()
+            provenance_available = bool(
+                operation is not None
+                and operation.HasAncestorFaceOn1(edge, ancestor)
+            )
+            face_ids = tuple(
+                sorted(
+                    face_id
+                    for face_id, face in face_records
+                    if provenance_available and ancestor.IsSame(face)
+                )
+            )
         angular_points = points
         if angular_matrix is not None:
             homogeneous = np.column_stack([points, np.ones(len(points))])
@@ -933,7 +1098,11 @@ def section_source_solid(
                         ),
                     },
                 )
-        if angular_sector_deg is not None and not _angle_in_sector(angle, angular_sector_deg, 1.0e-7):
+        if (
+            angular_sector_deg is not None
+            and source_shape_scope == "complete_source_shape"
+            and not _angle_in_sector(angle, angular_sector_deg, 1.0e-7)
+        ):
             rejected.append(
                 {
                     "fingerprint": fingerprint,
@@ -954,15 +1123,80 @@ def section_source_solid(
             )
             explorer.Next()
             continue
+        source_roles = tuple(
+            sorted(
+                {
+                    role_map[face_id]
+                    for face_id in face_ids
+                    if face_id in role_map
+                }
+            )
+        )
+        parameter_face_id = face_ids[0] if len(face_ids) == 1 else None
+        parameter_uv: tuple[tuple[float, float], ...] = ()
+        parameter_residual = 0.0
+        surface_parameter_authority = None
+        if parameter_face_id is not None:
+            parameter_uv, parameter_residual = _source_face_parameter_samples(
+                face_lookup[parameter_face_id],
+                points,
+                tolerance=tolerance,
+            )
+            if set(source_roles).intersection({"side_a", "side_b"}):
+                if parameter_face_id not in source_surface_authority_cache:
+                    source_surface_authority_cache[parameter_face_id] = (
+                        _source_face_bspline_parameter_authority(
+                            face_lookup[parameter_face_id],
+                            source_face_id=parameter_face_id,
+                            source_edges_by_id={
+                                edge_id: source_edges_by_id[edge_id]
+                                for edge_id in (
+                                    source_face_edge_ids or {}
+                                ).get(parameter_face_id, ())
+                                if source_edges_by_id is not None
+                                and edge_id in source_edges_by_id
+                            },
+                        )
+                    )
+                surface_parameter_authority = source_surface_authority_cache[
+                    parameter_face_id
+                ]
+        if (
+            accept_authenticated_open_side_pair
+            and set(source_roles).intersection({"side_a", "side_b"})
+            and (not parameter_uv or surface_parameter_authority is None)
+        ):
+            raise SectionRecoveryError(
+                "v116_section_loop_correspondence_failed",
+                "an authenticated blade-side section lacks source-face UV witnesses",
+                {
+                    "fingerprint": fingerprint,
+                    "source_face_ids": list(face_ids),
+                    "source_roles": list(source_roles),
+                    "source_surface_parameter_authority_available": bool(
+                        surface_parameter_authority
+                    ),
+                },
+            )
         raw_edges.append(
             {
                 "fingerprint": fingerprint,
                 "points": points,
                 "source_face_ids": face_ids,
-                "source_roles": tuple(sorted({role_map[face_id] for face_id in face_ids if face_id in role_map})),
+                "source_roles": source_roles,
                 "provenance_available": provenance_available,
-                "first_vertex": TopExp.FirstVertex_s(edge, True),
-                "last_vertex": TopExp.LastVertex_s(edge, True),
+                "first_vertex": first_vertex,
+                "last_vertex": last_vertex,
+                "topology_endpoint_residual_mm": min(
+                    direct_residual, reversed_residual
+                ),
+                "parameter_direction_reversed": bool(
+                    reversed_residual + 1.0e-12 < direct_residual
+                ),
+                "source_parameter_face_id": parameter_face_id,
+                "source_face_parameter_uv": parameter_uv,
+                "source_face_parameter_residual_max_mm": parameter_residual,
+                "source_surface_parameter_authority": surface_parameter_authority,
             }
         )
         explorer.Next()
@@ -992,6 +1226,9 @@ def section_source_solid(
         topology_vertices.append(vertex)
         return f"occt_vertex_{len(topology_vertices) - 1:03d}"
 
+    preserve_shared_topology = (
+        source_shape_scope != "authenticated_representative_individual_faces"
+    )
     edges = tuple(
         SectionEdge(
             edge_id=f"source_section_edge_{index:03d}",
@@ -1002,20 +1239,105 @@ def section_source_solid(
             exact_curve=False,
             source_curve_exact=True,
             sampled_display_only=True,
-            topology_start_vertex_id=topology_vertex_id(record["first_vertex"]),
-            topology_end_vertex_id=topology_vertex_id(record["last_vertex"]),
+            topology_start_vertex_id=(
+                topology_vertex_id(record["first_vertex"])
+                if preserve_shared_topology
+                else None
+            ),
+            topology_end_vertex_id=(
+                topology_vertex_id(record["last_vertex"])
+                if preserve_shared_topology
+                else None
+            ),
+            topology_endpoint_residual_mm=_round(
+                record["topology_endpoint_residual_mm"]
+            ),
+            parameter_direction_reversed=record["parameter_direction_reversed"],
+            source_parameter_face_id=record["source_parameter_face_id"],
+            source_face_parameter_uv=record["source_face_parameter_uv"],
+            source_face_parameter_residual_max_mm=_round(
+                record["source_face_parameter_residual_max_mm"]
+            ),
+            source_surface_parameter_authority=record[
+                "source_surface_parameter_authority"
+            ],
         )
         for index, record in enumerate(raw_edges)
     )
-    loops = order_section_edges(
-        edges,
-        source_tolerance_mm=tolerance,
-        local_frame=local_frame,
-        local_projector=local_projector,
-        section_normal_xyz=section_normal_xyz,
-        material_side=material_side,
-        source_kind="occt_exact_full_source_section",
-    )
+    if (
+        accept_authenticated_open_side_pair
+        and source_shape_scope == "authenticated_representative_individual_faces"
+    ):
+        accepted_loop = select_authenticated_open_side_pair(
+            edges,
+            source_tolerance_mm=tolerance,
+            local_frame=local_frame,
+            local_projector=local_projector,
+            section_normal_xyz=section_normal_xyz,
+            material_side=material_side,
+        )
+        return ExactSectionResult(
+            accepted_loop=accepted_loop,
+            additional_loops=(),
+            rejected_edges=tuple(rejected),
+            source_shape_scope=source_shape_scope,
+            wire_assembly_method=(
+                "independent_exact_side_curves_with_review_only_endpoint_bridges"
+            ),
+            cutter_boundary_clearance_deg=(
+                None
+                if not math.isfinite(minimum_cutter_clearance_deg)
+                else minimum_cutter_clearance_deg
+            ),
+            cutter_boundary_clearance_verified=(
+                angular_sector_deg is None
+                or math.isfinite(minimum_cutter_clearance_deg)
+            ),
+        )
+    try:
+        loops = order_section_edges(
+            edges,
+            source_tolerance_mm=tolerance,
+            local_frame=local_frame,
+            local_projector=local_projector,
+            section_normal_xyz=section_normal_xyz,
+            material_side=material_side,
+            source_kind=(
+                "occt_exact_full_source_section"
+                if source_shape_scope == "complete_source_shape"
+                else (
+                    "occt_exact_authenticated_face_compound_section"
+                    if source_shape_scope
+                    == "authenticated_representative_face_compound"
+                    else (
+                        "occt_exact_authenticated_sewn_shell_section"
+                        if source_shape_scope
+                        == "authenticated_representative_sewn_shell"
+                        else "occt_exact_authenticated_individual_face_section"
+                    )
+                )
+            ),
+            allow_open_auxiliary_components=True,
+        )
+    except SectionRecoveryError as exc:
+        exc.details.update(
+            {
+                "source_shape_scope": source_shape_scope,
+                "raw_section_edge_count": len(raw_edges),
+                "raw_section_source_face_ids": sorted(
+                    {
+                        face_id
+                        for record in raw_edges
+                        for face_id in record["source_face_ids"]
+                    }
+                ),
+                "rejected_edges": list(rejected),
+                "representative_instance_already_authenticated": (
+                    source_shape_scope != "complete_source_shape"
+                ),
+            }
+        )
+        raise
     if not loops:
         raise SectionRecoveryError(
             "v116_section_loop_open", "the filtered exact section contains no closed contour"
@@ -1067,6 +1389,7 @@ def order_section_edges(
     section_normal_xyz: Sequence[float] = (0.0, 0.0, 1.0),
     material_side: int = 1,
     source_kind: str = "ordered_source_section",
+    allow_open_auxiliary_components: bool = False,
 ) -> tuple[SectionLoop, ...]:
     tolerance = _positive(source_tolerance_mm, "source_tolerance_mm")
     if material_side not in (-1, 1):
@@ -1118,6 +1441,7 @@ def order_section_edges(
         components.append(sorted(component, key=lambda index: _edge_sort_key(normalized[index])))
 
     loops: list[SectionLoop] = []
+    discarded_open_components: list[dict[str, Any]] = []
     for component_index, component in enumerate(components):
         component_vertices = {vertex for index in component for vertex in edge_vertices[index]}
         bad_vertices = [
@@ -1131,6 +1455,69 @@ def order_section_edges(
             != 2
         ]
         if bad_vertices:
+            if allow_open_auxiliary_components:
+                discarded_open_components.append(
+                    {
+                        "component_index": component_index,
+                        "component_edge_count": len(component),
+                        "open_vertex_count": len(bad_vertices),
+                        "vertex_degrees": sorted(
+                            sum(
+                                2
+                                if edge_vertices[index][0]
+                                == edge_vertices[index][1]
+                                == vertex
+                                else 1
+                                for index in component
+                                if vertex in edge_vertices[index]
+                            )
+                            for vertex in component_vertices
+                        ),
+                        "source_face_ids": sorted(
+                            {
+                                source_face_id
+                                for index in component
+                                for source_face_id in normalized[index].source_face_ids
+                            }
+                        ),
+                        "source_roles": sorted(
+                            {
+                                source_role
+                                for index in component
+                                for source_role in normalized[index].source_roles
+                            }
+                        ),
+                        "open_vertices_xyz_mm": [
+                            [
+                                _round(float(value))
+                                for value in vertex_points[vertex]
+                            ]
+                            for vertex in sorted(
+                                bad_vertices,
+                                key=lambda item: _point_sort_key(vertex_points[item]),
+                            )
+                        ],
+                        "edges": [
+                            {
+                                "edge_id": normalized[index].edge_id,
+                                "source_face_ids": list(
+                                    normalized[index].source_face_ids
+                                ),
+                                "source_roles": list(normalized[index].source_roles),
+                                "start_xyz_mm": [
+                                    _round(float(value))
+                                    for value in normalized[index].points_xyz_mm[0]
+                                ],
+                                "end_xyz_mm": [
+                                    _round(float(value))
+                                    for value in normalized[index].points_xyz_mm[-1]
+                                ],
+                            }
+                            for index in component
+                        ],
+                    }
+                )
+                continue
             raise SectionRecoveryError(
                 "v116_section_loop_open",
                 "section edges do not form a closed degree-two contour within source tolerance",
@@ -1190,7 +1577,25 @@ def order_section_edges(
             raise SectionRecoveryError(
                 "v116_section_loop_open",
                 f"section loop junction gap {closure_gap:.6f} mm exceeds source tolerance {tolerance:.6f} mm",
-                {"healing_gaps_mm": list(raw_healing_gaps)},
+                {
+                    "healing_gaps_mm": list(raw_healing_gaps),
+                    "ordered_edges": [
+                        {
+                            "edge_id": edge.edge_id,
+                            "topology_start_vertex_id": edge.topology_start_vertex_id,
+                            "topology_end_vertex_id": edge.topology_end_vertex_id,
+                            "sample_start_xyz_mm": list(edge.points_xyz_mm[0]),
+                            "sample_end_xyz_mm": list(edge.points_xyz_mm[-1]),
+                            "topology_endpoint_residual_mm": (
+                                edge.topology_endpoint_residual_mm
+                            ),
+                            "parameter_direction_reversed": (
+                                edge.parameter_direction_reversed
+                            ),
+                        }
+                        for edge in ordered_edges
+                    ],
+                },
             )
         healed_edges: list[SectionEdge] = []
         for index, edge in enumerate(ordered_edges):
@@ -1221,6 +1626,9 @@ def order_section_edges(
                 replace(
                     edge,
                     points_xyz_mm=tuple(reversed(edge.points_xyz_mm)),
+                    source_face_parameter_uv=tuple(
+                        reversed(edge.source_face_parameter_uv)
+                    ),
                     topology_start_vertex_id=edge.topology_end_vertex_id,
                     topology_end_vertex_id=edge.topology_start_vertex_id,
                 )
@@ -1287,6 +1695,12 @@ def order_section_edges(
                 source_wire_exact=source_wire_exact,
                 display_polyline_exact=False,
             )
+        )
+    if allow_open_auxiliary_components and not loops and discarded_open_components:
+        raise SectionRecoveryError(
+            "v116_section_loop_open",
+            "the filtered exact section contains only open components",
+            {"open_components": discarded_open_components},
         )
     return tuple(sorted(loops, key=lambda loop: _loop_geometry_key(loop.points_xyz_mm)))
 
@@ -1554,6 +1968,9 @@ def _apply_section_loop_alignment(
                 edge,
                 points_xyz_mm=tuple(reversed(edge.points_xyz_mm)),
                 points_sq_mm=tuple(reversed(edge.points_sq_mm)),
+                source_face_parameter_uv=tuple(
+                    reversed(edge.source_face_parameter_uv)
+                ),
                 topology_start_vertex_id=edge.topology_end_vertex_id,
                 topology_end_vertex_id=edge.topology_start_vertex_id,
             )
@@ -1706,6 +2123,9 @@ def _canonicalize_section_loop(loop: SectionLoop) -> SectionLoop:
                 edge,
                 points_xyz_mm=tuple(reversed(edge.points_xyz_mm)),
                 points_sq_mm=tuple(reversed(edge.points_sq_mm)),
+                source_face_parameter_uv=tuple(
+                    reversed(edge.source_face_parameter_uv)
+                ),
                 topology_start_vertex_id=edge.topology_end_vertex_id,
                 topology_end_vertex_id=edge.topology_start_vertex_id,
             )
@@ -1834,6 +2254,171 @@ def decompose_section_loop(
     )
 
 
+def decompose_authenticated_open_side_pair(
+    loop: SectionLoop,
+    *,
+    maximum_control_count: int = 49,
+) -> LoopDecomposition:
+    """Fit exact PS/SS curves and explicit review-only endpoint bridges."""
+
+    if loop.source_kind != "occt_exact_authenticated_open_side_pair":
+        raise SectionRecoveryError(
+            "v116_section_loop_correspondence_failed",
+            "open-side decomposition requires authenticated side-pair authority",
+        )
+    by_role = {
+        role: tuple(
+            edge
+            for edge in loop.edges
+            if edge.source_roles == (role,)
+        )
+        for role in ("side_a", "side_b")
+    }
+    if any(not edges for edges in by_role.values()):
+        raise SectionRecoveryError(
+            "v116_section_loop_correspondence_failed",
+            "open-side decomposition lacks one connected exact chain for each blade side",
+        )
+    records: dict[str, dict[str, Any]] = {}
+    for role in ("side_a", "side_b"):
+        edges = by_role[role]
+        parameter_face_ids = {edge.source_parameter_face_id for edge in edges}
+        uv_available = [bool(edge.source_face_parameter_uv) for edge in edges]
+        if any(uv_available) and (
+            not all(uv_available)
+            or len(parameter_face_ids) != 1
+            or None in parameter_face_ids
+        ):
+            raise SectionRecoveryError(
+                "v116_section_loop_correspondence_failed",
+                f"{role} does not retain one source-face parameter authority",
+                {
+                    "role": role,
+                    "source_parameter_face_ids": sorted(
+                        str(value) for value in parameter_face_ids
+                    ),
+                },
+            )
+        has_parameter_authority = all(uv_available)
+        surface_authorities = [
+            edge.source_surface_parameter_authority for edge in edges
+        ]
+        if any(authority is not None for authority in surface_authorities) and not all(
+            authority is not None for authority in surface_authorities
+        ):
+            raise SectionRecoveryError(
+                "v116_section_loop_correspondence_failed",
+                f"{role} source-surface authority is incomplete across its edge chain",
+                {"role": role},
+            )
+        records[role] = {
+            "points_xyz_mm": _concatenate_edge_points(edges),
+            "points_sq_mm": _concatenate_edge_local_points(edges),
+            "source_face_parameter_uv": (
+                _concatenate_edge_parameter_uv(edges)
+                if has_parameter_authority
+                else ()
+            ),
+            "source_parameter_face_id": (
+                next(iter(parameter_face_ids)) if has_parameter_authority else None
+            ),
+            "source_face_parameter_residual_max_mm": max(
+                edge.source_face_parameter_residual_max_mm for edge in edges
+            ),
+            "source_surface_parameter_authority": surface_authorities[0],
+            "source_edge_ids": tuple(edge.edge_id for edge in edges),
+            "source_face_ids": tuple(
+                sorted(
+                    {
+                        face_id
+                        for edge in edges
+                        for face_id in edge.source_face_ids
+                    }
+                )
+            ),
+        }
+    side_a_xyz = np.asarray(records["side_a"]["points_xyz_mm"], dtype=float)
+    side_b_xyz = np.asarray(records["side_b"]["points_xyz_mm"], dtype=float)
+    side_a_sq = np.asarray(records["side_a"]["points_sq_mm"], dtype=float)
+    side_b_sq = np.asarray(records["side_b"]["points_sq_mm"], dtype=float)
+    bridge_faces = tuple(sorted(set(loop.source_face_ids)))
+    records["leading_edge"] = {
+        "points_xyz_mm": np.vstack([side_b_xyz[0], side_a_xyz[0]]),
+        "points_sq_mm": np.vstack([side_b_sq[0], side_a_sq[0]]),
+        "source_edge_ids": ("review_bridge_leading_endpoint_witnesses",),
+        "source_face_ids": bridge_faces,
+        "source_face_parameter_uv": (),
+        "source_parameter_face_id": None,
+        "source_face_parameter_residual_max_mm": 0.0,
+        "source_surface_parameter_authority": None,
+    }
+    records["trailing_edge"] = {
+        "points_xyz_mm": np.vstack([side_a_xyz[-1], side_b_xyz[-1]]),
+        "points_sq_mm": np.vstack([side_a_sq[-1], side_b_sq[-1]]),
+        "source_edge_ids": ("review_bridge_trailing_endpoint_witnesses",),
+        "source_face_ids": bridge_faces,
+        "source_face_parameter_uv": (),
+        "source_parameter_face_id": None,
+        "source_face_parameter_residual_max_mm": 0.0,
+        "source_surface_parameter_authority": None,
+    }
+    measurements = []
+    for name in _SEGMENT_ROLES:
+        record = records[name]
+        fit = fit_nurbs_measurement_curve(
+            record["points_xyz_mm"],
+            record["points_sq_mm"],
+            segment_name=name,
+            source_edge_ids=record["source_edge_ids"],
+            maximum_control_count=maximum_control_count,
+            fit_tolerance_mm=loop.source_tolerance_mm,
+            allow_source_polyline_nurbs=(
+                name in {"side_a", "side_b"}
+                and isinstance(record["source_surface_parameter_authority"], Mapping)
+                and bool(
+                    record["source_surface_parameter_authority"].get(
+                        "trim_boundary_uv_paths"
+                    )
+                )
+            ),
+        )
+        measurements.append(
+            SectionSegmentMeasurement(
+                name=name,
+                points_xyz_mm=_tuple_points(record["points_xyz_mm"], 3),
+                points_sq_mm=_tuple_points(record["points_sq_mm"], 2),
+                source_edge_ids=tuple(record["source_edge_ids"]),
+                source_face_ids=tuple(record["source_face_ids"]),
+                fit=fit,
+                source_parameter_face_id=record["source_parameter_face_id"],
+                source_face_parameter_uv=(
+                    ()
+                    if not len(record["source_face_parameter_uv"])
+                    else _tuple_points(record["source_face_parameter_uv"], 2)
+                ),
+                source_face_parameter_residual_max_mm=float(
+                    record["source_face_parameter_residual_max_mm"]
+                ),
+                source_surface_parameter_authority=record[
+                    "source_surface_parameter_authority"
+                ],
+            )
+        )
+    return LoopDecomposition(
+        loop_id=loop.loop_id,
+        segments=tuple(measurements),
+        landmark_method="authenticated_open_side_pair_endpoint_witness_bridges",
+        landmarks_sq_mm={
+            "leading_side_a": tuple(float(value) for value in side_a_sq[0]),
+            "trailing_side_a": tuple(float(value) for value in side_a_sq[-1]),
+            "leading_side_b": tuple(float(value) for value in side_b_sq[0]),
+            "trailing_side_b": tuple(float(value) for value in side_b_sq[-1]),
+        },
+        pressure_suction_assigned=False,
+        direct_curve_constructor_mode=True,
+    )
+
+
 def _is_two_authenticated_side_curve_loop(loop: SectionLoop) -> bool:
     return bool(
         len(loop.edges) == 2
@@ -1905,6 +2490,12 @@ def fit_nurbs_measurement_curve(
             - _evaluate_polyline_at_parameters(sq, parameters, dense_parameters),
             axis=1,
         )
+        if interpolate_polyline:
+            # The degree-one candidate is exactly the source polyline.  A
+            # finite display sampling must not turn omitted source vertices
+            # into a false source-to-fit residual.
+            source_to_fit_sq = np.zeros(len(sq), dtype=float)
+            source_to_fit_xyz = np.zeros(len(xyz), dtype=float)
         residuals = np.concatenate(
             [
                 source_to_fit_sq,
@@ -1982,7 +2573,6 @@ def fit_nurbs_measurement_curve(
     if (
         tolerance is None
         or primary.residual_max_mm <= tolerance
-        or len(sq) > maximum
         or not allow_source_polyline_nurbs
     ):
         return primary
@@ -2825,6 +3415,390 @@ def measure_attachment(
             "source_retained_blade_boundary" if promotable_evidence else "synthetic_caller_array"
         ),
         width_method=width_method,
+        footprint_points_xyz_mm=_tuple_points(footprint, 3),
+        retained_points_xyz_mm=_tuple_points(retained, 3),
+        paired_footprint_points_xyz_mm=(
+            () if paired_footprint is None else _tuple_points(paired_footprint, 3)
+        ),
+        termination_points_xyz_mm=(
+            ()
+            if termination_boundary_xyz_mm is None
+            else _tuple_points(
+                np.asarray(termination_boundary_xyz_mm, dtype=float), 3
+            )
+        ),
+    )
+
+
+def select_authenticated_open_side_pair(
+    edges: Sequence[SectionEdge],
+    *,
+    source_tolerance_mm: float,
+    local_frame: LocalSectionFrame | None = None,
+    local_projector: Callable[[Sequence[float]], Sequence[float]] | None = None,
+    section_normal_xyz: Sequence[float] = (0.0, 0.0, 1.0),
+    material_side: int = 1,
+) -> SectionLoop:
+    """Select the principal exact side curves without inventing a closed wire."""
+
+    tolerance = _positive(source_tolerance_mm, "source_tolerance_mm")
+    candidates = {
+        role: [edge for edge in edges if edge.source_roles == (role,)]
+        for role in ("side_a", "side_b")
+    }
+    if any(not values for values in candidates.values()):
+        raise SectionRecoveryError(
+            "v116_section_loop_correspondence_failed",
+            "an authenticated open section requires one exact curve for each blade side",
+            {
+                "available_source_roles": sorted(
+                    {role for edge in edges for role in edge.source_roles}
+                )
+            },
+        )
+
+    all_points = np.vstack(
+        [
+            np.asarray(edge.points_xyz_mm, dtype=float)
+            for role in ("side_a", "side_b")
+            for edge in candidates[role]
+        ]
+    )
+    projector, normal = _section_projector(
+        all_points,
+        local_frame=local_frame,
+        local_projector=local_projector,
+        section_normal_xyz=section_normal_xyz,
+    )
+    oriented_by_role: dict[str, tuple[SectionEdge, ...]] = {}
+    chain_evidence = {}
+    for role in ("side_a", "side_b"):
+        chain, evidence = _principal_connected_side_chain(
+            candidates[role], tolerance=tolerance, role=role
+        )
+        points_sq = np.asarray(
+            [projector(point) for point in _concatenate_edge_points(chain)],
+            dtype=float,
+        )
+        if points_sq[0, 0] > points_sq[-1, 0]:
+            chain = tuple(
+                replace(
+                    edge,
+                    points_xyz_mm=tuple(reversed(edge.points_xyz_mm)),
+                    source_face_parameter_uv=tuple(
+                        reversed(edge.source_face_parameter_uv)
+                    ),
+                    topology_start_vertex_id=edge.topology_end_vertex_id,
+                    topology_end_vertex_id=edge.topology_start_vertex_id,
+                )
+                for edge in reversed(chain)
+            )
+        oriented = []
+        for edge in chain:
+            edge_xyz = np.asarray(edge.points_xyz_mm, dtype=float)
+            edge_sq = np.asarray([projector(point) for point in edge_xyz], dtype=float)
+            oriented.append(
+                replace(
+                    edge,
+                    points_xyz_mm=_tuple_points(edge_xyz, 3),
+                    points_sq_mm=_tuple_points(edge_sq, 2),
+                )
+            )
+        oriented_by_role[role] = tuple(oriented)
+        chain_evidence[role] = evidence
+    side_a_edges = oriented_by_role["side_a"]
+    side_b_edges = oriented_by_role["side_b"]
+    side_a_xyz = _concatenate_edge_points(side_a_edges)
+    side_b_xyz = _concatenate_edge_points(side_b_edges)
+    side_a_sq = _concatenate_edge_local_points(side_a_edges)
+    side_b_sq = _concatenate_edge_local_points(side_b_edges)
+    leading_gap = float(np.linalg.norm(side_a_xyz[0] - side_b_xyz[0]))
+    trailing_gap = float(np.linalg.norm(side_a_xyz[-1] - side_b_xyz[-1]))
+    side_a_length = _polyline_length(side_a_xyz)
+    side_b_length = _polyline_length(side_b_xyz)
+    shorter_side_length = min(side_a_length, side_b_length)
+    side_length_ratio = shorter_side_length / max(side_a_length, side_b_length)
+    maximum_endpoint_gap_ratio = max(leading_gap, trailing_gap) / max(
+        shorter_side_length, _EPSILON
+    )
+    if side_length_ratio < 0.5 or maximum_endpoint_gap_ratio > 0.5:
+        raise SectionRecoveryError(
+            "v116_section_loop_correspondence_failed",
+            "authenticated side chains do not cover corresponding blade extents",
+            {
+                "side_a_length_mm": side_a_length,
+                "side_b_length_mm": side_b_length,
+                "side_length_ratio": side_length_ratio,
+                "leading_endpoint_gap_mm": leading_gap,
+                "trailing_endpoint_gap_mm": trailing_gap,
+                "maximum_endpoint_gap_ratio": maximum_endpoint_gap_ratio,
+                "side_chain_selection": chain_evidence,
+            },
+        )
+    polygon_xyz = np.vstack([side_a_xyz, side_b_xyz[::-1], side_a_xyz[:1]])
+    polygon_sq = np.vstack(
+        [
+            side_a_sq,
+            side_b_sq[::-1],
+            side_a_sq[:1],
+        ]
+    )
+    signed_area = _signed_polygon_area(polygon_sq)
+    selected_edges = side_a_edges + side_b_edges
+    return SectionLoop(
+        loop_id="authenticated_open_side_pair",
+        edges=selected_edges,
+        points_xyz_mm=_tuple_points(polygon_xyz, 3),
+        points_sq_mm=_tuple_points(polygon_sq, 2),
+        orientation="counterclockwise" if signed_area >= 0.0 else "clockwise",
+        start_landmark="leading_side_a",
+        closure_gap_mm=max(leading_gap, trailing_gap),
+        self_intersection_count=_closed_polyline_self_intersection_count(polygon_sq),
+        section_normal_xyz=tuple(float(value) for value in normal),
+        material_side=int(material_side),
+        source_face_ids=tuple(
+            sorted(
+                {
+                    face_id
+                    for edge in selected_edges
+                    for face_id in edge.source_face_ids
+                }
+            )
+        ),
+        source_edge_ids=tuple(edge.edge_id for edge in selected_edges),
+        source_tolerance_mm=tolerance,
+        source_kind="occt_exact_authenticated_open_side_pair",
+        orientation_evidence={
+            "method": "longest_authenticated_curve_per_side_in_physical_s",
+            "leading_endpoint_gap_mm": leading_gap,
+            "trailing_endpoint_gap_mm": trailing_gap,
+            "endpoint_bridges_are_geometry_authority": False,
+            "physical_s_is_curve_parameter": False,
+            "curve_parameter_authority": "source_curve_chord_length_u",
+            "side_chain_selection": chain_evidence,
+        },
+        source_wire_exact=False,
+        display_polyline_exact=False,
+    )
+
+
+def _principal_connected_side_chain(
+    edges: Sequence[SectionEdge], *, tolerance: float, role: str
+) -> tuple[tuple[SectionEdge, ...], dict[str, Any]]:
+    """Return the longest well-covered open path for one blade side."""
+
+    edge_vertices, vertex_points = _cluster_geometry_endpoints(edges, tolerance)
+    vertex_edges: dict[str, list[int]] = {}
+    for edge_index, vertices in enumerate(edge_vertices):
+        for vertex in vertices:
+            vertex_edges.setdefault(vertex, []).append(edge_index)
+    unvisited = set(range(len(edges)))
+    component_indices = []
+    while unvisited:
+        seed = min(unvisited, key=lambda index: _edge_sort_key(edges[index]))
+        stack = [seed]
+        component = set()
+        while stack:
+            edge_index = stack.pop()
+            if edge_index in component:
+                continue
+            component.add(edge_index)
+            for vertex in edge_vertices[edge_index]:
+                stack.extend(vertex_edges.get(vertex, ()))
+        unvisited.difference_update(component)
+        component_indices.append(component)
+
+    valid_components = []
+    rejected_components = []
+    for component in component_indices:
+        vertices = {vertex for index in component for vertex in edge_vertices[index]}
+        degrees = {
+            vertex: sum(
+                2 if edge_vertices[index][0] == edge_vertices[index][1] == vertex else 1
+                for index in component
+                if vertex in edge_vertices[index]
+            )
+            for vertex in vertices
+        }
+        endpoints = [vertex for vertex, degree in degrees.items() if degree == 1]
+        if len(endpoints) < 2:
+            rejected_components.append(
+                {
+                    "edge_ids": sorted(edges[index].edge_id for index in component),
+                    "vertex_degrees": sorted(degrees.values()),
+                    "reason": "component_has_no_open_path",
+                }
+            )
+            continue
+        path = _longest_component_open_path(
+            edges,
+            edge_vertices=edge_vertices,
+            vertex_edges=vertex_edges,
+            vertex_points=vertex_points,
+            component=component,
+            endpoints=endpoints,
+        )
+        if path is None:
+            rejected_components.append(
+                {
+                    "edge_ids": sorted(edges[index].edge_id for index in component),
+                    "vertex_degrees": sorted(degrees.values()),
+                    "reason": "open_path_traversal_failed",
+                }
+            )
+            continue
+        length, ordered, selected_indices = path
+        valid_components.append(
+            (
+                float(length),
+                tuple(ordered),
+                sorted(
+                    edges[index].edge_id
+                    for index in component.difference(selected_indices)
+                ),
+            )
+        )
+    if not valid_components:
+        raise SectionRecoveryError(
+            "v116_section_loop_correspondence_failed",
+            f"authenticated {role} section edges do not form an open unbranched chain",
+            {
+                "role": role,
+                "candidate_edge_ids": sorted(edge.edge_id for edge in edges),
+                "rejected_components": rejected_components,
+            },
+        )
+    valid_components.sort(
+        key=lambda item: (
+            -item[0],
+            tuple(edge.edge_id for edge in item[1]),
+        )
+    )
+    selected_length, selected, discarded_branch_edge_ids = valid_components[0]
+    total_candidate_length = sum(
+        _polyline_length(np.asarray(edge.points_xyz_mm, dtype=float))
+        for edge in edges
+    )
+    selected_coverage_ratio = selected_length / max(total_candidate_length, _EPSILON)
+    authenticated_trim_surface_available = all(
+        isinstance(edge.source_surface_parameter_authority, Mapping)
+        and bool(
+            edge.source_surface_parameter_authority.get("trim_boundary_uv_paths")
+        )
+        for edge in selected
+    )
+    if selected_coverage_ratio < 0.75 and not authenticated_trim_surface_available:
+        raise SectionRecoveryError(
+            "v116_section_loop_correspondence_failed",
+            f"authenticated {role} principal chain omits significant source sections",
+            {
+                "role": role,
+                "candidate_edge_ids": sorted(edge.edge_id for edge in edges),
+                "selected_edge_ids": [edge.edge_id for edge in selected],
+                "selected_length_mm": selected_length,
+                "total_candidate_length_mm": total_candidate_length,
+                "selected_coverage_ratio": selected_coverage_ratio,
+                "minimum_selected_coverage_ratio": 0.75,
+                "rejected_components": rejected_components,
+            },
+        )
+    return selected, {
+        "method": "longest_connected_unbranched_source_section_chain",
+        "candidate_edge_count": len(edges),
+        "connected_component_count": len(component_indices),
+        "selected_edge_ids": [edge.edge_id for edge in selected],
+        "selected_length_mm": selected_length,
+        "total_candidate_length_mm": total_candidate_length,
+        "selected_coverage_ratio": selected_coverage_ratio,
+        "selected_coverage_gate_applied": not authenticated_trim_surface_available,
+        "alternative_intersections_are_geometry_authority": False,
+        "authenticated_trim_surface_available": authenticated_trim_surface_available,
+        "discarded_component_lengths_mm": [
+            length for length, _component, _discarded in valid_components[1:]
+        ],
+        "discarded_branch_edge_ids": discarded_branch_edge_ids,
+        "rejected_components": rejected_components,
+    }
+
+
+def _longest_component_open_path(
+    edges: Sequence[SectionEdge],
+    *,
+    edge_vertices: Sequence[tuple[str, str]],
+    vertex_edges: Mapping[str, Sequence[int]],
+    vertex_points: Mapping[str, np.ndarray],
+    component: set[int],
+    endpoints: Sequence[str],
+) -> tuple[float, tuple[SectionEdge, ...], set[int]] | None:
+    endpoint_set = set(endpoints)
+    candidates = []
+
+    def walk(
+        start: str,
+        current: str,
+        visited_vertices: set[str],
+        used_edges: set[int],
+        ordered: list[SectionEdge],
+        length: float,
+    ) -> None:
+        if current in endpoint_set and current != start and ordered:
+            canonical = tuple(ordered)
+            first_point = np.asarray(canonical[0].points_xyz_mm[0], dtype=float)
+            last_point = np.asarray(canonical[-1].points_xyz_mm[-1], dtype=float)
+            if _point_sort_key(first_point) > _point_sort_key(last_point):
+                canonical = tuple(
+                    _reverse_section_edge(edge) for edge in reversed(canonical)
+                )
+            candidates.append((float(length), canonical, set(used_edges)))
+        for edge_index in sorted(
+            (
+                index
+                for index in vertex_edges.get(current, ())
+                if index in component and index not in used_edges
+            ),
+            key=lambda index: _edge_sort_key(edges[index]),
+        ):
+            first, second = edge_vertices[edge_index]
+            next_vertex = second if first == current else first
+            if next_vertex in visited_vertices:
+                continue
+            edge = (
+                edges[edge_index]
+                if first == current
+                else _reverse_section_edge(edges[edge_index])
+            )
+            edge_length = _polyline_length(
+                np.asarray(edge.points_xyz_mm, dtype=float)
+            )
+            walk(
+                start,
+                next_vertex,
+                visited_vertices | {next_vertex},
+                used_edges | {edge_index},
+                [*ordered, edge],
+                length + edge_length,
+            )
+
+    for start in sorted(endpoints, key=lambda value: _point_sort_key(vertex_points[value])):
+        walk(start, start, {start}, set(), [], 0.0)
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda item: (
+            -item[0],
+            tuple(edge.edge_id for edge in item[1]),
+        )
+    )
+    return candidates[0]
+
+
+def _reverse_section_edge(edge: SectionEdge) -> SectionEdge:
+    return replace(
+        edge,
+        points_xyz_mm=tuple(reversed(edge.points_xyz_mm)),
+        source_face_parameter_uv=tuple(reversed(edge.source_face_parameter_uv)),
+        topology_start_vertex_id=edge.topology_end_vertex_id,
+        topology_end_vertex_id=edge.topology_start_vertex_id,
     )
 
 
@@ -3059,6 +4033,29 @@ def _section_edge(value: SectionEdge | Mapping[str, Any], index: int) -> Section
             topology_end_vertex_id=(
                 str(value["topology_end_vertex_id"])
                 if value.get("topology_end_vertex_id") is not None
+                else None
+            ),
+            source_parameter_face_id=(
+                str(value["source_parameter_face_id"])
+                if value.get("source_parameter_face_id") is not None
+                else None
+            ),
+            source_face_parameter_uv=(
+                _tuple_points(
+                    np.asarray(value.get("source_face_parameter_uv"), dtype=float),
+                    2,
+                )
+                if value.get("source_face_parameter_uv")
+                else ()
+            ),
+            source_face_parameter_residual_max_mm=float(
+                value.get("source_face_parameter_residual_max_mm", 0.0)
+            ),
+            source_surface_parameter_authority=(
+                dict(value["source_surface_parameter_authority"])
+                if isinstance(
+                    value.get("source_surface_parameter_authority"), Mapping
+                )
                 else None
             ),
         )
@@ -3379,6 +4376,133 @@ def _opposite_side_normal_hits(
             {"camber_sq_mm": point.tolist(), "normal_sq": normal.tolist()},
         )
     return min(candidates, key=lambda pair: (abs(pair[0][2]) + abs(pair[1][2]), pair[0][1], pair[1][1]))
+
+
+def paired_source_curve_witnesses(
+    point: np.ndarray,
+    normal: np.ndarray,
+    side_a: np.ndarray,
+    side_b: np.ndarray,
+    *,
+    fraction: float,
+) -> tuple[tuple[np.ndarray, float, float], tuple[np.ndarray, float, float]]:
+    """Return a bounded, symmetric witness pair for derived thickness only.
+
+    A twisted source section can locally turn back in physical S, so a fitted
+    camber normal is not guaranteed to intersect both source sides.  The source
+    side curves remain geometry authority; this fallback only supplies a
+    deterministic thickness witness for adaptive inspection metrics.
+    """
+    target = np.asarray(point, dtype=float)
+    direction = _unit(np.asarray(normal, dtype=float), "normal")
+    first_side = np.asarray(side_a, dtype=float)
+    second_side = np.asarray(side_b, dtype=float)
+    _validate_points(first_side, 2, "side_a", minimum=2)
+    _validate_points(second_side, 2, "side_b", minimum=2)
+    value = float(np.clip(fraction, 0.0, 1.0))
+    anchor_a = _polyline_point_at_arc_fraction(first_side, value)
+    anchor_b = _polyline_point_at_arc_fraction(second_side, value)
+    nearest_b = _nearest_point_on_polyline_window(
+        anchor_a, second_side, center=value, half_window=0.20
+    )
+    nearest_a = _nearest_point_on_polyline_window(
+        anchor_b, first_side, center=value, half_window=0.20
+    )
+    candidates = (
+        ((anchor_a, value), (anchor_b, value)),
+        ((anchor_a, value), nearest_b),
+        (nearest_a, (anchor_b, value)),
+    )
+    scale = max(
+        float(np.linalg.norm(anchor_a - anchor_b)),
+        1.0e-6,
+    )
+
+    def score(candidate):
+        (candidate_a, parameter_a), (candidate_b, parameter_b) = candidate
+        midpoint = 0.5 * (candidate_a + candidate_b)
+        separation = float(np.linalg.norm(candidate_a - candidate_b))
+        regularization = scale * (
+            abs(float(parameter_a) - value) + abs(float(parameter_b) - value)
+        )
+        return (
+            float(np.linalg.norm(midpoint - target))
+            + 0.10 * separation
+            + 0.35 * regularization,
+            regularization,
+            parameter_a,
+            parameter_b,
+        )
+
+    (point_a, parameter_a), (point_b, parameter_b) = min(candidates, key=score)
+    if float(np.linalg.norm(point_a - point_b)) <= _EPSILON:
+        raise SectionRecoveryError(
+            "v116_thickness_field_invalid",
+            "paired source-curve thickness witnesses collapse",
+            {"fraction": value},
+        )
+    lambda_a = float(np.dot(point_a - target, direction))
+    lambda_b = float(np.dot(point_b - target, direction))
+    return (
+        (point_a, float(parameter_a), lambda_a),
+        (point_b, float(parameter_b), lambda_b),
+    )
+
+
+def _polyline_point_at_arc_fraction(
+    polyline: np.ndarray, fraction: float
+) -> np.ndarray:
+    cumulative = _cumulative_lengths(polyline)
+    total = float(cumulative[-1])
+    if total <= _EPSILON:
+        return np.asarray(polyline[0], dtype=float).copy()
+    target = float(np.clip(fraction, 0.0, 1.0)) * total
+    index = min(int(np.searchsorted(cumulative, target, side="right")) - 1, len(polyline) - 2)
+    index = max(0, index)
+    segment_length = float(cumulative[index + 1] - cumulative[index])
+    local = 0.0 if segment_length <= _EPSILON else (target - cumulative[index]) / segment_length
+    return polyline[index] + float(np.clip(local, 0.0, 1.0)) * (
+        polyline[index + 1] - polyline[index]
+    )
+
+
+def _nearest_point_on_polyline_window(
+    point: np.ndarray,
+    polyline: np.ndarray,
+    *,
+    center: float,
+    half_window: float,
+) -> tuple[np.ndarray, float]:
+    cumulative = _cumulative_lengths(polyline)
+    total = max(float(cumulative[-1]), _EPSILON)
+    lower = max(0.0, float(center) - float(half_window))
+    upper = min(1.0, float(center) + float(half_window))
+    candidates = []
+    for index, (first, second) in enumerate(zip(polyline[:-1], polyline[1:])):
+        start_parameter = float(cumulative[index] / total)
+        end_parameter = float(cumulative[index + 1] / total)
+        if end_parameter < lower or start_parameter > upper:
+            continue
+        segment = second - first
+        length_sq = float(np.dot(segment, segment))
+        local = (
+            0.0
+            if length_sq <= _EPSILON
+            else float(np.dot(point - first, segment) / length_sq)
+        )
+        local = float(np.clip(local, 0.0, 1.0))
+        parameter = start_parameter + local * (end_parameter - start_parameter)
+        if not lower <= parameter <= upper:
+            parameter = float(np.clip(parameter, lower, upper))
+            span = max(end_parameter - start_parameter, _EPSILON)
+            local = float(np.clip((parameter - start_parameter) / span, 0.0, 1.0))
+        witness = first + local * segment
+        candidates.append((float(np.linalg.norm(witness - point)), parameter, witness))
+    if not candidates:
+        witness = _polyline_point_at_arc_fraction(polyline, center)
+        return witness, float(np.clip(center, 0.0, 1.0))
+    _distance, parameter, witness = min(candidates, key=lambda item: (item[0], item[1]))
+    return witness, float(parameter)
 
 
 def _line_polyline_intersections(
@@ -3879,6 +5003,395 @@ def _concatenate_edge_local_points(edges: Sequence[SectionEdge]) -> np.ndarray:
         points = np.asarray(edge.points_sq_mm, dtype=float)
         chunks.append(points if index == 0 else points[1:])
     return np.vstack(chunks)
+
+
+def _concatenate_edge_parameter_uv(edges: Sequence[SectionEdge]) -> np.ndarray:
+    face_ids = {edge.source_parameter_face_id for edge in edges}
+    if len(face_ids) != 1 or None in face_ids:
+        raise SectionRecoveryError(
+            "v116_section_loop_correspondence_failed",
+            "a direct side chain must remain on one authenticated source face",
+            {"source_parameter_face_ids": sorted(str(value) for value in face_ids)},
+        )
+    chunks = []
+    for index, edge in enumerate(edges):
+        points = np.asarray(edge.source_face_parameter_uv, dtype=float)
+        if points.shape != (len(edge.points_xyz_mm), 2) or np.any(~np.isfinite(points)):
+            raise SectionRecoveryError(
+                "v116_section_loop_correspondence_failed",
+                "source-face UV witnesses do not match the ordered section edge",
+                {
+                    "edge_id": edge.edge_id,
+                    "uv_shape": list(points.shape),
+                    "point_count": len(edge.points_xyz_mm),
+                },
+            )
+        chunks.append(points if index == 0 else points[1:])
+    return np.vstack(chunks)
+
+
+def _source_face_parameter_samples(
+    face: Any,
+    points_xyz_mm: np.ndarray,
+    *,
+    tolerance: float,
+) -> tuple[tuple[tuple[float, float], ...], float]:
+    try:
+        from OCP.BRepAdaptor import BRepAdaptor_Surface
+        from OCP.ShapeAnalysis import ShapeAnalysis_Surface
+        from OCP.gp import gp_Pnt
+
+        adaptor = BRepAdaptor_Surface(_wrapped(face))
+        analysis = ShapeAnalysis_Surface(adaptor.Surface().Surface())
+        uv_values = []
+        residuals = []
+        for point in np.asarray(points_xyz_mm, dtype=float):
+            uv = analysis.ValueOfUV(
+                gp_Pnt(*[float(value) for value in point]),
+                max(float(tolerance), 1.0e-9),
+            )
+            u_value = float(uv.X())
+            v_value = float(uv.Y())
+            projected = adaptor.Value(u_value, v_value)
+            projected_xyz = np.asarray(
+                [projected.X(), projected.Y(), projected.Z()], dtype=float
+            )
+            uv_values.append((u_value, v_value))
+            residuals.append(float(np.linalg.norm(projected_xyz - point)))
+        return tuple(uv_values), max(residuals, default=0.0)
+    except Exception:
+        return (), math.inf
+
+
+def _source_face_bspline_parameter_authority(
+    face: Any,
+    *,
+    source_face_id: str,
+    source_edges_by_id: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any] | None:
+    try:
+        from OCP.BRepAdaptor import BRepAdaptor_Surface
+        from OCP.BRepTools import BRepTools
+
+        wrapped = _wrapped(face)
+        surface = BRepAdaptor_Surface(wrapped).BSpline()
+        controls = []
+        weights = []
+        for u_index in range(1, int(surface.NbUPoles()) + 1):
+            control_row = []
+            weight_row = []
+            for v_index in range(1, int(surface.NbVPoles()) + 1):
+                point = surface.Pole(u_index, v_index)
+                control_row.append(
+                    [float(point.X()), float(point.Y()), float(point.Z())]
+                )
+                weight_row.append(float(surface.Weight(u_index, v_index)))
+            controls.append(control_row)
+            weights.append(weight_row)
+        bounds = [float(value) for value in BRepTools.UVBounds_s(wrapped)]
+        trim_boundary_uv_paths = _source_face_trim_boundary_uv_paths(
+            face,
+            source_edges_by_id=source_edges_by_id,
+        )
+        if not trim_boundary_uv_paths:
+            return None
+        return {
+            "authority": "authenticated_step_underlying_rational_bspline_surface",
+            "source_face_id": str(source_face_id),
+            "coordinate_frame": "source_step_xyz_mm",
+            "u_degree": int(surface.UDegree()),
+            "v_degree": int(surface.VDegree()),
+            "u_knots": [
+                float(surface.UKnot(index))
+                for index in range(1, int(surface.NbUKnots()) + 1)
+            ],
+            "v_knots": [
+                float(surface.VKnot(index))
+                for index in range(1, int(surface.NbVKnots()) + 1)
+            ],
+            "u_multiplicities": [
+                int(surface.UMultiplicity(index))
+                for index in range(1, int(surface.NbUKnots()) + 1)
+            ],
+            "v_multiplicities": [
+                int(surface.VMultiplicity(index))
+                for index in range(1, int(surface.NbVKnots()) + 1)
+            ],
+            "control_points_source_xyz_mm": controls,
+            "weights": weights,
+            "trim_uv_bounds": bounds,
+            "trim_boundary_uv_paths": trim_boundary_uv_paths,
+            "u_periodic": bool(surface.IsUPeriodic()),
+            "v_periodic": bool(surface.IsVPeriodic()),
+        }
+    except Exception:
+        return None
+
+
+def _source_face_trim_boundary_uv_paths(
+    face: Any,
+    *,
+    source_edges_by_id: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import (
+        BRepAdaptor_Curve,
+        BRepAdaptor_Curve2d,
+        BRepAdaptor_Surface,
+    )
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_VERTEX
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    paths = []
+    failed_edge_count = 0
+    face_adaptor = BRepAdaptor_Surface(_wrapped(face))
+    explorer = TopExp_Explorer(_wrapped(face), TopAbs_EDGE)
+    edge_index = 0
+    while explorer.More():
+        try:
+            edge = TopoDS.Edge_s(explorer.Current())
+            is_degenerate = bool(BRep_Tool.Degenerated_s(edge))
+            is_periodic_parameter_seam = bool(
+                not is_degenerate
+                and BRep_Tool.IsClosed_s(edge, _wrapped(face))
+            )
+            source_edge_id = next(
+                (
+                    str(candidate_id)
+                    for candidate_id, candidate in (source_edges_by_id or {}).items()
+                    if edge.IsSame(_wrapped(candidate))
+                ),
+                None,
+            )
+            if source_edge_id is None and not is_degenerate:
+                raise ValueError(
+                    "non-degenerate STEP trim edge lacks authenticated source identity"
+                )
+            adaptor = BRepAdaptor_Curve(edge)
+            curve2d = BRepAdaptor_Curve2d(edge, _wrapped(face))
+            first = float(adaptor.FirstParameter())
+            last = float(adaptor.LastParameter())
+            first2d = float(curve2d.FirstParameter())
+            last2d = float(curve2d.LastParameter())
+            fractions, pcurve_chord_error_bound = (
+                _adaptive_face_pcurve_sample_fractions(
+                    curve2d,
+                    face_adaptor,
+                    first_parameter=first2d,
+                    last_parameter=last2d,
+                    chord_tolerance_mm=0.01,
+                    base_segment_count=16,
+                    maximum_depth=4,
+                )
+            )
+            source_points = np.asarray(
+                [
+                    [
+                        float(adaptor.Value(float(parameter)).X()),
+                        float(adaptor.Value(float(parameter)).Y()),
+                        float(adaptor.Value(float(parameter)).Z()),
+                    ]
+                    for parameter in first + fractions * (last - first)
+                ],
+                dtype=float,
+            )
+            uv_points = np.asarray(
+                [
+                    [
+                        float(curve2d.Value(float(parameter)).X()),
+                        float(curve2d.Value(float(parameter)).Y()),
+                    ]
+                    for parameter in first2d + fractions * (last2d - first2d)
+                ],
+                dtype=float,
+            )
+            surface_points = np.asarray(
+                [
+                    [
+                        float(face_adaptor.Value(float(uv[0]), float(uv[1])).X()),
+                        float(face_adaptor.Value(float(uv[0]), float(uv[1])).Y()),
+                        float(face_adaptor.Value(float(uv[0]), float(uv[1])).Z()),
+                    ]
+                    for uv in uv_points
+                ],
+                dtype=float,
+            )
+            forward_endpoint_gap = float(
+                np.linalg.norm(surface_points[0] - source_points[0])
+                + np.linalg.norm(surface_points[-1] - source_points[-1])
+            )
+            reverse_endpoint_gap = float(
+                np.linalg.norm(surface_points[0] - source_points[-1])
+                + np.linalg.norm(surface_points[-1] - source_points[0])
+            )
+            if reverse_endpoint_gap < forward_endpoint_gap:
+                source_points = source_points[::-1].copy()
+            residual = max(
+                float(
+                    np.max(
+                        _points_to_polyline_distances(surface_points, source_points)
+                    )
+                ),
+                float(
+                    np.max(
+                        _points_to_polyline_distances(source_points, surface_points)
+                    )
+                ),
+            )
+            source_edge_tolerance = float(BRep_Tool.Tolerance_s(edge))
+            vertex_tolerances = []
+            vertex_explorer = TopExp_Explorer(edge, TopAbs_VERTEX)
+            while vertex_explorer.More():
+                vertex_tolerances.append(
+                    float(
+                        BRep_Tool.Tolerance_s(
+                            TopoDS.Vertex_s(vertex_explorer.Current())
+                        )
+                    )
+                )
+                vertex_explorer.Next()
+            residual_tolerance = max(
+                1.0e-3,
+                3.0 * source_edge_tolerance,
+            )
+            if (
+                uv_points.shape != (len(source_points), 2)
+                or np.any(~np.isfinite(uv_points))
+                or not math.isfinite(residual)
+                or residual > residual_tolerance
+            ):
+                raise ValueError("face-specific STEP p-curve residual exceeds tolerance")
+            paths.append(
+                {
+                    "boundary_path_id": f"trim_boundary_{edge_index:03d}",
+                    **({"source_edge_id": source_edge_id} if source_edge_id else {}),
+                    "topology_boundary_kind": (
+                        "degenerate_trim_seam"
+                        if is_degenerate
+                        else "periodic_parameter_seam"
+                        if is_periodic_parameter_seam
+                        else "material_shared_edge"
+                    ),
+                    "source_edge_identity_status": (
+                        "DEGENERATE_FACE_LOCAL"
+                        if is_degenerate and source_edge_id is None
+                        else "AUTHENTICATED"
+                    ),
+                    "source_points_xyz_mm": source_points.tolist(),
+                    "uv": uv_points.tolist(),
+                    "projection_residual_max_mm": float(residual),
+                    "projection_residual_tolerance_mm": residual_tolerance,
+                    "source_pcurve_chord_error_bound_mm": float(
+                        pcurve_chord_error_bound
+                    ),
+                    "source_pcurve_chord_tolerance_mm": 0.01,
+                    "source_pcurve_sample_count": int(len(fractions)),
+                    "source_edge_tolerance_mm": source_edge_tolerance,
+                    "source_vertex_tolerances_mm": vertex_tolerances,
+                    "uv_authority": "face_specific_oriented_step_pcurve",
+                }
+            )
+        except Exception:
+            failed_edge_count += 1
+        edge_index += 1
+        explorer.Next()
+    return paths if failed_edge_count == 0 and len(paths) == edge_index else []
+
+
+def _adaptive_face_pcurve_sample_fractions(
+    curve2d: Any,
+    face_adaptor: Any,
+    *,
+    first_parameter: float,
+    last_parameter: float,
+    chord_tolerance_mm: float,
+    base_segment_count: int,
+    maximum_depth: int,
+) -> tuple[np.ndarray, float]:
+    value_cache: dict[float, np.ndarray] = {}
+
+    def physical_point(fraction: float) -> np.ndarray:
+        key = float(fraction)
+        cached = value_cache.get(key)
+        if cached is not None:
+            return cached
+        parameter = first_parameter + key * (last_parameter - first_parameter)
+        uv = curve2d.Value(float(parameter))
+        point = face_adaptor.Value(float(uv.X()), float(uv.Y()))
+        result = np.asarray(
+            [float(point.X()), float(point.Y()), float(point.Z())], dtype=float
+        )
+        value_cache[key] = result
+        return result
+
+    def point_to_segment_distance(
+        point: np.ndarray, first_point: np.ndarray, last_point: np.ndarray
+    ) -> float:
+        vector = last_point - first_point
+        length_squared = float(np.dot(vector, vector))
+        if length_squared <= 1.0e-24:
+            return float(np.linalg.norm(point - first_point))
+        parameter = float(np.dot(point - first_point, vector) / length_squared)
+        projection = first_point + min(1.0, max(0.0, parameter)) * vector
+        return float(np.linalg.norm(point - projection))
+
+    retained = set(float(value) for value in np.linspace(0.0, 1.0, base_segment_count + 1))
+    pending = [
+        (first_fraction, last_fraction, 0)
+        for first_fraction, last_fraction in zip(
+            sorted(retained)[:-1], sorted(retained)[1:], strict=True
+        )
+    ]
+    maximum_error = 0.0
+    while pending:
+        first_fraction, last_fraction, depth = pending.pop()
+        first_point = physical_point(first_fraction)
+        last_point = physical_point(last_fraction)
+        probes = np.linspace(first_fraction, last_fraction, 5)[1:-1]
+        errors = [
+            point_to_segment_distance(
+                physical_point(float(probe)), first_point, last_point
+            )
+            for probe in probes
+        ]
+        segment_error = max(errors, default=0.0)
+        maximum_error = max(maximum_error, segment_error)
+        if segment_error <= chord_tolerance_mm:
+            continue
+        if depth >= maximum_depth:
+            raise ValueError(
+                "face-specific STEP p-curve exceeds adaptive chord tolerance"
+            )
+        midpoint = 0.5 * (first_fraction + last_fraction)
+        retained.add(midpoint)
+        pending.extend(
+            (
+                (first_fraction, midpoint, depth + 1),
+                (midpoint, last_fraction, depth + 1),
+            )
+        )
+    fractions = np.asarray(sorted(retained), dtype=float)
+    certified_error = 0.0
+    for first_fraction, last_fraction in zip(
+        fractions[:-1], fractions[1:], strict=True
+    ):
+        first_point = physical_point(float(first_fraction))
+        last_point = physical_point(float(last_fraction))
+        probes = np.linspace(first_fraction, last_fraction, 5)[1:-1]
+        certified_error = max(
+            certified_error,
+            max(
+                (
+                    point_to_segment_distance(
+                        physical_point(float(probe)), first_point, last_point
+                    )
+                    for probe in probes
+                ),
+                default=0.0,
+            ),
+        )
+    return fractions, certified_error
 
 
 def _rotate_closed(points: np.ndarray, start_index: int) -> np.ndarray:

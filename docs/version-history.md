@@ -482,6 +482,26 @@ docs/evidence/2026-07-12-impeller-v1-1-5-verification-evidence.md
   It remains correctly `REJECTED`, review-only and non-promotable because
   camber, pose, normal-thickness, edge-curve and periodicity mapping gates fail
   and exact periodic collision is still unknown.
+- R16 replaces lossy scalar camber/thickness reconstruction with authenticated
+  direct section-curve and trimmed STEP-face authority. Physical S-Q
+  coordinates, source/canonical frames, active-span fields, closure topology,
+  source overlays and generated surface intersections remain separately
+  identified.
+- R16.23 promotes complementary, profile-conformant STEP faces into one hub
+  support semantic union and requires independent circumferential coverage for
+  every periodic population before that union is accepted.
+- R16.24 binds fallback attachment patches to authenticated trim edges,
+  separates regular-edge continuity from endpoint-corner coupling, indexes
+  topology candidates and removes whole-graph copies from dense inspection and
+  pattern paths.
+- Full audit `step-audit-9141bbd5805f4c31` completed in approximately
+  15 minutes 22 seconds. Direct geometry validation and comparison scope pass,
+  while measured source sharp edges remain non-G1/non-G2 and final parameter
+  mapping remains `REJECTED`, review-only and non-promotable.
+- V1.1.6 is frozen at R16.24 as a reproducible review-grade STEP
+  reconstruction baseline under tag `impeller-v1.1.6-r16.24-review`. The freeze
+  does not promote sampled geometry to certified CAD or claim final geometry
+  acceptance.
 
 Spec, plan and evidence:
 
@@ -501,6 +521,13 @@ docs/superpowers/plans/2026-07-17-impeller-v1-1-6-r15-axial-semantic-reconstruct
 docs/evidence/2026-07-17-impeller-v1-1-6-r15-semantic-change-log.md
 docs/evidence/2026-07-17-impeller-v1-1-6-r15-insight-log.md
 docs/evidence/2026-07-17-impeller-v1-1-6-r15-verification-evidence.md
+docs/superpowers/plans/2026-07-18-impeller-v1-1-6-r16-section-curve-authority-reconstruction-repair.md
+docs/evidence/2026-07-19-impeller-v1-1-6-r16-semantic-change-log.md
+docs/evidence/2026-07-19-impeller-v1-1-6-r16-insight-log.md
+docs/evidence/2026-07-19-impeller-v1-1-6-r16-22-verification.md
+docs/evidence/2026-07-19-impeller-v1-1-6-r16-23-hub-support-union-verification.md
+docs/evidence/2026-07-20-impeller-v1-1-6-r16-24-attachment-patch-performance-verification.md
+docs/evidence/2026-07-20-impeller-v1-1-6-r16-24-freeze-record.md
 ```
 
 ## How To Run A Specific Version

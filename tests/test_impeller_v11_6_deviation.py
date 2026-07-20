@@ -378,6 +378,116 @@ def test_parallel_partial_checkpoint_submits_only_changed_surfaces(tmp_path):
     assert stats["max_workers"] == 2
 
 
+def test_authenticated_periodic_pairs_reuse_representative_distance_queries():
+    source = _offset_triangle_mesh(radius=10.0, z=0.0)
+    reconstruction = _offset_triangle_mesh(radius=10.0, z=0.4)
+    regions = {}
+    equivalence = {}
+    for index, angle_deg in enumerate((0.0, 120.0, 240.0)):
+        role = f"blade_{index}"
+        regions[role] = (
+            transform_mesh(source, _z_rotation(angle_deg)),
+            transform_mesh(reconstruction, _z_rotation(angle_deg)),
+        )
+        equivalence[role] = "blade_0"
+    stats = {}
+
+    metrics, heatmap = compare_corresponding_mesh_regions(
+        regions,
+        periodic_equivalence_groups=equivalence,
+        execution_stats=stats,
+    )
+
+    assert stats["periodic_reuse_count"] == 2
+    assert stats["distance_query_count"] == 2
+    assert stats["triangle_index_build_count"] == 2
+    assert set(metrics["regions"]) == set(regions)
+    assert set(heatmap["triangle_regions"]) == set(regions)
+    assert metrics["regions"]["blade_2"] == metrics["regions"]["blade_0"]
+
+
+def test_periodic_reuse_falls_back_when_geometry_is_not_a_rigid_pattern():
+    source = _offset_triangle_mesh(radius=10.0, z=0.0)
+    reconstruction = _offset_triangle_mesh(radius=10.0, z=0.4)
+    rotated_source = transform_mesh(source, _z_rotation(180.0))
+    rotated_reconstruction = transform_mesh(reconstruction, _z_rotation(180.0))
+    rotated_reconstruction = TriangleMesh(
+        vertices=rotated_reconstruction.vertices
+        + np.asarray([[0.0, 0.0, 0.2], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]),
+        triangles=rotated_reconstruction.triangles,
+        normals=rotated_reconstruction.normals,
+    )
+    stats = {}
+
+    compare_corresponding_mesh_regions(
+        {
+            "blade_0": (source, reconstruction),
+            "blade_1": (rotated_source, rotated_reconstruction),
+        },
+        periodic_equivalence_groups={"blade_0": "blade_0", "blade_1": "blade_0"},
+        execution_stats=stats,
+    )
+
+    assert stats["periodic_reuse_count"] == 0
+    assert stats["periodic_reuse_rejection_count"] == 1
+    assert stats["distance_query_count"] == 4
+
+
+def test_authenticated_periodic_normalization_reuses_independently_tessellated_source():
+    source = _offset_triangle_mesh(radius=10.0, z=0.0)
+    reconstruction = TriangleMesh(
+        vertices=source.vertices
+        + np.asarray([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.8]]),
+        triangles=source.triangles.copy(),
+        normals=source.normals.copy(),
+    )
+    transform = _z_rotation(180.0)
+    candidate_source = transform_mesh(_subdivide_triangle_mesh(source), transform)
+    candidate_reconstruction = transform_mesh(reconstruction, transform)
+    stats = {}
+
+    metrics, _heatmap = compare_corresponding_mesh_regions(
+        {
+            "blade_0": (source, reconstruction),
+            "blade_1": (candidate_source, candidate_reconstruction),
+        },
+        periodic_equivalence_groups={"blade_0": "blade_0", "blade_1": "blade_0"},
+        periodic_equivalence_authority={
+            "blade_1": {
+                "authority": "authenticated_step_periodic_topology_component",
+                "representative_role": "blade_0",
+                "candidate_from_representative_matrix": transform,
+                "source_periodic_residual_bound_mm": 1.0e-6,
+                "source_periodic_residual_tolerance_mm": 1.0e-3,
+            }
+        },
+        execution_stats=stats,
+    )
+    independent, _independent_heatmap = compare_corresponding_mesh_regions(
+        {"blade_1": (candidate_source, candidate_reconstruction)}
+    )
+
+    assert stats["periodic_reuse_count"] == 1
+    assert stats["periodic_normalized_reuse_count"] == 1
+    assert stats["distance_query_count"] == 3
+    assert metrics["periodic_alias_distance_authority"] == (
+        "authenticated_periodic_normalized_representative_surface_samples"
+    )
+    assert metrics["regions"]["blade_1"][
+        "reconstruction_to_corresponding_source"
+    ] == (
+        metrics["regions"]["blade_0"][
+            "reconstruction_to_corresponding_source"
+        ]
+    )
+    assert metrics["regions"]["blade_1"][
+        "corresponding_source_to_reconstruction"
+    ] == independent["regions"]["blade_1"][
+        "corresponding_source_to_reconstruction"
+    ]
+    assert metrics["regions"]["blade_1"]["source_triangle_count"] == 4
+
+
 def _triangle_mesh(*, z):
     return TriangleMesh(
         vertices=np.asarray([[0.0, 0.0, z], [1.0, 0.0, z], [0.0, 1.0, z]], dtype=float),
@@ -408,3 +518,42 @@ def _repeated_triangle_mesh(*, z, count):
         triangles=np.asarray(triangles, dtype=np.int32),
         normals=np.tile([[0.0, 0.0, 1.0]], (count, 1)),
     )
+
+
+def _subdivide_triangle_mesh(mesh: TriangleMesh) -> TriangleMesh:
+    a, b, c = mesh.vertices[mesh.triangles[0]]
+    ab = 0.5 * (a + b)
+    bc = 0.5 * (b + c)
+    ca = 0.5 * (c + a)
+    vertices = np.asarray([a, b, c, ab, bc, ca], dtype=float)
+    triangles = np.asarray(
+        [[0, 3, 5], [3, 1, 4], [5, 4, 2], [3, 4, 5]],
+        dtype=np.int32,
+    )
+    normals = np.tile(np.asarray([[0.0, 0.0, 1.0]]), (4, 1))
+    return TriangleMesh(vertices=vertices, triangles=triangles, normals=normals)
+
+
+def _offset_triangle_mesh(*, radius, z):
+    return TriangleMesh(
+        vertices=np.asarray(
+            [
+                [radius, 0.0, z],
+                [radius + 1.0, 0.0, z],
+                [radius, 1.0, z],
+            ],
+            dtype=float,
+        ),
+        triangles=np.asarray([[0, 1, 2]], dtype=np.int32),
+        normals=np.asarray([[0.0, 0.0, 1.0]], dtype=float),
+    )
+
+
+def _z_rotation(angle_deg):
+    angle = math.radians(angle_deg)
+    return [
+        [math.cos(angle), -math.sin(angle), 0.0, 0.0],
+        [math.sin(angle), math.cos(angle), 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]

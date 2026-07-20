@@ -13,13 +13,356 @@ from part_rule_synthesis.impeller_v11_6_section_recovery import (
     SectionEdge,
     SectionRecoveryError,
     _minimum_angular_cutter_boundary_clearance_deg,
+    _source_face_trim_boundary_uv_paths,
     align_loop_orientation,
+    decompose_authenticated_open_side_pair,
     decompose_section_loop,
     make_section_loop,
     order_section_edges,
     section_full_source_solid,
+    section_source_solid,
+    select_authenticated_open_side_pair,
     track_section_family_landmarks,
 )
+
+
+def test_face_specific_trim_marks_non_degenerate_periodic_seam_as_face_local():
+    solid = cq.Solid.makeCone(10.0, 5.0, 20.0)
+    lateral = next(face for face in solid.Faces() if face.geomType() == "CONE")
+    source_edges = {
+        f"source_edge_{index:05d}": edge
+        for index, edge in enumerate(solid.Edges())
+    }
+
+    records = _source_face_trim_boundary_uv_paths(
+        lateral, source_edges_by_id=source_edges
+    )
+
+    periodic = [
+        record
+        for record in records
+        if record["topology_boundary_kind"] == "periodic_parameter_seam"
+    ]
+    assert periodic
+    assert all(record.get("source_edge_id") for record in periodic)
+    assert all(
+        record["source_pcurve_chord_error_bound_mm"]
+        <= record["source_pcurve_chord_tolerance_mm"]
+        for record in records
+    )
+    assert any(record["source_pcurve_sample_count"] > 17 for record in records)
+    periodic_ids = {record["source_edge_id"] for record in periodic}
+    assert not any(
+        record.get("source_edge_id") in periodic_ids
+        and record["topology_boundary_kind"] == "material_shared_edge"
+        for record in records
+    )
+
+
+def test_authenticated_open_side_pair_selects_full_curves_without_claiming_closure():
+    frame = LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    edges = (
+        SectionEdge(
+            "side_a_long",
+            tuple((float(x), -0.5, 0.0) for x in np.linspace(0.0, 10.0, 17)),
+            source_face_ids=("face_a",),
+            source_roles=("side_a",),
+            provenance_available=True,
+            source_curve_exact=True,
+        ),
+        SectionEdge(
+            "side_b_long",
+            tuple((float(x), 0.5, 0.0) for x in np.linspace(0.5, 10.0, 17)),
+            source_face_ids=("face_b",),
+            source_roles=("side_b",),
+            provenance_available=True,
+            source_curve_exact=True,
+        ),
+        SectionEdge(
+            "side_a_fragment",
+            ((3.0, -0.5, 0.0), (4.0, -0.5, 0.0)),
+            source_face_ids=("face_a",),
+            source_roles=("side_a",),
+            provenance_available=True,
+            source_curve_exact=True,
+        ),
+    )
+
+    pair = select_authenticated_open_side_pair(
+        edges,
+        source_tolerance_mm=1.0e-6,
+        local_frame=frame,
+    )
+    decomposition = decompose_authenticated_open_side_pair(
+        pair, maximum_control_count=17
+    )
+
+    assert pair.source_kind == "occt_exact_authenticated_open_side_pair"
+    assert [edge.edge_id for edge in pair.edges] == ["side_a_long", "side_b_long"]
+    assert pair.closure_gap_mm == pytest.approx(math.hypot(0.5, 1.0))
+    assert decomposition.direct_curve_constructor_mode is True
+    assert decomposition.segment("side_a").source_edge_ids == ("side_a_long",)
+    assert decomposition.segment("side_b").source_edge_ids == ("side_b_long",)
+    assert decomposition.segment("leading_edge").source_edge_ids == (
+        "review_bridge_leading_endpoint_witnesses",
+    )
+
+
+def test_authenticated_open_side_pair_stitches_all_connected_side_fragments():
+    frame = LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+
+    def fragment(edge_id, role, start, end, offset):
+        return SectionEdge(
+            edge_id,
+            tuple(
+                (float(x), offset, 0.0)
+                for x in np.linspace(float(start), float(end), 9)
+            ),
+            source_face_ids=(f"face_{role}",),
+            source_roles=(role,),
+            provenance_available=True,
+            source_curve_exact=True,
+        )
+
+    pair = select_authenticated_open_side_pair(
+        (
+            fragment("side_a_second", "side_a", 5.0, 10.0, -0.5),
+            fragment("side_b_first", "side_b", 0.5, 5.0, 0.5),
+            fragment("side_a_first", "side_a", 0.0, 5.0, -0.5),
+            fragment("side_b_second", "side_b", 5.0, 10.0, 0.5),
+            fragment("side_a_isolated", "side_a", 20.0, 21.0, -0.5),
+        ),
+        source_tolerance_mm=1.0e-6,
+        local_frame=frame,
+    )
+    decomposition = decompose_authenticated_open_side_pair(
+        pair, maximum_control_count=17
+    )
+
+    assert [edge.edge_id for edge in pair.edges] == [
+        "side_a_first",
+        "side_a_second",
+        "side_b_first",
+        "side_b_second",
+    ]
+    assert decomposition.segment("side_a").source_edge_ids == (
+        "side_a_first",
+        "side_a_second",
+    )
+    assert decomposition.segment("side_b").source_edge_ids == (
+        "side_b_first",
+        "side_b_second",
+    )
+    assert decomposition.segment("side_a").points_sq_mm[0][0] == pytest.approx(0.0)
+    assert decomposition.segment("side_a").points_sq_mm[-1][0] == pytest.approx(10.0)
+    assert decomposition.segment("side_b").points_sq_mm[0][0] == pytest.approx(0.5)
+    assert decomposition.segment("side_b").points_sq_mm[-1][0] == pytest.approx(10.0)
+
+
+def test_authenticated_open_side_pair_uses_longest_path_through_minor_occt_branch():
+    frame = LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+
+    def edge(edge_id, role, first, last):
+        return SectionEdge(
+            edge_id,
+            tuple(
+                tuple(float(value) for value in point)
+                for point in np.linspace(first, last, 9)
+            ),
+            source_face_ids=(f"face_{role}",),
+            source_roles=(role,),
+            provenance_available=True,
+            source_curve_exact=True,
+        )
+
+    pair = select_authenticated_open_side_pair(
+        (
+            edge("side_a_first", "side_a", (0.0, -0.5, 0.0), (5.0, -0.5, 0.0)),
+            edge("side_a_second", "side_a", (5.0, -0.5, 0.0), (10.0, -0.5, 0.0)),
+            edge("side_a_minor_branch", "side_a", (5.0, -0.5, 0.0), (5.0, -0.3, 0.0)),
+            edge("side_b", "side_b", (0.0, 0.5, 0.0), (10.0, 0.5, 0.0)),
+        ),
+        source_tolerance_mm=1.0e-6,
+        local_frame=frame,
+    )
+
+    assert [edge.edge_id for edge in pair.edges[:2]] == [
+        "side_a_first",
+        "side_a_second",
+    ]
+    evidence = pair.orientation_evidence["side_chain_selection"]["side_a"]
+    assert evidence["selected_coverage_ratio"] == pytest.approx(10.0 / 10.2)
+    assert evidence["discarded_branch_edge_ids"] == ["side_a_minor_branch"]
+
+
+def test_authenticated_trim_surface_downgrades_disjoint_section_intersection():
+    frame = LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+    authority = {"trim_boundary_uv_paths": [{"uv": [[0.0, 0.0], [1.0, 0.0]]}]}
+
+    def edge(edge_id, role, start, end, offset):
+        return SectionEdge(
+            edge_id,
+            tuple(
+                (float(x), offset, 0.0)
+                for x in np.linspace(float(start), float(end), 9)
+            ),
+            source_face_ids=(f"face_{role}",),
+            source_roles=(role,),
+            provenance_available=True,
+            source_curve_exact=True,
+            source_surface_parameter_authority=authority,
+        )
+
+    pair = select_authenticated_open_side_pair(
+        (
+            edge("side_a_primary", "side_a", 0.0, 10.0, -0.5),
+            edge("side_a_alternative", "side_a", 20.0, 28.0, -0.5),
+            edge("side_b", "side_b", 0.0, 10.0, 0.5),
+        ),
+        source_tolerance_mm=1.0e-6,
+        local_frame=frame,
+    )
+
+    evidence = pair.orientation_evidence["side_chain_selection"]["side_a"]
+    assert [edge.edge_id for edge in pair.edges[:1]] == ["side_a_primary"]
+    assert evidence["selected_coverage_ratio"] == pytest.approx(10.0 / 18.0)
+    assert evidence["selected_coverage_gate_applied"] is False
+    assert evidence["alternative_intersections_are_geometry_authority"] is False
+
+
+def test_authenticated_open_side_pair_preserves_source_face_uv_through_chain_ordering():
+    frame = LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+
+    def fragment(edge_id, role, start, end, offset):
+        streamwise = np.linspace(float(start), float(end), 5)
+        return SectionEdge(
+            edge_id,
+            tuple((float(value), offset, 0.0) for value in streamwise),
+            source_face_ids=(f"face_{role}",),
+            source_roles=(role,),
+            provenance_available=True,
+            source_curve_exact=True,
+            source_parameter_face_id=f"face_{role}",
+            source_face_parameter_uv=tuple(
+                (float(value), 0.25 if role == "side_a" else 0.75)
+                for value in streamwise
+            ),
+            source_face_parameter_residual_max_mm=1.0e-9,
+        )
+
+    pair = select_authenticated_open_side_pair(
+        (
+            fragment("side_a_second", "side_a", 5.0, 10.0, -0.5),
+            fragment("side_a_first_reversed", "side_a", 5.0, 0.0, -0.5),
+            fragment("side_b", "side_b", 0.0, 10.0, 0.5),
+        ),
+        source_tolerance_mm=1.0e-6,
+        local_frame=frame,
+    )
+    decomposition = decompose_authenticated_open_side_pair(pair)
+
+    side_a = decomposition.segment("side_a")
+    assert side_a.source_parameter_face_id == "face_side_a"
+    assert np.asarray(side_a.source_face_parameter_uv)[:, 0] == pytest.approx(
+        np.linspace(0.0, 10.0, 9)
+    )
+    assert side_a.source_face_parameter_residual_max_mm == pytest.approx(1.0e-9)
+
+
+def test_authenticated_open_side_pair_rejects_a_truncated_boundary_station():
+    frame = LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+
+    def edge(edge_id, role, first, last):
+        return SectionEdge(
+            edge_id,
+            tuple(
+                tuple(float(value) for value in point)
+                for point in np.linspace(first, last, 17)
+            ),
+            source_face_ids=(f"face_{role}",),
+            source_roles=(role,),
+            provenance_available=True,
+            source_curve_exact=True,
+        )
+
+    with pytest.raises(SectionRecoveryError) as caught:
+        select_authenticated_open_side_pair(
+            (
+                edge("side_a_long", "side_a", (0.0, -0.5, 0.0), (30.0, -0.5, 0.0)),
+                edge("side_b_short", "side_b", (25.0, 0.5, 0.0), (35.0, 0.5, 0.0)),
+            ),
+            source_tolerance_mm=1.0e-6,
+            local_frame=frame,
+        )
+
+    assert caught.value.reason == "v116_section_loop_correspondence_failed"
+    assert caught.value.details["side_length_ratio"] < 0.5
+
+
+def test_authenticated_open_side_pair_rejects_an_incomplete_principal_chain():
+    frame = LocalSectionFrame(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+
+    def edge(edge_id, role, start, end, offset):
+        return SectionEdge(
+            edge_id,
+            tuple(
+                (float(x), offset, 0.0)
+                for x in np.linspace(float(start), float(end), 9)
+            ),
+            source_face_ids=(f"face_{role}",),
+            source_roles=(role,),
+            provenance_available=True,
+            source_curve_exact=True,
+        )
+
+    with pytest.raises(SectionRecoveryError) as caught:
+        select_authenticated_open_side_pair(
+            (
+                edge("side_a_primary", "side_a", 0.0, 10.0, -0.5),
+                edge("side_a_secondary", "side_a", 12.0, 20.0, -0.5),
+                edge("side_b", "side_b", 0.0, 10.0, 0.5),
+            ),
+            source_tolerance_mm=1.0e-6,
+            local_frame=frame,
+        )
+
+    assert caught.value.reason == "v116_section_loop_correspondence_failed"
+    assert caught.value.details["selected_coverage_ratio"] < 0.75
 
 
 def test_bounded_angular_cutter_clearance_uses_expanded_sector_boundaries():
@@ -162,6 +505,69 @@ def test_exact_occt_helper_sections_the_complete_shape_and_retains_face_provenan
     assert all(record["occt_exact_topology"] for record in payload["source_edge_records"])
     assert all(record["occt_exact_curve"] for record in payload["source_edge_records"])
     assert all(record["sampled_display_only"] for record in payload["source_edge_records"])
+
+    compound_result = section_source_solid(
+        source,
+        gp_Pln(gp_Pnt(0.0, 0.0, 0.5), gp_Dir(0.0, 0.0, 1.0)),
+        angular_sector_deg=(350.0, 10.0),
+        source_faces_by_id=source_faces,
+        allowed_source_face_ids=list(source_faces),
+        local_frame=frame,
+        source_tolerance_mm=1.0e-6,
+        edge_sample_count=5,
+        source_shape_scope="authenticated_representative_face_compound",
+    )
+    assert compound_result.source_shape_scope == (
+        "authenticated_representative_face_compound"
+    )
+    assert compound_result.accepted_loop.source_kind == (
+        "occt_exact_authenticated_face_compound_section"
+    )
+    assert compound_result.accepted_loop.source_face_ids == loop.source_face_ids
+
+    sewn_result = section_source_solid(
+        source,
+        gp_Pln(gp_Pnt(0.0, 0.0, 0.5), gp_Dir(0.0, 0.0, 1.0)),
+        angular_sector_deg=(350.0, 10.0),
+        source_faces_by_id=source_faces,
+        allowed_source_face_ids=list(source_faces),
+        local_frame=frame,
+        source_tolerance_mm=1.0e-6,
+        edge_sample_count=5,
+        source_shape_scope="authenticated_representative_sewn_shell",
+    )
+    assert sewn_result.source_shape_scope == (
+        "authenticated_representative_sewn_shell"
+    )
+    assert sewn_result.accepted_loop.source_kind == (
+        "occt_exact_authenticated_sewn_shell_section"
+    )
+    assert sewn_result.accepted_loop.source_face_ids == loop.source_face_ids
+
+    individual_result = section_source_solid(
+        source,
+        gp_Pln(gp_Pnt(0.0, 0.0, 0.5), gp_Dir(0.0, 0.0, 1.0)),
+        angular_sector_deg=(350.0, 10.0),
+        source_faces_by_id=source_faces,
+        allowed_source_face_ids=list(source_faces),
+        local_frame=frame,
+        source_tolerance_mm=1.0e-6,
+        edge_sample_count=5,
+        source_shape_scope="authenticated_representative_individual_faces",
+    )
+    assert individual_result.source_shape_scope == (
+        "authenticated_representative_individual_faces"
+    )
+    assert individual_result.accepted_loop.source_kind == (
+        "occt_exact_authenticated_individual_face_section"
+    )
+    assert individual_result.accepted_loop.source_face_ids == loop.source_face_ids
+    assert all(
+        edge.topology_start_vertex_id is None
+        and edge.topology_end_vertex_id is None
+        for edge in individual_result.accepted_loop.edges
+    )
+    assert individual_result.accepted_loop.closure_gap_mm <= 1.0e-6
 
     tracked = section_full_source_solid(
         source,
@@ -400,3 +806,20 @@ def test_open_edge_chain_fails_instead_of_being_reported_as_a_section_loop():
             _rectangle_edges()[:-1], source_tolerance_mm=1.0e-8, local_frame=frame
         )
     assert caught.value.reason == "v116_section_loop_open"
+
+
+def test_authenticated_section_can_ignore_an_open_auxiliary_trace_when_a_closed_loop_exists():
+    frame = LocalSectionFrame((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    auxiliary = SectionEdge(
+        edge_id="auxiliary-root-trace",
+        points_xyz_mm=((20.0, 0.0, 0.0), (21.0, 0.0, 0.0)),
+        source_face_ids=("root-attachment",),
+    )
+    loops = order_section_edges(
+        [*_rectangle_edges(), auxiliary],
+        source_tolerance_mm=1.0e-8,
+        local_frame=frame,
+        allow_open_auxiliary_components=True,
+    )
+    assert len(loops) == 1
+    assert set(loops[0].source_edge_ids) == {"edge_0", "edge_1", "edge_2", "edge_3"}

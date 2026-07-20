@@ -9,6 +9,7 @@ from typing import Any
 
 RUNTIME_RELEASE_VERSION = "1.1.5"
 INSPECTION_CONTRACT_VERSION = "1.1.4"
+_PLACEMENT_ANGLE_TOLERANCE_DEG = 1.0e-4
 
 ENGINEERING_FEATURE_KINDS = {
     "nurbs_curve",
@@ -149,18 +150,29 @@ def validate_parameter_inspection_contract(
 
 
 def parameter_inspection_generation_id(surface_graph: Mapping[str, Any]) -> str:
-    basis = copy.deepcopy(dict(surface_graph))
+    basis = dict(surface_graph)
     basis.pop("generation_id", None)
     basis.pop("parameter_inspection", None)
     surfaces = basis.get("surfaces")
     if isinstance(surfaces, list):
-        for surface in surfaces:
+        generation_surfaces = []
+        for raw_surface in surfaces:
+            if not isinstance(raw_surface, dict):
+                generation_surfaces.append(raw_surface)
+                continue
+            surface = dict(raw_surface)
+            generation_surfaces.append(surface)
             if isinstance(surface, dict):
                 surface.pop("wireframe", None)
                 if not _surface_is_inspectable(surface):
                     surface["uv_grid"] = []
-    encoded = json.dumps(basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:24]
+        basis["surfaces"] = generation_surfaces
+
+    digest = hashlib.sha256()
+    encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"))
+    for chunk in encoder.iterencode(basis):
+        digest.update(chunk.encode("utf-8"))
+    return digest.hexdigest()[:24]
 
 
 def _surface_is_inspectable(surface: Mapping[str, Any]) -> bool:
@@ -928,7 +940,12 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
         feature = _selected_feature_geometry(parameter)
         return (
             expected is not None
-            and math.isclose(float(parameter["resolved_value"]), expected, rel_tol=0.0, abs_tol=1.0e-6)
+            and math.isclose(
+                float(parameter["resolved_value"]),
+                expected,
+                rel_tol=0.0,
+                abs_tol=_PLACEMENT_ANGLE_TOLERANCE_DEG,
+            )
             and parameter["selection_scope"].get("source_geometry_kind") == "blade_placement"
             and len(feature) == 1
             and feature[0].get("kind") == "reference_axis"
@@ -984,16 +1001,57 @@ def _placement_parameter_matches_source(parameter: Mapping[str, Any], surface_gr
 
 def _graph_blade_anchor_directions(surface_graph: Mapping[str, Any], blade_class: str) -> list[list[float]]:
     blades = surface_graph.get("blade_to_blade_loop_family", {}).get("blades", [])
-    surfaces = {surface.get("id"): surface for surface in surface_graph.get("surfaces", []) if isinstance(surface, Mapping)}
+    surface_inventory = [
+        surface
+        for surface in surface_graph.get("surfaces", [])
+        if isinstance(surface, Mapping)
+    ]
+    surfaces_by_id = {surface.get("id"): surface for surface in surface_inventory}
     directions: list[list[float]] = []
     for blade_index, blade in enumerate(blades):
         if blade.get("blade_class") != blade_class:
             continue
-        surface = surfaces.get(f"blade_{blade_index}_root_attachment_surface")
+        surface = _root_anchor_surface_for_blade(
+            surface_inventory,
+            blade_index,
+            surfaces_by_id=surfaces_by_id,
+        )
         point = surface.get("uv_grid", [[None]])[-1][0] if surface else None
         if _coordinate_vector(point) and len(point) >= 3:
             directions.append([float(point[0]), float(point[1])])
     return directions
+
+
+def _root_anchor_surface_for_blade(
+    surface_inventory: Sequence[Mapping[str, Any]],
+    blade_index: int,
+    *,
+    surfaces_by_id: Mapping[Any, Mapping[str, Any]] | None = None,
+) -> Mapping[str, Any] | None:
+    candidates = [
+        surface
+        for surface in surface_inventory
+        if surface.get("blade_index") == blade_index
+        and surface.get("role") == "root_to_hub_attachment"
+    ]
+    if candidates:
+        return min(candidates, key=_root_anchor_surface_sort_key)
+    lookup = surfaces_by_id or {
+        surface.get("id"): surface for surface in surface_inventory
+    }
+    return lookup.get(f"blade_{blade_index}_root_attachment_surface")
+
+
+def _root_anchor_surface_sort_key(surface: Mapping[str, Any]) -> tuple[int, int, str]:
+    source = surface.get("source")
+    source = source if isinstance(source, Mapping) else {}
+    authority_index = source.get("source_authority_index")
+    subpatch_index = source.get("trim_subpatch_index")
+    return (
+        int(authority_index) if isinstance(authority_index, int) else 1_000_000,
+        int(subpatch_index) if isinstance(subpatch_index, int) else 1_000_000,
+        str(surface.get("id", "")),
+    )
 
 
 def _shroud_thickness_matches_source(parameter: Mapping[str, Any], surfaces: Mapping[str, Mapping[str, Any]]) -> bool:
@@ -1886,13 +1944,18 @@ def _blade_anchor_directions(
     for blade in blade_instances.values():
         if blade.get("blade_class") != blade_class:
             continue
-        surface = next(
-            (
-                surface_by_id[surface_id]
-                for surface_id in blade.get("surface_ids", [])
-                if surface_by_id[surface_id].get("role") == "root_to_hub_attachment"
-            ),
-            None,
+        blade_index = blade.get("blade_index")
+        if not isinstance(blade_index, int):
+            continue
+        surface_inventory = [
+            surface_by_id[surface_id]
+            for surface_id in blade.get("surface_ids", [])
+            if surface_id in surface_by_id
+        ]
+        surface = _root_anchor_surface_for_blade(
+            surface_inventory,
+            blade_index,
+            surfaces_by_id=surface_by_id,
         )
         if surface is None:
             continue
@@ -1927,7 +1990,6 @@ def _append_attachment_parameters(
             "section_loop_id": loop_id,
             "source_station_index": span_stations[station_id]["source_loop_index"],
         }
-        blade_index = blade["blade_index"]
         root_surface = next(
             (
                 surface_by_id[surface_id]

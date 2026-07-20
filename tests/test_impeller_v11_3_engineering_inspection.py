@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 from copy import deepcopy
 from math import dist
@@ -11,6 +13,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from part_rule_synthesis.impeller_runtime_compiler import compile_impeller_runtime_preset
+import part_rule_synthesis.impeller_v11_3_parameter_inspection as inspection_module
 from part_rule_synthesis.impeller_v11_3_parameter_inspection import (
     _measure_dimension,
     build_parameter_inspection_contract,
@@ -32,6 +35,45 @@ def graph_for(preset_id: str = "radial_open_reference_v1_1") -> dict:
 
 def thickness_parameter(contract: dict) -> dict:
     return next(item for item in contract["parameters"] if item["parameter_id"].endswith("thickness"))
+
+
+def test_generation_id_streams_without_deepcopy_and_preserves_legacy_digest(monkeypatch):
+    graph = {
+        "contract_id": "inspection-generation-test",
+        "surfaces": [
+            {
+                "id": "inspectable",
+                "uv_grid": [[[float(index), 0.0, 0.0] for index in range(128)]],
+                "wireframe": {"u_lines": [[0.0, 1.0]]},
+            },
+            {
+                "id": "hidden_reference",
+                "uv_grid": [[[99.0, 0.0, 0.0]]],
+                "surface_flags": {"reference_only": True},
+                "display": {"visible_by_default": False},
+            },
+        ],
+        "generation_id": "stale",
+        "parameter_inspection": {"generation_id": "stale"},
+    }
+    original = deepcopy(graph)
+    legacy_basis = deepcopy(graph)
+    legacy_basis.pop("generation_id")
+    legacy_basis.pop("parameter_inspection")
+    for surface in legacy_basis["surfaces"]:
+        surface.pop("wireframe", None)
+        if not inspection_module._surface_is_inspectable(surface):
+            surface["uv_grid"] = []
+    expected = hashlib.sha256(
+        json.dumps(legacy_basis, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:24]
+
+    def fail_deepcopy(*_args, **_kwargs):
+        raise AssertionError("generation id must not deep-copy the surface graph")
+
+    monkeypatch.setattr(inspection_module.copy, "deepcopy", fail_deepcopy)
+    assert parameter_inspection_generation_id(graph) == expected
+    assert graph == original
 
 
 def parameter_by_id(contract: dict, parameter_id: str) -> dict:

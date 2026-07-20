@@ -232,7 +232,7 @@ describe("STEP comparison scene", () => {
       assert.ok(overlayCount(runtime.renderers, "span-surface-evidence") >= 2);
       assert.equal(overlayCount(runtime.renderers[0], "span-surface-evidence"), 0);
       assert.ok(overlayCount(runtime.renderers[1], "span-surface-evidence") >= 2);
-      assert.ok(overlayCount(runtime.renderers, "representative-blade-evidence") >= 2);
+      assert.equal(overlayCount(runtime.renderers, "representative-blade-evidence"), 1);
       assert.ok(overlayObjects(runtime.renderers, "span-surface-evidence").every((object) => object.geometry?.getAttribute("position")?.count > 0));
       assert.ok(overlayObjects(runtime.renderers, "span-surface-evidence").every((object) => object.rotation.x === Math.PI / 2));
       assert.ok(overlayObjects(runtime.renderers, "span-surface-evidence").every((object) => object.userData.latticeKind === "active-blade-lattice"));
@@ -256,7 +256,7 @@ describe("STEP comparison scene", () => {
     });
   });
 
-  test("applies the comparison phase to source-derived representative loops", async () => {
+  test("renders backend-aligned generated loops without applying phase again", async () => {
     await withScene(async ({ container, runtime }) => {
       const root = createRoot(container);
       await act(async () => root.render(sceneElement(runtime, {
@@ -266,8 +266,8 @@ describe("STEP comparison scene", () => {
       await flush();
       const lines = overlayObjects(runtime.renderers[1], "representative-blade-evidence");
       assert.ok(lines.length > 0);
-      assert.ok(lines.every((line) => Math.abs(line.rotation.z - (-10.625 * Math.PI / 180)) < 1.0e-12));
-      assert.ok(lines.every((line) => line.userData.periodicPhaseAppliedDeg === -10.625));
+      assert.ok(lines.every((line) => line.rotation.z === 0));
+      assert.ok(lines.every((line) => line.userData.periodicPhaseAppliedDeg === undefined));
       await act(async () => root.unmount());
     });
   });
@@ -501,11 +501,24 @@ function task8Manifest(mode) {
     source_face_ids: [`face-${id}`],
     exact_section: { accepted_loop: { points_xyz_mm: [[x, 0, h * 8], [x + 1, 0, h * 8]] } },
   });
+  const sourceLoops = [loop("main", 0, "main-root", 9), loop("main", 0.5, "main-mid", 10), loop("splitter", 0.5, "splitter-mid", 15)];
+  const overlayStation = (record, offset) => ({
+    population: record.population,
+    active_h: record.h,
+    source_loop_id: record.loop_id,
+    support_profile_rz_mm: record.support_profile_rz_mm,
+    points_xyz_mm: record.exact_section.accepted_loop.points_xyz_mm.map(([x, y, z]) => [x + offset, y, z]),
+  });
   return {
     audit_id: `task8-${mode}`,
     canonical_geometry_version: "1.1.2",
     source: { solid_count: 1, face_count: 240, edge_count: 612 },
     frame: { axis: { origin_mm: [0, 0, 0], direction: [0, 0, 1] } },
+    section_overlay_contract: {
+      contract_id: "impeller_v1_1_6_section_overlay_r16_1",
+      source: { status: "AVAILABLE", stations: sourceLoops.map((record) => overlayStation(record, 0)) },
+      generated: { status: "AVAILABLE", stations: sourceLoops.map((record) => overlayStation(record, 100)) },
+    },
     semantics: { main_blade_count: 13, splitter_blade_count: 13, shroud_topology: mode },
     parameter_mapping: {
       support_recovery: {
@@ -518,7 +531,7 @@ function task8Manifest(mode) {
         main: { count: 13, pitch_deg: 27.692307, representative_instance: { source_component_id: "main-component-03", instance_id: "main-03", source_face_ids: ["face-main-a", "face-main-b"] } },
         splitter: { count: 13, pitch_deg: 27.692307, representative_instance: { source_component_id: "splitter-component-09", instance_id: "splitter-09", source_face_ids: ["face-split-a", "face-split-b"] } },
       },
-      source_section_loops: [loop("main", 0, "main-root", 9), loop("main", 0.5, "main-mid", 10), loop("splitter", 0.5, "splitter-mid", 15)],
+      source_section_loops: sourceLoops,
       measurement_bundle: { attachments: { root: { lift_samples_mm: [1.4, 1.5, 1.6], width_samples_mm: [3.4, 3.5, 3.6], source_ids: ["face-root", "edge-root"], source_measurement: true, promotable: true, material_side: 1 } } },
       promotion: { promotable: true },
       objective_terms: { attachment: { records: [{ attachment: "root", target_lift_mm: 1.5, fitted_lift_mm: 1.48, target_width_mm: 3.5, fitted_width_mm: 3.42, lift_relative: 0.013, width_relative: 0.023, status: "PASS", source_ids: ["face-root"] }] } },

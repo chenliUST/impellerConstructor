@@ -23,8 +23,8 @@ describe("frontend application files", () => {
       "utf-8",
     );
 
-    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.17"/);
-    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.17"/);
+    assert.match(html, /src="\/src\/main\.js\?v=1\.1\.18"/);
+    assert.match(mainSource, /from "\.\/App\.js\?v=1\.1\.18"/);
     assert.match(appSource, /from "\.\/apiClient\.js\?v=1\.1\.10"/);
     assert.match(appSource, /from "\.\/appModel\.js\?v=1\.1\.11"/);
     assert.match(appSource, /from "\.\/workspaceModel\.js\?v=1\.1\.5"/);
@@ -32,10 +32,10 @@ describe("frontend application files", () => {
     assert.match(appSource, /from "\.\/components\/ReviewEngineeringDrawing\.js\?v=1\.1\.5\.1"/);
     assert.match(
       appSource,
-      /from "\.\/components\/StepReconstructionWorkspace\.js\?v=1\.1\.6-r13_3"/,
+      /from "\.\/components\/StepReconstructionWorkspace\.js\?v=1\.1\.6-r16_22_1"/,
     );
     assert.match(stepWorkspaceSource, /from "\.\.\/apiClient\.js\?v=1\.1\.10"/);
-    assert.match(stepWorkspaceSource, /stepReconstructionModel\.js\?v=1\.1\.6-r13_2/);
+    assert.match(stepWorkspaceSource, /stepReconstructionModel\.js\?v=1\.1\.6-r16_22_1/);
     assert.match(stepWorkspaceSource, /StepComparisonScene\.js\?v=1\.1\.6-r22/);
     assert.match(viewerSource, /from "\.\.\/meshOverlayModel\.js\?v=1\.1\.5"/);
     assert.match(viewerSource, /from "\.\.\/workspaceModel\.js\?v=1\.1\.5"/);
